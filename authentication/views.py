@@ -420,10 +420,16 @@ def student_login(request):
             
             # Ensure user is a student
             if user.role != User.Role.STUDENT:
-                return Response(
-                    {'error': 'This endpoint is only for student accounts'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+                if user.role == User.Role.TEACHER:
+                    return Response(
+                        {'error': 'This account is registered as a Teacher. Please use the Teacher Portal to sign in.'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                else:
+                    return Response(
+                        {'error': 'This account is not registered as a Student. Please check your account type.'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             
             # Update last login
             from django.utils import timezone
@@ -591,10 +597,16 @@ def teacher_login(request):
             
             # Ensure user is a teacher
             if user.role != User.Role.TEACHER:
-                return Response(
-                    {'error': 'Access denied: Teacher account required'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+                if user.role == User.Role.STUDENT:
+                    return Response(
+                        {'error': 'This account is registered as a Student. Please use the Student Portal to sign in.'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                else:
+                    return Response(
+                        {'error': 'This account is not registered as a Teacher. Please check your account type.'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             
             # Update last login
             from django.utils import timezone
