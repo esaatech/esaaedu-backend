@@ -4,10 +4,26 @@ from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProg
 
 @admin.register(Course)
 class CourseAdmin(admin.ModelAdmin):
-    list_display = ['title', 'teacher', 'category', 'level', 'status', 'featured', 'popular', 'created_at']
+    list_display = ['title', 'teacher', 'category', 'level', 'status', 'featured', 'popular', 'enrolled_students_count', 'created_at']
     list_filter = ['status', 'level', 'category', 'featured', 'popular', 'created_at']
-    search_fields = ['title', 'description', 'teacher__email']
+    search_fields = ['title', 'description', 'teacher__email', 'teacher__first_name', 'teacher__last_name']
     readonly_fields = ['id', 'created_at', 'updated_at', 'total_lessons', 'enrolled_students_count']
+    actions = ['approve_courses', 'feature_courses', 'unfeature_courses']
+    
+    def approve_courses(self, request, queryset):
+        updated = queryset.filter(status='draft').update(status='published')
+        self.message_user(request, f'{updated} courses were approved and published.')
+    approve_courses.short_description = "Approve selected draft courses"
+    
+    def feature_courses(self, request, queryset):
+        updated = queryset.update(featured=True)
+        self.message_user(request, f'{updated} courses were marked as featured.')
+    feature_courses.short_description = "Mark selected courses as featured"
+    
+    def unfeature_courses(self, request, queryset):
+        updated = queryset.update(featured=False)
+        self.message_user(request, f'{updated} courses were unmarked as featured.')
+    unfeature_courses.short_description = "Remove featured status from selected courses"
     
     fieldsets = (
         ('Basic Information', {
