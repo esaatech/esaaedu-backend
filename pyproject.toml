@@ -1,0 +1,28 @@
+[tool.poetry]
+name = "little-learners-tech-backend"
+version = "0.1.0"
+description = "Django backend for Little Learners Tech platform"
+authors = ["Little Learners Tech <contact@littlelearners.tech>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+django = "^4.2.0"
+djangorestframework = "^3.14.0"
+firebase-admin = "^6.2.0"
+python-decouple = "^3.8"
+django-cors-headers = "^4.3.0"
+psycopg2-binary = "^2.9.0"
+django-extensions = "^3.2.0"
+python-dotenv = "^1.0.0"
+dj-database-url = "^2.1.0"
+
+[tool.poetry.group.dev.dependencies]
+black = "^23.0.0"
+isort = "^5.12.0"
+flake8 = "^6.0.0"
+pytest-django = "^4.5.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -1,0 +1,131 @@
+name: Deploy Little Learners Tech Backend
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: latest
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+    
+    - name: Load cached venv
+      id: cached-poetry-dependencies
+      uses: actions/cache@v3
+      with:
+        path: .venv
+        key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
+    
+    - name: Install dependencies
+      if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+      run: poetry install --no-interaction --no-root
+    
+    - name: Install project
+      run: poetry install --no-interaction
+    
+    - name: Run tests
+      env:
+        SECRET_KEY: test-secret-key-for-github-actions
+        DEBUG: False
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+        
+        # Firebase environment variables from GitHub secrets
+        FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        FIREBASE_PRIVATE_KEY_ID: ${{ secrets.FIREBASE_PRIVATE_KEY_ID }}
+        FIREBASE_PRIVATE_KEY: ${{ secrets.FIREBASE_PRIVATE_KEY }}
+        FIREBASE_CLIENT_EMAIL: ${{ secrets.FIREBASE_CLIENT_EMAIL }}
+        FIREBASE_CLIENT_ID: ${{ secrets.FIREBASE_CLIENT_ID }}
+        FIREBASE_CLIENT_X509_CERT_URL: ${{ secrets.FIREBASE_CLIENT_X509_CERT_URL }}
+        
+        # CORS settings
+        CORS_ALLOWED_ORIGINS: http://localhost:3000
+        ALLOWED_HOSTS: localhost,127.0.0.1
+        
+      run: |
+        poetry run python manage.py collectstatic --noinput
+        poetry run python manage.py migrate
+        poetry run python manage.py test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: latest
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+    
+    - name: Install dependencies
+      run: poetry install --no-interaction --no-root --only=main
+    
+    # Add your deployment steps here (e.g., to Railway, Heroku, AWS, etc.)
+    # Example for Railway:
+    # - name: Deploy to Railway
+    #   uses: bervProject/railway-deploy@main
+    #   with:
+    #     railway_token: ${{ secrets.RAILWAY_TOKEN }}
+    #     service: little-learners-backend
+    #     detach: true
+    
+    # Example for Heroku:
+    # - name: Deploy to Heroku
+    #   uses: akhileshns/heroku-deploy@v3.12.12
+    #   with:
+    #     heroku_api_key: ${{ secrets.HEROKU_API_KEY }}
+    #     heroku_app_name: little-learners-backend
+    #     heroku_email: your-email@example.com
+    
+    # Example for Google Cloud Run:
+    # - name: Deploy to Google Cloud Run
+    #   uses: google-github-actions/deploy-cloudrun@v0
+    #   with:
+    #     service: little-learners-backend
+    #     image: gcr.io/${{ secrets.GCP_PROJECT_ID }}/little-learners-backend
+    #     credentials: ${{ secrets.GCP_SA_KEY }}
+    
+    - name: Deployment placeholder
+      run: |
+        echo "🚀 Deployment step - configure your preferred deployment platform"
+        echo "📝 Firebase credentials are available as environment variables"
+        echo "✅ Tests passed, ready for production deployment"
