@@ -89,7 +89,11 @@ class StudentProfile(models.Model):
         related_name='student_profile'
     )
     
-    # Student information
+    # Student/Child information
+    child_first_name = models.CharField(max_length=50, blank=True, help_text="Child's first name")
+    child_last_name = models.CharField(max_length=50, blank=True, help_text="Child's last name") 
+    child_email = models.EmailField(blank=True, help_text="Child's email (for older students)")
+    child_phone = models.CharField(max_length=20, blank=True, help_text="Child's phone (for older students)")
     grade_level = models.CharField(max_length=20, blank=True, help_text="Current grade level")
     date_of_birth = models.DateField(null=True, blank=True)
     profile_image = models.URLField(blank=True, help_text="URL to profile image")

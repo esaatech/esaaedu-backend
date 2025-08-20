@@ -49,7 +49,8 @@ class StudentProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = StudentProfile
         fields = [
-            'user', 'grade_level', 'date_of_birth', 'profile_image',
+            'user', 'child_first_name', 'child_last_name', 'child_email', 'child_phone',
+            'grade_level', 'date_of_birth', 'profile_image',
             'parent_email', 'parent_name', 'parent_phone', 'emergency_contact',
             'learning_goals', 'interests', 'notifications_enabled',
             'email_notifications', 'age', 'created_at', 'updated_at'

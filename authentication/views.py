@@ -271,13 +271,37 @@ def student_signup(request):
         except User.DoesNotExist:
             pass
         
+        # Debug: Print the entire request data to console
+        print("=" * 50)
+        print("🔍 DJANGO DEBUG - Full request data received:")
+        print(f"request.data = {request.data}")
+        print(f"request.data type = {type(request.data)}")
+        print("=" * 50)
+        
+        # Extract user data from request (prioritize React data over Firebase token)
+        user_data = request.data.get('user_data', {})
+        print(f"🔍 DJANGO DEBUG - Extracted user_data: {user_data}")
+        print(f"🔍 DJANGO DEBUG - user_data type: {type(user_data)}")
+        
+        first_name = user_data.get('first_name', '')
+        last_name = user_data.get('last_name', '')
+        print(f"🔍 DJANGO DEBUG - Extracted names: first_name='{first_name}', last_name='{last_name}'")
+        print("=" * 50)
+        
+        # Fallback to Firebase token name if React data not provided
+        if not first_name and not last_name and name:
+            name_parts = name.split(' ', 1)
+            first_name = name_parts[0]
+            last_name = name_parts[1] if len(name_parts) > 1 else ''
+        
+        logger.info(f"Creating user with: first_name='{first_name}', last_name='{last_name}', email='{email}'")
+        
         # Create new student user
-        name_parts = name.split(' ', 1) if name else ['', '']
         user = User.objects.create_user(
             firebase_uid=firebase_uid,
             email=email,
-            first_name=name_parts[0],
-            last_name=name_parts[1] if len(name_parts) > 1 else '',
+            first_name=first_name,
+            last_name=last_name,
             username=email,
             role=User.Role.STUDENT
         )
@@ -285,18 +309,53 @@ def student_signup(request):
         # Create student profile
         student_profile = StudentProfile.objects.create(user=user)
         
+        # Prepare complete profile data (combine user_data and profile_data)
+        profile_update_data = request.data.get('profile_data', {}).copy()
+        
+        # Handle parent vs student registration differently
+        # Check if this is a parent registration (has parent_name and child_name fields)
+        is_parent_registration = profile_update_data.get('parent_name') and profile_update_data.get('child_name')
+        
+        if is_parent_registration:
+            print(f"🔍 PARENT REGISTRATION detected for child: {profile_update_data.get('child_name')}")
+            # This is a parent registering for their child
+            # Extract child name from child_name field
+            child_name = profile_update_data.get('child_name', first_name)
+            child_name_parts = child_name.split(' ', 1) if child_name else [first_name, '']
+            
+            profile_update_data['child_first_name'] = child_name_parts[0]
+            profile_update_data['child_last_name'] = child_name_parts[1] if len(child_name_parts) > 1 else ''
+            # Keep parent info as provided
+            if user_data.get('phone'):
+                profile_update_data['parent_phone'] = user_data['phone']
+        else:
+            print(f"🔍 STUDENT REGISTRATION detected (13+ years)")
+            # This is a student registering themselves
+            profile_update_data['child_first_name'] = first_name
+            profile_update_data['child_last_name'] = last_name
+            profile_update_data['child_email'] = email
+            if user_data.get('phone'):
+                profile_update_data['child_phone'] = user_data['phone']
+        
+        print(f"🔍 Final profile_update_data: {profile_update_data}")
+        
+        logger.info(f"Updating student profile with data: {profile_update_data}")
+        
         # Update student profile with provided data
-        if 'profile_data' in request.data:
+        if profile_update_data:
             profile_serializer = StudentProfileSerializer(
                 student_profile,
-                data=request.data['profile_data'],
+                data=profile_update_data,
                 partial=True
             )
             if profile_serializer.is_valid():
                 profile_serializer.save()
+                logger.info(f"Student profile updated successfully for {email}")
             else:
                 # If profile data is invalid, still return the user but log the error
                 logger.warning(f"Invalid profile data for user {email}: {profile_serializer.errors}")
+        else:
+            logger.info(f"No profile data provided for user {email}")
         
         logger.info(f"New student user created: {email}")
         
