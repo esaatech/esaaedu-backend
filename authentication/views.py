@@ -1,10 +1,11 @@
 from rest_framework import status, permissions
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.generics import RetrieveUpdateAPIView
 from django.contrib.auth import get_user_model
 from firebase_admin import auth
+from .authentication import FirebaseAuthentication
 from .serializers import (
     AuthTokenSerializer, UserProfileSerializer, RoleUpdateSerializer,
     TeacherProfileSerializer, StudentProfileSerializer
@@ -450,6 +451,177 @@ def student_login(request):
         )
     except Exception as e:
         logger.error(f"Student login error: {e}")
+        return Response(
+            {'error': 'Login failed', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def teacher_signup(request):
+    """
+    Teacher signup endpoint - creates a new teacher user and profile
+    """
+    try:
+        # Get Firebase token and profile data
+        token = request.data.get('token')
+        if not token:
+            return Response(
+                {'error': 'Firebase token is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Verify Firebase token
+        try:
+            decoded_token = auth.verify_id_token(token)
+            firebase_uid = decoded_token['uid']
+            email = decoded_token.get('email', '')
+            
+            print(f"🎓 Teacher signup - Firebase UID: {firebase_uid}, Email: {email}")
+            
+        except Exception as e:
+            logger.error(f"Invalid token verification: {str(e)}")
+            return Response(
+                {'error': 'Invalid Firebase token'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        # Check if user already exists
+        if User.objects.filter(firebase_uid=firebase_uid).exists():
+            return Response(
+                {'error': 'Teacher account already exists'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Extract user data and teacher profile data
+        user_data = request.data.get('user_data', {})
+        teacher_data = request.data.get('teacher_data', {})
+        
+        print(f"🎓 Received user_data: {user_data}")
+        print(f"🎓 Received teacher_data: {teacher_data}")
+        
+        # Extract user information
+        first_name = user_data.get('first_name', '')
+        last_name = user_data.get('last_name', '')
+        phone = user_data.get('phone', '')
+
+        print(f"🎓 Extracted - First: {first_name}, Last: {last_name}, Phone: {phone}")
+
+        # Create User with TEACHER role
+        user = User.objects.create_user(
+            firebase_uid=firebase_uid,
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            username=email,
+            role=User.Role.TEACHER
+        )
+        
+        print(f"🎓 Created teacher user: {user.id}")
+        
+        # Create teacher profile
+        from users.models import TeacherProfile
+        teacher_profile = TeacherProfile.objects.create(user=user)
+        
+        # Update teacher profile with provided data
+        if teacher_data:
+            profile_serializer = TeacherProfileSerializer(
+                teacher_profile,
+                data=teacher_data,
+                partial=True
+            )
+            if profile_serializer.is_valid():
+                profile_serializer.save()
+                print(f"🎓 Updated teacher profile: {profile_serializer.data}")
+            else:
+                print(f"🎓 Teacher profile serializer errors: {profile_serializer.errors}")
+
+        # Serialize and return the complete teacher data
+        user_serializer = UserProfileSerializer(user)
+        
+        response_data = {
+            'user': user_serializer.data,
+            'message': 'Teacher account created successfully'
+        }
+        
+        print(f"🎓 Teacher signup successful: {user.email}")
+        
+        return Response(response_data, status=status.HTTP_201_CREATED)
+        
+    except Exception as e:
+        logger.error(f"Teacher signup error: {str(e)}")
+        return Response(
+            {'error': 'Signup failed'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def teacher_login(request):
+    """
+    Teacher login endpoint - verifies Firebase token and returns teacher profile
+    """
+    # Validate request data
+    serializer = AuthTokenSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(
+            {'error': 'Token is required'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    token = serializer.validated_data['token']
+    
+    try:
+        # Verify the Firebase ID token
+        decoded_token = auth.verify_id_token(token)
+        firebase_uid = decoded_token.get('uid')
+        email = decoded_token.get('email')
+        
+        if not firebase_uid or not email:
+            return Response(
+                {'error': 'Invalid token: missing required fields'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Find existing user
+        try:
+            user = User.objects.get(firebase_uid=firebase_uid)
+            
+            # Ensure user is a teacher
+            if user.role != User.Role.TEACHER:
+                return Response(
+                    {'error': 'Access denied: Teacher account required'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Update last login
+            from django.utils import timezone
+            user.last_login_at = timezone.now()
+            user.save(update_fields=['last_login_at'])
+            
+            # Return user profile
+            user_serializer = UserProfileSerializer(user)
+            return Response({
+                'message': 'Teacher login successful',
+                'user': user_serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Teacher account not found. Please sign up first.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+    except auth.InvalidIdTokenError as e:
+        logger.warning(f"Invalid token in teacher login: {e}")
+        return Response(
+            {'error': 'Invalid authentication token'},
+            status=status.HTTP_401_UNAUTHORIZED
+        )
+    except Exception as e:
+        logger.error(f"Teacher login error: {e}")
         return Response(
             {'error': 'Login failed', 'details': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
