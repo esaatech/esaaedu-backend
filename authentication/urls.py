@@ -7,6 +7,10 @@ urlpatterns = [
     # Token verification
     path('verify-token/', views.verify_token, name='verify_token'),
     
+    # Student-focused endpoints
+    path('student/signup/', views.student_signup, name='student_signup'),
+    path('student/login/', views.student_login, name='student_login'),
+    
     # User profile endpoints
     path('user/', views.AuthenticatedUserView.as_view(), name='current_user'),
     path('profile/', views.UserProfileView.as_view(), name='user_profile'),

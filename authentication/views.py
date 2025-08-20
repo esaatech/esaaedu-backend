@@ -174,47 +174,224 @@ class UpdateUserRoleView(APIView):
 @permission_classes([permissions.IsAuthenticated])
 def complete_profile_setup(request):
     """
-    Complete user profile setup after initial authentication.
+    Complete student profile setup after initial authentication.
     
-    This endpoint is called after a user first logs in to set up
-    their role and profile information.
+    This endpoint is called after a student first logs in to set up
+    their profile information. Defaults to student role.
     """
     user = request.user
-    role = request.data.get('role')
     
-    if not role or role not in [choice[0] for choice in User.Role.choices]:
+    # Default to student role (since we're focusing on students first)
+    role = request.data.get('role', User.Role.STUDENT)
+    
+    # For now, we only support student role in this endpoint
+    if role != User.Role.STUDENT:
         return Response(
-            {'error': 'Valid role is required'},
+            {'error': 'Only student registration is currently supported'},
             status=status.HTTP_400_BAD_REQUEST
         )
     
-    # Update user role
-    user.role = role
+    # Update user role to student
+    user.role = User.Role.STUDENT
     user.save()
     
-    # Create appropriate profile
-    if role == User.Role.TEACHER:
-        profile, created = TeacherProfile.objects.get_or_create(user=user)
-        if 'profile_data' in request.data:
-            serializer = TeacherProfileSerializer(
-                profile, 
-                data=request.data['profile_data'], 
-                partial=True
-            )
-            if serializer.is_valid():
-                serializer.save()
+    # Create student profile
+    student_profile, created = StudentProfile.objects.get_or_create(user=user)
     
-    elif role == User.Role.STUDENT:
-        profile, created = StudentProfile.objects.get_or_create(user=user)
+    # Update student profile with provided data
+    if 'profile_data' in request.data:
+        serializer = StudentProfileSerializer(
+            student_profile,
+            data=request.data['profile_data'],
+            partial=True
+        )
+        if serializer.is_valid():
+            serializer.save()
+        else:
+            return Response(
+                {'error': 'Invalid profile data', 'details': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    logger.info(f"Student profile created/updated for user: {user.email}")
+    
+    # Return complete user profile
+    serializer = UserProfileSerializer(user)
+    return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def student_signup(request):
+    """
+    Complete student signup flow - combines Firebase token verification 
+    with student profile creation in one endpoint.
+    
+    Expected payload:
+    {
+        "token": "firebase-id-token",
+        "profile_data": {
+            "grade_level": "Grade 5",
+            "parent_email": "parent@example.com",
+            "parent_name": "John Doe Sr.",
+            "interests": ["coding", "robotics"]
+        }
+    }
+    """
+    serializer = AuthTokenSerializer(data=request.data)
+    
+    if not serializer.is_valid():
+        return Response(
+            {'error': 'Invalid request data', 'details': serializer.errors},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    token = serializer.validated_data['token']
+    
+    try:
+        # Verify the Firebase ID token
+        decoded_token = auth.verify_id_token(token)
+        firebase_uid = decoded_token.get('uid')
+        email = decoded_token.get('email')
+        name = decoded_token.get('name', '')
+        
+        if not firebase_uid or not email:
+            return Response(
+                {'error': 'Invalid token: missing required fields'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Check if user already exists
+        try:
+            existing_user = User.objects.get(firebase_uid=firebase_uid)
+            return Response(
+                {'error': 'User already exists', 'user_id': existing_user.id},
+                status=status.HTTP_409_CONFLICT
+            )
+        except User.DoesNotExist:
+            pass
+        
+        # Create new student user
+        name_parts = name.split(' ', 1) if name else ['', '']
+        user = User.objects.create_user(
+            firebase_uid=firebase_uid,
+            email=email,
+            first_name=name_parts[0],
+            last_name=name_parts[1] if len(name_parts) > 1 else '',
+            username=email,
+            role=User.Role.STUDENT
+        )
+        
+        # Create student profile
+        student_profile = StudentProfile.objects.create(user=user)
+        
+        # Update student profile with provided data
         if 'profile_data' in request.data:
-            serializer = StudentProfileSerializer(
-                profile,
+            profile_serializer = StudentProfileSerializer(
+                student_profile,
                 data=request.data['profile_data'],
                 partial=True
             )
-            if serializer.is_valid():
-                serializer.save()
+            if profile_serializer.is_valid():
+                profile_serializer.save()
+            else:
+                # If profile data is invalid, still return the user but log the error
+                logger.warning(f"Invalid profile data for user {email}: {profile_serializer.errors}")
+        
+        logger.info(f"New student user created: {email}")
+        
+        # Return complete user profile
+        user_serializer = UserProfileSerializer(user)
+        return Response({
+            'message': 'Student account created successfully',
+            'user': user_serializer.data
+        }, status=status.HTTP_201_CREATED)
+        
+    except auth.InvalidIdTokenError as e:
+        logger.warning(f"Invalid token in student signup: {e}")
+        return Response(
+            {'error': 'Invalid authentication token'},
+            status=status.HTTP_401_UNAUTHORIZED
+        )
+    except Exception as e:
+        logger.error(f"Student signup error: {e}")
+        return Response(
+            {'error': 'Signup failed', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def student_login(request):
+    """
+    Student login endpoint - verifies Firebase token and returns student profile.
     
-    # Return updated user profile
-    serializer = UserProfileSerializer(user)
-    return Response(serializer.data, status=status.HTTP_201_CREATED)
+    Expected payload:
+    {
+        "token": "firebase-id-token"
+    }
+    """
+    serializer = AuthTokenSerializer(data=request.data)
+    
+    if not serializer.is_valid():
+        return Response(
+            {'error': 'Invalid request data', 'details': serializer.errors},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    token = serializer.validated_data['token']
+    
+    try:
+        # Verify the Firebase ID token
+        decoded_token = auth.verify_id_token(token)
+        firebase_uid = decoded_token.get('uid')
+        email = decoded_token.get('email')
+        
+        if not firebase_uid or not email:
+            return Response(
+                {'error': 'Invalid token: missing required fields'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Find existing user
+        try:
+            user = User.objects.get(firebase_uid=firebase_uid)
+            
+            # Ensure user is a student
+            if user.role != User.Role.STUDENT:
+                return Response(
+                    {'error': 'This endpoint is only for student accounts'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Update last login
+            from django.utils import timezone
+            user.last_login_at = timezone.now()
+            user.save(update_fields=['last_login_at'])
+            
+            # Return user profile
+            user_serializer = UserProfileSerializer(user)
+            return Response({
+                'message': 'Login successful',
+                'user': user_serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'User not found. Please sign up first.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+    except auth.InvalidIdTokenError as e:
+        logger.warning(f"Invalid token in student login: {e}")
+        return Response(
+            {'error': 'Invalid authentication token'},
+            status=status.HTTP_401_UNAUTHORIZED
+        )
+    except Exception as e:
+        logger.error(f"Student login error: {e}")
+        return Response(
+            {'error': 'Login failed', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
