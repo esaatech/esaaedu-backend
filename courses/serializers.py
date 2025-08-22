@@ -124,6 +124,8 @@ class LessonListSerializer(serializers.ModelSerializer):
         model = Lesson
         fields = [
             'id', 'title', 'description', 'type', 'duration', 'order',
+            'text_content', 'video_url', 'audio_url', 'live_class_date', 
+            'live_class_status', 'content',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -140,7 +142,9 @@ class LessonDetailSerializer(serializers.ModelSerializer):
         model = Lesson
         fields = [
             'id', 'course_id', 'course_title', 'title', 'description', 
-            'type', 'duration', 'order', 'content', 'created_at', 'updated_at'
+            'type', 'duration', 'order', 'text_content', 'video_url', 'audio_url', 
+            'live_class_date', 'live_class_status', 'content', 
+            'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'course_id', 'course_title', 'created_at', 'updated_at']
 
@@ -152,7 +156,9 @@ class LessonCreateUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Lesson
         fields = [
-            'title', 'description', 'type', 'duration', 'order', 'content'
+            'title', 'description', 'type', 'duration', 'order', 'content',
+            'text_content', 'video_url', 'audio_url', 'live_class_date', 
+            'live_class_status'
         ]
     
     def validate_title(self, value):

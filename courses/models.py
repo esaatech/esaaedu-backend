@@ -145,17 +145,16 @@ class Lesson(models.Model):
     Individual lesson within a course
     """
     LESSON_TYPES = [
-        ('live', 'Live Class'),
-        ('recorded', 'Recorded Video'),
-        ('material', 'Reading Material'),
-        ('interactive', 'Interactive Exercise'),
+        ('live_class', 'Live Class'),
+        ('video_audio', 'Video/Audio Lesson'),
+        ('text_lesson', 'Text Lesson'),
     ]
     
     # Basic Information
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='lessons')
     title = models.CharField(max_length=200)
-    description = models.TextField()
+    description = models.TextField(blank=True, null=True)
     order = models.IntegerField(help_text="Lesson sequence within the course")
     duration = models.IntegerField(
         validators=[MinValueValidator(1)],
@@ -164,9 +163,49 @@ class Lesson(models.Model):
     
     # Lesson Type & Content
     type = models.CharField(max_length=20, choices=LESSON_TYPES)
+    
+    # Content fields based on lesson type
+    text_content = models.TextField(
+        blank=True, 
+        null=True,
+        help_text="Rich text content for text lessons"
+    )
+    
+    video_url = models.URLField(
+        blank=True, 
+        null=True,
+        help_text="Video URL for video/audio lessons"
+    )
+    
+    audio_url = models.URLField(
+        blank=True, 
+        null=True,
+        help_text="Audio URL for video/audio lessons"
+    )
+    
+    live_class_date = models.DateTimeField(
+        blank=True, 
+        null=True,
+        help_text="Scheduled date for live class"
+    )
+    
+
+    
+    live_class_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('scheduled', 'Scheduled'),
+            ('ongoing', 'Ongoing'),
+            ('completed', 'Completed'),
+            ('cancelled', 'Cancelled')
+        ],
+        default='scheduled',
+        help_text="Current status of live class"
+    )
+    
     content = models.JSONField(
         default=dict, 
-        help_text="Type-specific lesson content and configuration"
+        help_text="Additional type-specific lesson content and configuration"
     )
     
     # Prerequisites & Dependencies
