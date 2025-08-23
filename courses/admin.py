@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt
+from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Class, ClassEvent
 
 
 @admin.register(Course)
@@ -107,3 +107,64 @@ class QuizAttemptAdmin(admin.ModelAdmin):
     list_filter = ['passed', 'completed_at']
     search_fields = ['student__email', 'quiz__title']
     readonly_fields = ['id', 'started_at']
+
+
+@admin.register(Class)
+class ClassAdmin(admin.ModelAdmin):
+    list_display = ['name', 'course', 'teacher', 'student_count', 'max_capacity', 'is_active', 'created_at']
+    list_filter = ['is_active', 'course__category', 'created_at']
+    search_fields = ['name', 'course__title', 'teacher__email', 'description']
+    readonly_fields = ['id', 'student_count', 'is_full', 'available_spots', 'created_at', 'updated_at']
+    filter_horizontal = ['students']
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('name', 'description', 'course', 'teacher')
+        }),
+        ('Class Configuration', {
+            'fields': ('max_capacity', 'schedule', 'meeting_link')
+        }),
+        ('Students', {
+            'fields': ('students',)
+        }),
+        ('Status & Dates', {
+            'fields': ('is_active', 'start_date', 'end_date')
+        }),
+        ('Metadata', {
+            'fields': ('id', 'student_count', 'is_full', 'available_spots', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def student_count(self, obj):
+        return obj.student_count
+    student_count.short_description = 'Students'
+
+
+@admin.register(ClassEvent)
+class ClassEventAdmin(admin.ModelAdmin):
+    list_display = ['title', 'class_instance', 'event_type', 'start_time', 'end_time', 'duration_minutes', 'created_at']
+    list_filter = ['event_type', 'start_time', 'class_instance__course__category', 'created_at']
+    search_fields = ['title', 'description', 'class_instance__name', 'class_instance__course__title']
+    readonly_fields = ['id', 'duration_minutes', 'created_at', 'updated_at']
+    date_hierarchy = 'start_time'
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('title', 'description', 'class_instance', 'event_type')
+        }),
+        ('Schedule', {
+            'fields': ('start_time', 'end_time', 'duration_minutes')
+        }),
+        ('Lesson Association', {
+            'fields': ('lesson',),
+            'description': 'Only required for lesson-type events'
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('class_instance', 'class_instance__course', 'lesson')

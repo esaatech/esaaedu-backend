@@ -29,4 +29,13 @@ urlpatterns = [
     # Notes management endpoints (lesson-specific)
     path('lessons/<uuid:lesson_id>/notes/', views.lesson_notes, name='lesson_notes'),
     path('lessons/<uuid:lesson_id>/notes/<uuid:note_id>/', views.lesson_note_detail, name='lesson_note_detail'),
+    
+    # Class management endpoints
+    path('teacher/classes/', views.teacher_classes, name='teacher_classes'),
+    path('teacher/classes/<uuid:class_id>/', views.teacher_class_detail, name='teacher_class_detail'),
+    path('teacher/courses/<uuid:course_id>/students/', views.course_enrolled_students, name='course_enrolled_students'),
+    
+    # Class event endpoints
+    path('teacher/classes/<uuid:class_id>/events/', views.class_events, name='class_events'),
+    path('teacher/classes/<uuid:class_id>/events/<uuid:event_id>/', views.class_event_detail, name='class_event_detail'),
 ]

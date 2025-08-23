@@ -128,6 +128,15 @@ class Course(models.Model):
             self.featured == True
         )
     
+    # Student Relationships (using through model)
+    enrolled_students = models.ManyToManyField(
+        'users.StudentProfile',
+        through='student.EnrolledCourse',
+        related_name='enrolled_courses',
+        blank=True,
+        help_text="Students enrolled in this course"
+    )
+    
     class Meta:
         ordering = ['-created_at']
         indexes = [
@@ -592,3 +601,232 @@ class CourseIntroduction(models.Model):
     def get_review_count(self):
         """Get total number of reviews"""
         return len(self.reviews) if self.reviews else 0
+
+
+class Class(models.Model):
+    """
+    A class is a specific instance of a course with assigned students
+    Teachers can create multiple classes for the same course to manage capacity
+    """
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, help_text="Name of the class (e.g., 'Morning Group A')")
+    description = models.TextField(blank=True, help_text="Brief description of the class")
+    
+    # Relationships
+    course = models.ForeignKey(
+        Course, 
+        on_delete=models.CASCADE, 
+        related_name='classes',
+        help_text="The course this class is based on"
+    )
+    teacher = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='taught_classes',
+        limit_choices_to={'role': 'teacher'},
+        help_text="Teacher managing this class"
+    )
+    students = models.ManyToManyField(
+        User,
+        related_name='enrolled_classes',
+        limit_choices_to={'role': 'student'},
+        blank=True,
+        help_text="Students enrolled in this class"
+    )
+    
+    # Class Configuration
+    max_capacity = models.PositiveIntegerField(
+        default=10, 
+        help_text="Maximum number of students allowed in this class"
+    )
+    schedule = models.CharField(
+        max_length=200, 
+        blank=True,
+        help_text="Class schedule (e.g., 'Mon/Wed 9:00 AM')"
+    )
+    meeting_link = models.URLField(
+        blank=True,
+        help_text="Online meeting link for virtual classes"
+    )
+    
+    # Status and Metadata
+    is_active = models.BooleanField(default=True, help_text="Whether the class is currently active")
+    start_date = models.DateField(null=True, blank=True, help_text="Class start date")
+    end_date = models.DateField(null=True, blank=True, help_text="Class end date")
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'classes'
+        verbose_name = "Class"
+        verbose_name_plural = "Classes"
+        ordering = ['course__title', 'name']
+    
+    def __str__(self):
+        return f"{self.course.title} - {self.name}"
+    
+    @property
+    def student_count(self):
+        """Get current number of enrolled students"""
+        return self.students.count()
+    
+    @property
+    def is_full(self):
+        """Check if class has reached maximum capacity"""
+        return self.student_count >= self.max_capacity
+    
+    @property
+    def available_spots(self):
+        """Get number of available spots in the class"""
+        return max(0, self.max_capacity - self.student_count)
+    
+    def can_enroll_student(self, student):
+        """Check if a student can be enrolled in this class"""
+        if self.is_full:
+            return False, "Class is at maximum capacity"
+        
+        if student in self.students.all():
+            return False, "Student is already enrolled in this class"
+        
+        # Check if student is enrolled in the course
+        try:
+            enrollment = CourseEnrollment.objects.get(
+                student=student, 
+                course=self.course,
+                status='active'
+            )
+            return True, "Student can be enrolled"
+        except CourseEnrollment.DoesNotExist:
+            return False, "Student must be enrolled in the course first"
+    
+    def enroll_student(self, student):
+        """Enroll a student in this class"""
+        can_enroll, message = self.can_enroll_student(student)
+        if can_enroll:
+            self.students.add(student)
+            return True, f"Student {student.get_full_name()} enrolled successfully"
+        return False, message
+    
+    def remove_student(self, student):
+        """Remove a student from this class"""
+        if student in self.students.all():
+            self.students.remove(student)
+            return True, f"Student {student.get_full_name()} removed successfully"
+        return False, "Student is not enrolled in this class"
+
+
+class ClassEvent(models.Model):
+    """
+    Individual events/sessions scheduled for a class
+    """
+    EVENT_TYPES = [
+        ('lesson', 'Lesson'),
+        ('meeting', 'Meeting'),
+        ('break', 'Break'),
+    ]
+    
+    MEETING_PLATFORMS = [
+        ('google-meet', 'Google Meet'),
+        ('zoom', 'Zoom'),
+        ('other', 'Other'),
+    ]
+    
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    title = models.CharField(max_length=200, help_text="Event title")
+    description = models.TextField(blank=True, help_text="Event description")
+    
+    # Relationships
+    class_instance = models.ForeignKey(
+        Class,
+        on_delete=models.CASCADE,
+        related_name='events',
+        help_text="The class this event belongs to"
+    )
+    lesson = models.ForeignKey(
+        Lesson,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Associated lesson (if event type is lesson)"
+    )
+    
+    # Event Details
+    event_type = models.CharField(
+        max_length=20,
+        choices=EVENT_TYPES,
+        default='lesson',
+        help_text="Type of event"
+    )
+    start_time = models.DateTimeField(help_text="Event start time")
+    end_time = models.DateTimeField(help_text="Event end time")
+    
+    # Meeting Details (for live classes)
+    meeting_platform = models.CharField(
+        max_length=20,
+        choices=MEETING_PLATFORMS,
+        blank=True,
+        null=True,
+        help_text="Platform for live class meetings"
+    )
+    meeting_link = models.URLField(
+        blank=True,
+        help_text="Meeting link for live classes (Google Meet, Zoom, etc.)"
+    )
+    meeting_id = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Meeting ID or room number"
+    )
+    meeting_password = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Meeting password if required"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'class_events'
+        ordering = ['start_time']
+        indexes = [
+            models.Index(fields=['class_instance', 'start_time']),
+            models.Index(fields=['event_type']),
+            models.Index(fields=['start_time']),
+        ]
+    
+    def __str__(self):
+        return f"{self.title} - {self.class_instance.name} ({self.start_time.strftime('%Y-%m-%d %H:%M')})"
+    
+    @property
+    def duration_minutes(self):
+        """Calculate event duration in minutes"""
+        if self.start_time and self.end_time:
+            delta = self.end_time - self.start_time
+            return int(delta.total_seconds() / 60)
+        return 0
+    
+    def clean(self):
+        """Validate event data"""
+        from django.core.exceptions import ValidationError
+        
+        if self.start_time and self.end_time:
+            if self.end_time <= self.start_time:
+                raise ValidationError("End time must be after start time")
+        
+        if self.event_type == 'lesson' and not self.lesson:
+            raise ValidationError("Lesson events must have an associated lesson")
+        
+        # Validate meeting details for live classes
+        if self.event_type == 'lesson' and self.lesson and self.lesson.type == 'live_class':
+            if self.meeting_link and not self.meeting_platform:
+                raise ValidationError("Meeting platform is required when meeting link is provided")
+    
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)

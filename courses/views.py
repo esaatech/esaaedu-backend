@@ -5,7 +5,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 
-from .models import Course, Lesson, Quiz, Question, Note, CourseIntroduction
+from .models import Course, Lesson, Quiz, Question, Note, CourseIntroduction, Class, CourseEnrollment
 from .serializers import (
     CourseListSerializer, CourseDetailSerializer, CourseCreateUpdateSerializer,
     FrontendCourseSerializer, FeaturedCoursesSerializer,
@@ -13,7 +13,9 @@ from .serializers import (
     LessonReorderSerializer, QuizListSerializer, QuizDetailSerializer,
     QuizCreateUpdateSerializer, QuestionListSerializer, QuestionDetailSerializer,
     QuestionCreateUpdateSerializer, NoteSerializer, NoteCreateSerializer,
-    CourseIntroductionSerializer, CourseIntroductionCreateSerializer
+    CourseIntroductionSerializer, CourseIntroductionCreateSerializer,
+    ClassListSerializer, ClassDetailSerializer, ClassCreateUpdateSerializer,
+    StudentBasicSerializer
 )
 
 
@@ -85,10 +87,26 @@ def teacher_courses(request):
     
     if request.method == 'GET':
         try:
-            courses = Course.objects.filter(teacher=request.user).order_by('-created_at')
-            serializer = CourseListSerializer(courses, many=True)
+            from django.db.models import Count, Q
+            from student.models import EnrolledCourse
+            
+            # Get courses with enrollment counts
+            courses = Course.objects.filter(teacher=request.user).annotate(
+                enrolled_count=Count(
+                    'student_enrollments',
+                    distinct=True
+                ),
+                active_count=Count(
+                    'student_enrollments',
+                    filter=Q(student_enrollments__status='active'),
+                    distinct=True
+                )
+            ).order_by('-created_at')
+            
+            serializer = CourseListSerializer(courses, many=True, context={'request': request})
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
+            print(f"Error in teacher_courses: {str(e)}")
             return Response(
                 {'error': 'Failed to fetch courses', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -107,6 +125,40 @@ def teacher_courses(request):
                 {'error': 'Failed to create course', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def assign_courses_to_teacher(request):
+    """
+    TEMPORARY DEBUG ENDPOINT: Assign all courses without a teacher to the current teacher
+    """
+    if request.user.role != 'teacher':
+        return Response(
+            {'error': 'Only teachers can access this endpoint'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    try:
+        # Find courses without a teacher or assign all to current teacher
+        courses_without_teacher = Course.objects.filter(teacher__isnull=True)
+        updated_count = courses_without_teacher.update(teacher=request.user)
+        
+        # If no courses without teacher, assign all courses to current teacher (for debugging)
+        if updated_count == 0:
+            all_courses = Course.objects.all()
+            updated_count = all_courses.update(teacher=request.user)
+        
+        return Response({
+            'message': f'Assigned {updated_count} courses to {request.user.email}',
+            'updated_count': updated_count
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response(
+            {'error': 'Failed to assign courses', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 @api_view(['GET', 'PUT', 'DELETE'])
@@ -878,3 +930,302 @@ def course_introduction(request, course_id):
                 {'error': 'Failed to update course introduction', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# ===== CLASS MANAGEMENT VIEWS =====
+
+@api_view(['GET', 'POST'])
+@permission_classes([permissions.IsAuthenticated])
+def teacher_classes(request):
+    """
+    GET: List all classes for the authenticated teacher
+    POST: Create a new class
+    """
+    if request.user.role != 'teacher':
+        return Response(
+            {'error': 'Only teachers can access this endpoint'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    if request.method == 'GET':
+        try:
+            classes = Class.objects.filter(teacher=request.user).select_related('course', 'teacher').prefetch_related('students').order_by('-created_at')
+            serializer = ClassDetailSerializer(classes, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch classes', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    elif request.method == 'POST':
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            logger.info(f"🚀 VIEW: Received class creation request")
+            logger.info(f"🚀 VIEW: Request data keys: {list(request.data.keys())}")
+            logger.info(f"🚀 VIEW: Full request data: {request.data}")
+            logger.info(f"🚀 VIEW: User: {request.user} (role: {request.user.role})")
+            
+            logger.info("🚀 VIEW: Creating serializer...")
+            serializer = ClassCreateUpdateSerializer(
+                data=request.data, 
+                context={'request': request}
+            )
+            
+            logger.info("🚀 VIEW: Starting serializer validation...")
+            if serializer.is_valid():
+                logger.info("🚀 VIEW: ✅ Serializer is valid, calling save()...")
+                class_instance = serializer.save()
+                logger.info(f"🚀 VIEW: ✅ Class saved successfully: {class_instance.id}")
+                
+                logger.info("🚀 VIEW: Creating response serializer...")
+                response_serializer = ClassDetailSerializer(class_instance)
+                logger.info("🚀 VIEW: ✅ Returning successful response")
+                return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            else:
+                logger.error(f"🚀 VIEW: ❌ Serializer validation failed: {serializer.errors}")
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Exception in class creation: {e}")
+            logger.error(f"Exception type: {type(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return Response(
+                {'error': 'Failed to create class', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([permissions.IsAuthenticated])
+def teacher_class_detail(request, class_id):
+    """
+    GET: Retrieve class details
+    PUT: Update class
+    DELETE: Delete class
+    """
+    if request.user.role != 'teacher':
+        return Response(
+            {'error': 'Only teachers can access this endpoint'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    try:
+        class_instance = get_object_or_404(
+            Class, 
+            id=class_id, 
+            teacher=request.user
+        )
+    except Exception:
+        return Response(
+            {'error': 'Class not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    if request.method == 'GET':
+        try:
+            serializer = ClassDetailSerializer(class_instance)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch class details', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    elif request.method == 'PUT':
+        try:
+            serializer = ClassCreateUpdateSerializer(
+                class_instance, 
+                data=request.data, 
+                context={'request': request},
+                partial=True
+            )
+            if serializer.is_valid():
+                updated_class = serializer.save()
+                response_serializer = ClassDetailSerializer(updated_class)
+                return Response(response_serializer.data, status=status.HTTP_200_OK)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to update class', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    elif request.method == 'DELETE':
+        try:
+            class_instance.delete()
+            return Response(
+                {'message': 'Class deleted successfully'},
+                status=status.HTTP_204_NO_CONTENT
+            )
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to delete class', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def course_enrolled_students(request, course_id):
+    """
+    Get all students enrolled in a specific course
+    """
+    if request.user.role != 'teacher':
+        return Response(
+            {'error': 'Only teachers can access this endpoint'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    try:
+        from student.models import EnrolledCourse
+        from .serializers import EnrolledStudentSerializer
+        
+        # Verify the course belongs to the teacher
+        course = get_object_or_404(Course, id=course_id, teacher=request.user)
+        
+        # Get all active enrollments for this course using the new EnrolledCourse model
+        enrollments = EnrolledCourse.objects.filter(
+            course=course,
+            status='active'
+        ).select_related('student_profile__user').order_by('enrollment_date')
+        
+        # Use the new EnrolledStudentSerializer for richer data
+        serializer = EnrolledStudentSerializer(enrollments, many=True)
+        
+        return Response({
+            'course_id': course_id,
+            'course_title': course.title,
+            'total_enrolled': enrollments.count(),
+            'students': serializer.data
+        }, status=status.HTTP_200_OK)
+    
+    except Course.DoesNotExist:
+        return Response(
+            {'error': 'Course not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        return Response(
+            {'error': 'Failed to fetch enrolled students', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET', 'POST'])
+@permission_classes([permissions.IsAuthenticated])
+def class_events(request, class_id):
+    """
+    GET: Get all events for a specific class
+    POST: Create a new event for a class
+    """
+    if request.user.role != 'teacher':
+        return Response(
+            {'error': 'Only teachers can access this endpoint'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    try:
+        from .models import ClassEvent
+        from .serializers import ClassEventListSerializer, ClassEventCreateUpdateSerializer, ClassEventDetailSerializer
+        
+        # Verify the class belongs to the teacher
+        class_instance = get_object_or_404(Class, id=class_id, teacher=request.user)
+        
+        if request.method == 'GET':
+            events = ClassEvent.objects.filter(class_instance=class_instance).select_related('lesson').order_by('start_time')
+            serializer = ClassEventListSerializer(events, many=True)
+            return Response({
+                'class_id': class_id,
+                'class_name': class_instance.name,
+                'events': serializer.data
+            }, status=status.HTTP_200_OK)
+        
+        elif request.method == 'POST':
+            serializer = ClassEventCreateUpdateSerializer(
+                data=request.data,
+                context={'class_instance': class_instance}
+            )
+            if serializer.is_valid():
+                event = serializer.save()
+                response_serializer = ClassEventDetailSerializer(event)
+                return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    except Class.DoesNotExist:
+        return Response(
+            {'error': 'Class not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        return Response(
+            {'error': 'Failed to process class events', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([permissions.IsAuthenticated])
+def class_event_detail(request, class_id, event_id):
+    """
+    GET: Get details of a specific event
+    PUT: Update an event
+    DELETE: Delete an event
+    """
+    if request.user.role != 'teacher':
+        return Response(
+            {'error': 'Only teachers can access this endpoint'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    try:
+        from .models import ClassEvent
+        from .serializers import ClassEventDetailSerializer, ClassEventCreateUpdateSerializer
+        
+        # Verify the class belongs to the teacher
+        class_instance = get_object_or_404(Class, id=class_id, teacher=request.user)
+        
+        # Get the specific event
+        event = get_object_or_404(ClassEvent, id=event_id, class_instance=class_instance)
+        
+        if request.method == 'GET':
+            serializer = ClassEventDetailSerializer(event)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        elif request.method == 'PUT':
+            serializer = ClassEventCreateUpdateSerializer(
+                event,
+                data=request.data,
+                context={'class_instance': class_instance},
+                partial=True
+            )
+            if serializer.is_valid():
+                updated_event = serializer.save()
+                response_serializer = ClassEventDetailSerializer(updated_event)
+                return Response(response_serializer.data, status=status.HTTP_200_OK)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        elif request.method == 'DELETE':
+            event.delete()
+            return Response(
+                {'message': 'Event deleted successfully'},
+                status=status.HTTP_204_NO_CONTENT
+            )
+    
+    except Class.DoesNotExist:
+        return Response(
+            {'error': 'Class not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except ClassEvent.DoesNotExist:
+        return Response(
+            {'error': 'Event not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        return Response(
+            {'error': 'Failed to process event', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
