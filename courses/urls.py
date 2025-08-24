@@ -7,6 +7,7 @@ urlpatterns = [
     # Public endpoints (for students/frontend)
     path('featured/', views.featured_courses, name='featured_courses'),
     path('public/', views.public_courses_list, name='public_courses_list'),
+    path('public/<uuid:course_id>/introduction/', views.course_introduction_detail, name='course_introduction_detail'),
     
     # Teacher endpoints
     path('teacher/', views.teacher_courses, name='teacher_courses'),

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Class, ClassEvent
+from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Class, ClassEvent, CourseIntroduction, CourseReview
 
 
 @admin.register(Course)
@@ -168,3 +168,82 @@ class ClassEventAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('class_instance', 'class_instance__course', 'lesson')
+
+
+@admin.register(CourseIntroduction)
+class CourseIntroductionAdmin(admin.ModelAdmin):
+    list_display = ['course', 'duration_weeks', 'max_students', 'sessions_per_week', 'total_projects', 'review_count', 'average_rating', 'created_at']
+    list_filter = ['duration_weeks', 'sessions_per_week', 'created_at']
+    search_fields = ['course__title', 'overview', 'prerequisites']
+    readonly_fields = ['id', 'review_count', 'average_rating', 'created_at', 'updated_at']
+    
+    fieldsets = (
+        ('Course Information', {
+            'fields': ('course',)
+        }),
+        ('Course Overview', {
+            'fields': ('overview', 'learning_objectives', 'prerequisites')
+        }),
+        ('Course Structure', {
+            'fields': ('duration_weeks', 'max_students', 'sessions_per_week', 'total_projects')
+        }),
+        ('Marketing', {
+            'fields': ('value_propositions', 'reviews')
+        }),
+        ('Statistics', {
+            'fields': ('review_count', 'average_rating'),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(CourseReview)
+class CourseReviewAdmin(admin.ModelAdmin):
+    list_display = ['student_name', 'course', 'rating', 'is_verified', 'is_featured', 'created_at']
+    list_filter = ['rating', 'is_verified', 'is_featured', 'student_age', 'created_at', 'course__category']
+    search_fields = ['student_name', 'review_text', 'course__title']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    actions = ['verify_reviews', 'unverify_reviews', 'feature_reviews', 'unfeature_reviews']
+    
+    def verify_reviews(self, request, queryset):
+        updated = queryset.update(is_verified=True)
+        self.message_user(request, f'{updated} reviews were marked as verified.')
+    verify_reviews.short_description = "Mark selected reviews as verified"
+    
+    def unverify_reviews(self, request, queryset):
+        updated = queryset.update(is_verified=False)
+        self.message_user(request, f'{updated} reviews were unmarked as verified.')
+    unverify_reviews.short_description = "Remove verified status from selected reviews"
+    
+    def feature_reviews(self, request, queryset):
+        updated = queryset.update(is_featured=True)
+        self.message_user(request, f'{updated} reviews were marked as featured.')
+    feature_reviews.short_description = "Mark selected reviews as featured"
+    
+    def unfeature_reviews(self, request, queryset):
+        updated = queryset.update(is_featured=False)
+        self.message_user(request, f'{updated} reviews were unmarked as featured.')
+    unfeature_reviews.short_description = "Remove featured status from selected reviews"
+    
+    fieldsets = (
+        ('Student Information', {
+            'fields': ('student_name', 'student_age')
+        }),
+        ('Review Content', {
+            'fields': ('course', 'rating', 'review_text')
+        }),
+        ('Review Management', {
+            'fields': ('is_verified', 'is_featured')
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('course')

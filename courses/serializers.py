@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Note, CourseIntroduction, Class, ClassEvent
+from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Note, CourseIntroduction, CourseReview, Class, ClassEvent
 
 User = get_user_model()
 
@@ -324,11 +324,20 @@ class FrontendCourseSerializer(serializers.ModelSerializer):
         ]
     
     def get_projects(self, obj):
-        # Generate project description based on course type
-        return f"Build {obj.total_lessons} projects"
+        # Use CourseIntroduction total_projects if available, otherwise fallback to lesson count
+        if hasattr(obj, 'introduction') and obj.introduction and obj.introduction.total_projects:
+            return f"Build {obj.introduction.total_projects} projects"
+        elif obj.total_lessons and obj.total_lessons > 0:
+            return f"Build {obj.total_lessons} projects"
+        return "Multiple projects"
     
     def get_classSize(self, obj):
-        return f"Max {obj.max_students} students"
+        # Use CourseIntroduction max_students if available, otherwise fallback to course max_students
+        if hasattr(obj, 'introduction') and obj.introduction and obj.introduction.max_students:
+            return f"Max {obj.introduction.max_students} students"
+        elif obj.max_students and obj.max_students > 0:
+            return f"Max {obj.max_students} students"
+        return "Small class size"
 
 
 class FeaturedCoursesSerializer(serializers.Serializer):
@@ -338,15 +347,74 @@ class FeaturedCoursesSerializer(serializers.Serializer):
     courses = FrontendCourseSerializer(many=True)
     
     def to_representation(self, instance):
-        # Filter only published and featured courses
+        # Filter only published and featured courses with CourseIntroduction prefetch
         featured_courses = Course.objects.filter(
             status='published',
             featured=True
-        ).order_by('-created_at')[:6]  # Limit to 6 featured courses
+        ).select_related('introduction').order_by('-created_at')[:6]  # Limit to 6 featured courses
         
         return {
             'courses': FrontendCourseSerializer(featured_courses, many=True).data
         }
+
+
+class CourseReviewSerializer(serializers.ModelSerializer):
+    """
+    Serializer for course reviews
+    """
+    display_name = serializers.ReadOnlyField()
+    star_rating = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = CourseReview
+        fields = [
+            'id', 'student_name', 'student_age', 'display_name', 
+            'rating', 'star_rating', 'review_text', 'is_verified', 
+            'is_featured', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+
+
+class CourseIntroductionDetailSerializer(serializers.ModelSerializer):
+    """
+    Detailed serializer for course introduction with reviews
+    """
+    # Course basic info
+    course_title = serializers.CharField(source='course.title', read_only=True)
+    course_description = serializers.CharField(source='course.description', read_only=True)
+    course_price = serializers.DecimalField(source='course.price', max_digits=10, decimal_places=2, read_only=True)
+    course_level = serializers.CharField(source='course.level', read_only=True)
+    course_age_range = serializers.CharField(source='course.age_range', read_only=True)
+    course_duration = serializers.CharField(source='course.duration', read_only=True)
+    course_features = serializers.JSONField(source='course.features', read_only=True)
+    course_certificate = serializers.BooleanField(source='course.certificate', read_only=True)
+    
+    # Reviews from both sources
+    model_reviews = CourseReviewSerializer(source='course.reviews', many=True, read_only=True)
+    json_reviews = serializers.JSONField(source='reviews', read_only=True)
+    
+    # Computed fields
+    average_rating = serializers.ReadOnlyField()
+    review_count = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = CourseIntroduction
+        fields = [
+            # Course basic info
+            'course_title', 'course_description', 'course_price', 'course_level',
+            'course_age_range', 'course_duration', 'course_features', 'course_certificate',
+            
+            # Introduction details
+            'overview', 'learning_objectives', 'prerequisites',
+            'duration_weeks', 'max_students', 'sessions_per_week', 'total_projects',
+            'value_propositions',
+            
+            # Reviews
+            'model_reviews', 'json_reviews', 'average_rating', 'review_count',
+            
+            # Metadata
+            'created_at', 'updated_at'
+        ]
 
 
 class LessonListSerializer(serializers.ModelSerializer):

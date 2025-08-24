@@ -830,3 +830,148 @@ class ClassEvent(models.Model):
     def save(self, *args, **kwargs):
         self.clean()
         super().save(*args, **kwargs)
+
+
+class CourseIntroduction(models.Model):
+    """
+    Extended course introduction and marketing information
+    """
+    course = models.OneToOneField(
+        Course,
+        on_delete=models.CASCADE,
+        related_name='introduction'
+    )
+    
+    # Course Overview
+    overview = models.TextField(help_text="Detailed course description")
+    learning_objectives = models.JSONField(
+        default=list,
+        help_text="List of learning objectives"
+    )
+    prerequisites = models.TextField(
+        blank=True,
+        help_text="What students should know before starting"
+    )
+    
+    # Course Structure
+    duration_weeks = models.PositiveIntegerField(
+        default=8,
+        help_text="Course duration in weeks"
+    )
+    max_students = models.PositiveIntegerField(
+        default=12,
+        help_text="Maximum number of students"
+    )
+    sessions_per_week = models.PositiveIntegerField(
+        default=2,
+        help_text="Number of sessions per week"
+    )
+    total_projects = models.PositiveIntegerField(
+        default=5,
+        help_text="Number of projects students will create"
+    )
+    
+    # Marketing Content
+    value_propositions = models.JSONField(
+        default=list,
+        help_text="List of course benefits"
+    )
+    reviews = models.JSONField(
+        default=list,
+        help_text="Student reviews and ratings"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Course Introduction"
+        verbose_name_plural = "Course Introductions"
+    
+    def __str__(self):
+        return f"Introduction for {self.course.title}"
+    
+    @property
+    def average_rating(self):
+        """Calculate average rating from reviews"""
+        if not self.reviews:
+            return 0
+        
+        ratings = [review.get('rating', 0) for review in self.reviews if review.get('rating')]
+        return sum(ratings) / len(ratings) if ratings else 0
+    
+    @property
+    def review_count(self):
+        """Get total number of reviews"""
+        # Count both JSONField reviews and CourseReview model reviews
+        json_reviews = len(self.reviews) if self.reviews else 0
+        model_reviews = self.course.reviews.count() if hasattr(self, 'course') else 0
+        return json_reviews + model_reviews
+
+
+class CourseReview(models.Model):
+    """
+    Individual course reviews and ratings
+    """
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name='reviews'
+    )
+    
+    # Student Information
+    student_name = models.CharField(
+        max_length=100,
+        help_text="Student's display name"
+    )
+    student_age = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(5), MaxValueValidator(18)],
+        help_text="Student's age when review was written"
+    )
+    
+    # Review Content
+    rating = models.PositiveIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        help_text="Rating from 1 to 5 stars"
+    )
+    review_text = models.TextField(help_text="Review content")
+    
+    # Review Management
+    is_verified = models.BooleanField(
+        default=False,
+        help_text="Admin verified this is a real review"
+    )
+    is_featured = models.BooleanField(
+        default=False,
+        help_text="Show this review prominently on course details"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-is_featured', '-created_at']
+        indexes = [
+            models.Index(fields=['course', '-created_at']),
+            models.Index(fields=['course', 'is_featured']),
+            models.Index(fields=['rating']),
+        ]
+    
+    def __str__(self):
+        return f"Review by {self.student_name} for {self.course.title} ({self.rating}★)"
+    
+    @property
+    def display_name(self):
+        """Get display name with age if available"""
+        if self.student_age:
+            return f"{self.student_name}, Age {self.student_age}"
+        return self.student_name
+    
+    @property
+    def star_rating(self):
+        """Get star rating as list of booleans for template rendering"""
+        return [i < self.rating for i in range(5)]

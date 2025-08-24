@@ -13,7 +13,7 @@ from .serializers import (
     LessonReorderSerializer, QuizListSerializer, QuizDetailSerializer,
     QuizCreateUpdateSerializer, QuestionListSerializer, QuestionDetailSerializer,
     QuestionCreateUpdateSerializer, NoteSerializer, NoteCreateSerializer,
-    CourseIntroductionSerializer, CourseIntroductionCreateSerializer,
+    CourseIntroductionSerializer, CourseIntroductionCreateSerializer, CourseIntroductionDetailSerializer,
     ClassListSerializer, ClassDetailSerializer, ClassCreateUpdateSerializer,
     StudentBasicSerializer, TeacherStudentDetailSerializer, TeacherStudentSummarySerializer
 )
@@ -50,7 +50,7 @@ def public_courses_list(request):
     Get all published courses for public viewing
     """
     try:
-        courses = Course.objects.filter(status='published').order_by('-featured', '-created_at')
+        courses = Course.objects.filter(status='published').select_related('introduction').order_by('-featured', '-created_at')
         
         # Apply pagination
         paginator = CoursesPagination()
@@ -66,6 +66,44 @@ def public_courses_list(request):
     except Exception as e:
         return Response(
             {'error': 'Failed to fetch courses', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def course_introduction_detail(request, course_id):
+    """
+    Get detailed course introduction for course details modal
+    """
+    try:
+        course = get_object_or_404(Course, id=course_id, status='published')
+        
+        # Get or create course introduction
+        introduction, created = CourseIntroduction.objects.get_or_create(
+            course=course,
+            defaults={
+                'overview': course.long_description or course.description,
+                'learning_objectives': course.features or [],
+                'prerequisites': '',
+                'duration_weeks': 8,
+                'max_students': course.max_students,
+                'sessions_per_week': 2,
+                'total_projects': 5,
+                'value_propositions': [],
+                'reviews': []
+            }
+        )
+        
+        # Prefetch related reviews
+        introduction = CourseIntroduction.objects.select_related('course').prefetch_related('course__reviews').get(id=introduction.id)
+        
+        serializer = CourseIntroductionDetailSerializer(introduction)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response(
+            {'error': 'Failed to fetch course introduction', 'details': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
