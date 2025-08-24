@@ -7,6 +7,160 @@ User = get_user_model()
 
 # ===== ENROLLED STUDENT SERIALIZERS =====
 
+class TeacherStudentDetailSerializer(serializers.ModelSerializer):
+    """
+    Comprehensive serializer for teacher's student management view
+    Includes all relevant student data across courses
+    """
+    # Student basic info
+    id = serializers.CharField(source='student_profile.user.id', read_only=True)
+    name = serializers.CharField(source='student_profile.user.get_full_name', read_only=True)
+    email = serializers.CharField(source='student_profile.user.email', read_only=True)
+    
+    # Child/Student specific info
+    child_name = serializers.SerializerMethodField()
+    child_email = serializers.CharField(source='student_profile.child_email', read_only=True)
+    child_phone = serializers.CharField(source='student_profile.child_phone', read_only=True)
+    grade_level = serializers.CharField(source='student_profile.grade_level', read_only=True)
+    age = serializers.ReadOnlyField(source='student_profile.age')
+    profile_image = serializers.CharField(source='student_profile.profile_image', read_only=True)
+    
+    # Parent/Guardian info
+    parent_name = serializers.CharField(source='student_profile.parent_name', read_only=True)
+    parent_email = serializers.CharField(source='student_profile.parent_email', read_only=True)
+    parent_phone = serializers.CharField(source='student_profile.parent_phone', read_only=True)
+    emergency_contact = serializers.CharField(source='student_profile.emergency_contact', read_only=True)
+    
+    # Course enrollment info
+    course_id = serializers.CharField(source='course.id', read_only=True)
+    course_title = serializers.CharField(source='course.title', read_only=True)
+    course_category = serializers.CharField(source='course.category', read_only=True)
+    
+    # Academic progress
+    enrollment_date = serializers.DateField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    progress_percentage = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
+    completed_lessons_count = serializers.IntegerField(read_only=True)
+    total_lessons_count = serializers.IntegerField(read_only=True)
+    current_lesson_title = serializers.CharField(source='current_lesson.title', read_only=True)
+    
+    # Performance metrics
+    overall_grade = serializers.CharField(read_only=True)
+    gpa_points = serializers.DecimalField(max_digits=3, decimal_places=2, read_only=True)
+    average_quiz_score = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
+    assignment_completion_rate = serializers.ReadOnlyField()
+    
+    # Engagement metrics
+    last_accessed = serializers.DateTimeField(read_only=True)
+    days_since_last_access = serializers.ReadOnlyField()
+    total_study_time = serializers.DurationField(read_only=True)
+    login_count = serializers.IntegerField(read_only=True)
+    is_at_risk = serializers.ReadOnlyField()
+    
+    # Financial info
+    payment_status = serializers.CharField(read_only=True)
+    amount_paid = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    payment_due_date = serializers.DateField(read_only=True)
+    
+    # Completion & certification
+    completion_date = serializers.DateField(read_only=True)
+    certificate_issued = serializers.BooleanField(read_only=True)
+    certificate_url = serializers.URLField(read_only=True)
+    
+    # Communication preferences
+    parent_notifications_enabled = serializers.BooleanField(read_only=True)
+    reminder_emails_enabled = serializers.BooleanField(read_only=True)
+    special_accommodations = serializers.CharField(read_only=True)
+    
+    class Meta:
+        fields = [
+            # Student basic info
+            'id', 'name', 'email', 'child_name', 'child_email', 'child_phone', 
+            'grade_level', 'age', 'profile_image',
+            
+            # Parent info
+            'parent_name', 'parent_email', 'parent_phone', 'emergency_contact',
+            
+            # Course info
+            'course_id', 'course_title', 'course_category',
+            
+            # Academic progress
+            'enrollment_date', 'status', 'progress_percentage', 'completed_lessons_count',
+            'total_lessons_count', 'current_lesson_title',
+            
+            # Performance
+            'overall_grade', 'gpa_points', 'average_quiz_score', 'assignment_completion_rate',
+            
+            # Engagement
+            'last_accessed', 'days_since_last_access', 'total_study_time', 'login_count', 'is_at_risk',
+            
+            # Financial
+            'payment_status', 'amount_paid', 'payment_due_date',
+            
+            # Completion
+            'completion_date', 'certificate_issued', 'certificate_url',
+            
+            # Communication
+            'parent_notifications_enabled', 'reminder_emails_enabled', 'special_accommodations'
+        ]
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from student.models import EnrolledCourse
+        self.Meta.model = EnrolledCourse
+    
+    def get_child_name(self, obj):
+        """Get the child's name from student profile"""
+        profile = obj.student_profile
+        child_name = f"{profile.child_first_name} {profile.child_last_name}".strip()
+        return child_name or profile.user.get_full_name()
+
+
+class TeacherStudentSummarySerializer(serializers.ModelSerializer):
+    """
+    Lightweight serializer for teacher's student list view
+    """
+    # Student basic info
+    id = serializers.CharField(source='student_profile.user.id', read_only=True)
+    name = serializers.CharField(source='student_profile.user.get_full_name', read_only=True)
+    email = serializers.CharField(source='student_profile.user.email', read_only=True)
+    child_name = serializers.SerializerMethodField()
+    profile_image = serializers.CharField(source='student_profile.profile_image', read_only=True)
+    
+    # Course info
+    course_title = serializers.CharField(source='course.title', read_only=True)
+    course_category = serializers.CharField(source='course.category', read_only=True)
+    
+    # Key metrics
+    enrollment_date = serializers.DateField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    progress_percentage = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
+    overall_grade = serializers.CharField(read_only=True)
+    average_quiz_score = serializers.DecimalField(max_digits=5, decimal_places=2, read_only=True)
+    last_accessed = serializers.DateTimeField(read_only=True)
+    is_at_risk = serializers.ReadOnlyField()
+    payment_status = serializers.CharField(read_only=True)
+    
+    class Meta:
+        fields = [
+            'id', 'name', 'email', 'child_name', 'profile_image',
+            'course_title', 'course_category', 'enrollment_date', 'status',
+            'progress_percentage', 'overall_grade', 'average_quiz_score',
+            'last_accessed', 'is_at_risk', 'payment_status'
+        ]
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from student.models import EnrolledCourse
+        self.Meta.model = EnrolledCourse
+    
+    def get_child_name(self, obj):
+        """Get the child's name from student profile"""
+        profile = obj.student_profile
+        child_name = f"{profile.child_first_name} {profile.child_last_name}".strip()
+        return child_name or profile.user.get_full_name()
+
+
 class EnrolledStudentSerializer(serializers.ModelSerializer):
     """Serializer for enrolled students in a course"""
     name = serializers.CharField(source='student_profile.user.get_full_name', read_only=True)

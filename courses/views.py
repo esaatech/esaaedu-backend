@@ -5,7 +5,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 
-from .models import Course, Lesson, Quiz, Question, Note, CourseIntroduction, Class, CourseEnrollment
+from .models import Course, Lesson, Quiz, Question, Note, CourseIntroduction, Class, CourseEnrollment, QuizAttempt
 from .serializers import (
     CourseListSerializer, CourseDetailSerializer, CourseCreateUpdateSerializer,
     FrontendCourseSerializer, FeaturedCoursesSerializer,
@@ -15,7 +15,7 @@ from .serializers import (
     QuestionCreateUpdateSerializer, NoteSerializer, NoteCreateSerializer,
     CourseIntroductionSerializer, CourseIntroductionCreateSerializer,
     ClassListSerializer, ClassDetailSerializer, ClassCreateUpdateSerializer,
-    StudentBasicSerializer
+    StudentBasicSerializer, TeacherStudentDetailSerializer, TeacherStudentSummarySerializer
 )
 
 
@@ -1114,6 +1114,158 @@ def course_enrolled_students(request, course_id):
         )
 
 
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def teacher_students(request):
+    """
+    Get all students enrolled in any course taught by the authenticated teacher
+    
+    Query Parameters:
+    - detail: 'true' for detailed view, 'false' for summary (default: false)
+    - course: Filter by specific course ID
+    - status: Filter by enrollment status (active, completed, dropped, etc.)
+    - search: Search by student name or email
+    - at_risk: 'true' to show only at-risk students
+    - page: Page number for pagination
+    - page_size: Number of results per page (default: 20, max: 100)
+    """
+    if request.user.role != 'teacher':
+        return Response(
+            {'error': 'Only teachers can access this endpoint'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    try:
+        from student.models import EnrolledCourse
+        from django.db.models import Q, Prefetch
+        from django.core.paginator import Paginator
+        
+        # Get query parameters
+        detail_view = request.GET.get('detail', 'false').lower() == 'true'
+        course_filter = request.GET.get('course')
+        status_filter = request.GET.get('status')
+        search_query = request.GET.get('search', '').strip()
+        at_risk_only = request.GET.get('at_risk', 'false').lower() == 'true'
+        page_num = int(request.GET.get('page', 1))
+        page_size = min(int(request.GET.get('page_size', 20)), 100)
+        
+        # Base queryset - all enrollments for teacher's courses
+        enrollments = EnrolledCourse.objects.filter(
+            course__teacher=request.user
+        ).select_related(
+            'student_profile__user',
+            'course',
+            'current_lesson'
+        ).prefetch_related(
+            Prefetch('student_profile')
+        )
+        
+        # Apply filters
+        if course_filter:
+            enrollments = enrollments.filter(course__id=course_filter)
+        
+        if status_filter:
+            enrollments = enrollments.filter(status=status_filter)
+        
+        if search_query:
+            enrollments = enrollments.filter(
+                Q(student_profile__user__first_name__icontains=search_query) |
+                Q(student_profile__user__last_name__icontains=search_query) |
+                Q(student_profile__user__email__icontains=search_query) |
+                Q(student_profile__child_first_name__icontains=search_query) |
+                Q(student_profile__child_last_name__icontains=search_query)
+            )
+        
+        # Filter for at-risk students
+        if at_risk_only:
+            # This will use the is_at_risk property from the model
+            # We need to filter in Python since it's a property, not a DB field
+            all_enrollments = list(enrollments)
+            enrollments = [e for e in all_enrollments if e.is_at_risk]
+            
+            # Convert back to queryset-like structure for pagination
+            from django.core.paginator import Paginator
+            paginator = Paginator(enrollments, page_size)
+            page_obj = paginator.get_page(page_num)
+            enrollments_page = page_obj.object_list
+            
+            # Serialize the data
+            if detail_view:
+                serializer = TeacherStudentDetailSerializer(enrollments_page, many=True)
+            else:
+                serializer = TeacherStudentSummarySerializer(enrollments_page, many=True)
+            
+            return Response({
+                'students': serializer.data,
+                'pagination': {
+                    'current_page': page_obj.number,
+                    'total_pages': paginator.num_pages,
+                    'total_students': paginator.count,
+                    'has_next': page_obj.has_next(),
+                    'has_previous': page_obj.has_previous(),
+                    'page_size': page_size
+                },
+                'filters_applied': {
+                    'course': course_filter,
+                    'status': status_filter,
+                    'search': search_query,
+                    'at_risk_only': at_risk_only,
+                    'detail_view': detail_view
+                }
+            }, status=status.HTTP_200_OK)
+        
+        # Regular pagination for non-at-risk filtering
+        enrollments = enrollments.order_by('-enrollment_date', 'student_profile__user__first_name')
+        
+        # Apply pagination
+        paginator = Paginator(enrollments, page_size)
+        page_obj = paginator.get_page(page_num)
+        
+        # Serialize the data
+        if detail_view:
+            serializer = TeacherStudentDetailSerializer(page_obj.object_list, many=True)
+        else:
+            serializer = TeacherStudentSummarySerializer(page_obj.object_list, many=True)
+        
+        # Get summary statistics
+        total_enrollments = enrollments.count()
+        active_students = enrollments.filter(status='active').count()
+        completed_students = enrollments.filter(status='completed').count()
+        at_risk_count = sum(1 for e in enrollments if e.is_at_risk)
+        
+        return Response({
+            'students': serializer.data,
+            'pagination': {
+                'current_page': page_obj.number,
+                'total_pages': paginator.num_pages,
+                'total_students': paginator.count,
+                'has_next': page_obj.has_next(),
+                'has_previous': page_obj.has_previous(),
+                'page_size': page_size
+            },
+            'summary': {
+                'total_enrollments': total_enrollments,
+                'active_students': active_students,
+                'completed_students': completed_students,
+                'at_risk_students': at_risk_count,
+                'unique_students': enrollments.values('student_profile__user').distinct().count()
+            },
+            'filters_applied': {
+                'course': course_filter,
+                'status': status_filter,
+                'search': search_query,
+                'at_risk_only': at_risk_only,
+                'detail_view': detail_view
+            }
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response(
+            {'error': 'Failed to fetch teacher students', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
 @api_view(['GET', 'POST'])
 @permission_classes([permissions.IsAuthenticated])
 def class_events(request, class_id):
@@ -1227,5 +1379,393 @@ def class_event_detail(request, class_id, event_id):
     except Exception as e:
         return Response(
             {'error': 'Failed to process event', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+# ===== QUIZ GRADING ENDPOINTS =====
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def teacher_quiz_submissions(request):
+    """
+    Get all quiz submissions (attempts) for the teacher's courses
+    Organized by lessons with ungraded and graded submissions
+    """
+    try:
+        # Ensure user is a teacher
+        if request.user.role != 'teacher':
+            return Response(
+                {'error': 'Only teachers can access quiz submissions'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get teacher's courses
+        teacher_courses = Course.objects.filter(teacher=request.user)
+        
+        # Check if filtering by specific student
+        student_id = request.GET.get('student_id')
+        student_filter = {}
+        if student_id:
+            student_filter['quiz__attempts__student_id'] = student_id
+        
+        # Get all lessons with quizzes for teacher's courses
+        lessons_with_quizzes = Lesson.objects.filter(
+            course__in=teacher_courses,
+            quiz__isnull=False,
+            **student_filter
+        ).select_related('quiz', 'course').prefetch_related('quiz__attempts__student').distinct()
+        
+        lessons_data = []
+        
+        for lesson in lessons_with_quizzes:
+            quiz = lesson.quiz
+            
+            # Get all quiz attempts for this quiz
+            quiz_attempts_filter = {
+                'quiz': quiz,
+                'completed_at__isnull': False  # Only completed attempts
+            }
+            
+            # Filter by student if specified
+            if student_id:
+                quiz_attempts_filter['student_id'] = student_id
+                
+            quiz_attempts = QuizAttempt.objects.filter(
+                **quiz_attempts_filter
+            ).select_related('student', 'enrollment').order_by('-completed_at')
+            
+            # Separate graded and ungraded attempts
+            # Check if there's a corresponding StudentGrade record
+            from student.models import StudentGrade
+            
+            ungraded_attempts = []
+            graded_attempts = []
+            
+            for attempt in quiz_attempts:
+                # Check if this attempt has been graded
+                has_grade = StudentGrade.objects.filter(
+                    quiz_attempt=attempt,
+                    grade_type='quiz'
+                ).exists()
+                
+                attempt_data = {
+                    'id': attempt.id,
+                    'student_id': attempt.student.id,
+                    'student_name': attempt.student.get_full_name(),
+                    'student_email': attempt.student.email,
+                    'submitted_at': attempt.completed_at,
+                    'time_spent': None,  # Calculate from started_at to completed_at
+                    'score': attempt.score,
+                    'points_earned': attempt.points_earned,
+                    'passed': attempt.passed,
+                    'answers': attempt.answers,
+                    'attempt_number': attempt.attempt_number
+                }
+                
+                # Calculate time spent
+                if attempt.started_at and attempt.completed_at:
+                    time_diff = attempt.completed_at - attempt.started_at
+                    attempt_data['time_spent'] = int(time_diff.total_seconds() / 60)  # minutes
+                
+                if has_grade:
+                    # Get the grade details
+                    grade = StudentGrade.objects.get(quiz_attempt=attempt, grade_type='quiz')
+                    attempt_data.update({
+                        'teacher_grade': {
+                            'percentage': float(grade.percentage),
+                            'letter_grade': grade.letter_grade,
+                            'points_earned': float(grade.points_earned),
+                            'points_possible': float(grade.points_possible),
+                            'teacher_comments': grade.teacher_comments,
+                            'graded_date': grade.graded_date,
+                            'graded_by': grade.graded_by.get_full_name()
+                        }
+                    })
+                    graded_attempts.append(attempt_data)
+                else:
+                    ungraded_attempts.append(attempt_data)
+            
+            # Only include lessons that have quiz attempts
+            if ungraded_attempts or graded_attempts:
+                lesson_data = {
+                    'id': lesson.id,
+                    'title': lesson.title,
+                    'description': lesson.description,
+                    'course_id': lesson.course.id,
+                    'course_title': lesson.course.title,
+                    'quiz': {
+                        'id': quiz.id,
+                        'title': quiz.title,
+                        'description': quiz.description,
+                        'time_limit': quiz.time_limit,
+                        'passing_score': quiz.passing_score,
+                        'total_points': quiz.total_points,
+                        'question_count': quiz.question_count,
+                        'questions': []  # We'll populate this when grading
+                    },
+                    'ungraded_attempts': ungraded_attempts,
+                    'graded_attempts': graded_attempts,
+                    'total_attempts': len(ungraded_attempts) + len(graded_attempts)
+                }
+                lessons_data.append(lesson_data)
+        
+        # Organize response
+        response_data = {
+            'lessons': lessons_data,
+            'summary': {
+                'total_lessons': len(lessons_data),
+                'total_ungraded': sum(len(lesson['ungraded_attempts']) for lesson in lessons_data),
+                'total_graded': sum(len(lesson['graded_attempts']) for lesson in lessons_data),
+                'teacher_courses': [{'id': course.id, 'title': course.title} for course in teacher_courses]
+            }
+        }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+    
+    except Exception as e:
+        return Response(
+            {'error': 'Failed to fetch quiz submissions', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def quiz_attempt_details(request, attempt_id):
+    """
+    Get detailed quiz attempt with questions and student answers for grading
+    """
+    try:
+        # Ensure user is a teacher
+        if request.user.role != 'teacher':
+            return Response(
+                {'error': 'Only teachers can access quiz attempts'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get the quiz attempt
+        attempt = get_object_or_404(
+            QuizAttempt.objects.select_related('quiz', 'student', 'enrollment'),
+            id=attempt_id,
+            quiz__lesson__course__teacher=request.user  # Ensure teacher owns the course
+        )
+        
+        # Get quiz questions
+        questions = Question.objects.filter(quiz=attempt.quiz).order_by('order')
+        
+        # Check if this attempt has been graded
+        from student.models import StudentGrade
+        grade = None
+        graded_questions_dict = {}
+        
+        try:
+            grade = StudentGrade.objects.get(quiz_attempt=attempt, grade_type='quiz')
+            # Convert graded_questions list to dict for easy lookup
+            for gq in grade.graded_questions:
+                graded_questions_dict[str(gq.get('question_id'))] = gq
+        except StudentGrade.DoesNotExist:
+            pass
+        
+        # Prepare questions data with student answers
+        questions_data = []
+        for question in questions:
+            question_data = {
+                'id': question.id,
+                'type': question.type,
+                'question': question.question_text,  # Fixed field name
+                'points': question.points,
+                'order': question.order,
+                'options': question.content.get('options', []) if question.type in ['multiple_choice', 'matching', 'ordering'] else None,
+                'correct_answer': question.content.get('correct_answer', None),  # Get from content JSON field
+                'explanation': question.explanation,
+                'student_answer': attempt.answers.get(str(question.id), None) if attempt.answers else None
+            }
+            
+            # Add grading information if available
+            question_id_str = str(question.id)
+            if question_id_str in graded_questions_dict:
+                graded_question = graded_questions_dict[question_id_str]
+                question_data.update({
+                    'teacher_grade': {
+                        'is_correct': graded_question.get('is_correct', False),
+                        'teacher_feedback': graded_question.get('teacher_feedback', ''),
+                        'points_earned': graded_question.get('points_earned', 0),
+                        'points_possible': graded_question.get('points_possible', question.points)
+                    }
+                })
+            else:
+                question_data['teacher_grade'] = None
+            questions_data.append(question_data)
+        
+        # Prepare response
+        response_data = {
+            'attempt': {
+                'id': attempt.id,
+                'student_name': attempt.student.get_full_name(),
+                'student_email': attempt.student.email,
+                'submitted_at': attempt.completed_at,
+                'time_spent': None,
+                'score': attempt.score,
+                'points_earned': attempt.points_earned,
+                'passed': attempt.passed,
+                'attempt_number': attempt.attempt_number
+            },
+            'quiz': {
+                'id': attempt.quiz.id,
+                'title': attempt.quiz.title,
+                'description': attempt.quiz.description,
+                'time_limit': attempt.quiz.time_limit,
+                'passing_score': attempt.quiz.passing_score,
+                'total_points': attempt.quiz.total_points,
+                'question_count': questions.count()
+            },
+            'lesson': {
+                'id': attempt.quiz.lesson.id,
+                'title': attempt.quiz.lesson.title,
+                'course_title': attempt.quiz.lesson.course.title
+            },
+            'questions': questions_data,
+            'grade': {
+                'id': grade.id if grade else None,
+                'percentage': float(grade.percentage) if grade else None,
+                'letter_grade': grade.letter_grade if grade else None,
+                'teacher_comments': grade.teacher_comments if grade else '',
+                'private_notes': grade.private_notes if grade else '',
+                'graded_date': grade.graded_date if grade else None,
+                'graded_by': grade.graded_by.get_full_name() if grade else None,
+                'is_graded': grade is not None
+            }
+        }
+        
+        # Calculate time spent
+        if attempt.started_at and attempt.completed_at:
+            time_diff = attempt.completed_at - attempt.started_at
+            response_data['attempt']['time_spent'] = int(time_diff.total_seconds() / 60)  # minutes
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+    
+    except Exception as e:
+        return Response(
+            {'error': 'Failed to fetch quiz attempt details', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def save_quiz_grade(request, attempt_id):
+    """
+    Save teacher's grading for a quiz attempt
+    """
+    try:
+        # Ensure user is a teacher
+        if request.user.role != 'teacher':
+            return Response(
+                {'error': 'Only teachers can grade quizzes'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get the quiz attempt
+        attempt = get_object_or_404(
+            QuizAttempt.objects.select_related('quiz', 'student', 'enrollment'),
+            id=attempt_id,
+            quiz__lesson__course__teacher=request.user  # Ensure teacher owns the course
+        )
+        
+        # Get request data
+        data = request.data
+        required_fields = ['percentage', 'points_earned', 'points_possible']
+        
+        for field in required_fields:
+            if field not in data:
+                return Response(
+                    {'error': f'Missing required field: {field}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        # Validate graded_questions if provided
+        graded_questions = data.get('graded_questions', [])
+        if graded_questions and not isinstance(graded_questions, list):
+            return Response(
+                {'error': 'graded_questions must be a list'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Import StudentGrade model
+        from student.models import StudentGrade
+        
+        # Create or update the grade record
+        grade, created = StudentGrade.objects.get_or_create(
+            quiz_attempt=attempt,
+            grade_type='quiz',
+            defaults={
+                'student': attempt.student,
+                'course': attempt.quiz.lesson.course,
+                'lesson': attempt.quiz.lesson,
+                'title': f"{attempt.quiz.title} - Attempt {attempt.attempt_number}",
+                'description': f"Quiz attempt for {attempt.quiz.lesson.title}",
+                'points_earned': data['points_earned'],
+                'points_possible': data['points_possible'],
+                'percentage': data['percentage'],
+                'assigned_date': attempt.started_at.date(),
+                'submitted_date': attempt.completed_at,
+                'graded_by': request.user,
+                'teacher_comments': data.get('teacher_comments', ''),
+                'private_notes': data.get('private_notes', ''),
+                'graded_questions': graded_questions
+            }
+        )
+        
+        if not created:
+            # Update existing grade
+            grade.points_earned = data['points_earned']
+            grade.points_possible = data['points_possible']
+            grade.percentage = data['percentage']
+            grade.teacher_comments = data.get('teacher_comments', '')
+            grade.private_notes = data.get('private_notes', '')
+            grade.graded_questions = graded_questions
+            grade.graded_by = request.user
+            grade.save()
+        
+        # Update the quiz attempt if needed
+        attempt.score = data['percentage']
+        attempt.points_earned = data['points_earned']
+        attempt.passed = data['percentage'] >= attempt.quiz.passing_score
+        attempt.save()
+        
+        # Update enrollment progress
+        try:
+            enrollment = attempt.enrollment
+            enrollment.update_progress()
+        except Exception as progress_error:
+            print(f"Warning: Failed to update enrollment progress: {progress_error}")
+            # Continue execution - this is not critical
+        
+        response_data = {
+            'message': 'Quiz graded successfully',
+            'grade': {
+                'id': str(grade.id),  # Convert UUID to string
+                'percentage': float(grade.percentage),
+                'letter_grade': grade.letter_grade,
+                'points_earned': float(grade.points_earned),
+                'points_possible': float(grade.points_possible),
+                'teacher_comments': grade.teacher_comments,
+                'graded_date': grade.graded_date.isoformat() if grade.graded_date else None,  # Convert datetime to ISO string
+                'created': created
+            },
+            'attempt': {
+                'id': str(attempt.id),  # Convert UUID to string
+                'score': float(attempt.score) if attempt.score else 0,
+                'points_earned': attempt.points_earned,
+                'passed': attempt.passed
+            }
+        }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+    
+    except Exception as e:
+        return Response(
+            {'error': 'Failed to save quiz grade', 'details': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

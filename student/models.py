@@ -373,6 +373,12 @@ class StudentGrade(models.Model):
     teacher_comments = models.TextField(blank=True)
     private_notes = models.TextField(blank=True, help_text="Private notes for teacher only")
     
+    # Question-level grading
+    graded_questions = models.JSONField(
+        default=list,
+        help_text="Individual question grades and feedback - list of {question_id, is_correct, teacher_feedback, points_earned, points_possible}"
+    )
+    
     # Dates
     assigned_date = models.DateField()
     due_date = models.DateField(null=True, blank=True)
