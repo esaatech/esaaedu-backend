@@ -52,4 +52,7 @@ urlpatterns = [
     path('student/enrolled/', views.student_enrolled_courses, name='student_enrolled_courses'),
     path('student/recommendations/', views.student_course_recommendations, name='student_course_recommendations'),
     path('student/enroll/', views.student_enroll_course, name='student_enroll_course'),
+    
+    # Course classes endpoint (for enrollment)
+    path('<uuid:course_id>/classes/', views.course_available_classes, name='course_available_classes'),
 ]

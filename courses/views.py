@@ -94,6 +94,48 @@ def course_introduction_detail(request, course_id):
         )
 
 
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def course_available_classes(request, course_id):
+    """
+    Get available classes for a specific course (for student enrollment)
+    """
+    try:
+        # Get the course
+        course = get_object_or_404(Course, id=course_id, status='published')
+        
+        # Get active classes for this course that have available spots
+        classes = Class.objects.filter(
+            course=course,
+            is_active=True
+        ).select_related('course', 'teacher').prefetch_related('students').order_by('name')
+        
+        # Filter classes with available spots
+        available_classes = []
+        for cls in classes:
+            if cls.student_count < cls.max_capacity:
+                available_classes.append({
+                    'id': cls.id,
+                    'name': cls.name,
+                    'description': cls.description,
+                    'max_capacity': cls.max_capacity,
+                    'student_count': cls.student_count,
+                    'course_id': cls.course.id,
+                    'course_title': cls.course.title,
+                    'schedule': cls.schedule,
+                    'teacher_name': cls.teacher.get_full_name() or cls.teacher.email,
+                    'available_spots': cls.available_spots
+                })
+        
+        return Response(available_classes, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response(
+            {'error': 'Failed to fetch available classes', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
 # ===== TEACHER ENDPOINTS =====
 
 @api_view(['GET', 'POST'])
@@ -1964,8 +2006,10 @@ def student_enroll_course(request):
     print(f"Request data: {request.data}")
     
     try:
-        # Get course ID from request
+        # Get course ID and class ID from request
         course_id = request.data.get('course_id')
+        class_id = request.data.get('class_id')  # Optional for now
+        
         if not course_id:
             return Response(
                 {'error': 'Course ID is required'},
@@ -2021,6 +2065,20 @@ def student_enroll_course(request):
                 total_lessons_count=course.total_lessons or 0
             )
             print(f"Created new enrollment: {existing_enrollment.id}")
+            
+            # If class is selected, add student to the class
+            if class_id:
+                try:
+                    selected_class = Class.objects.get(id=class_id, course=course, is_active=True)
+                    if selected_class.student_count < selected_class.max_capacity:
+                        selected_class.students.add(request.user)
+                        print(f"Added student to class: {selected_class.name}")
+                    else:
+                        print(f"Warning: Class {selected_class.name} is full, student not added to class")
+                except Class.DoesNotExist:
+                    print(f"Warning: Selected class {class_id} not found or not active")
+                except Exception as e:
+                    print(f"Warning: Failed to add student to class: {e}")
         
         print(f"Step 5: Preparing response...")
         # Return enrollment details
