@@ -1,8 +1,27 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Note, CourseIntroduction, CourseReview, Class, ClassEvent
+from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Note, CourseReview, Class, ClassEvent
 
 User = get_user_model()
+
+
+# ===== COURSE REVIEW SERIALIZER =====
+
+class CourseReviewSerializer(serializers.ModelSerializer):
+    """
+    Serializer for course reviews
+    """
+    display_name = serializers.ReadOnlyField()
+    star_rating = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = CourseReview
+        fields = [
+            'id', 'student_name', 'student_age', 'display_name', 
+            'rating', 'star_rating', 'review_text', 'is_verified', 
+            'is_featured', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
 
 
 # ===== ENROLLED STUDENT SERIALIZERS =====
@@ -211,7 +230,7 @@ class CourseListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Course
         fields = [
-            'id', 'title', 'description', 'category', 'age_range', 'duration', 
+            'id', 'title', 'description', 'category', 'age_range', 'duration_weeks', 'duration', 
             'level', 'price', 'featured', 'popular', 'color', 'icon',
             'max_students', 'schedule', 'certificate', 'status',
             'teacher_name', 'total_lessons', 'enrolled_students_count', 'active_students_count',
@@ -239,6 +258,11 @@ class CourseDetailSerializer(serializers.ModelSerializer):
     active_students_count = serializers.SerializerMethodField()
     is_featured_eligible = serializers.ReadOnlyField()
     
+    # Reviews and ratings
+    reviews = CourseReviewSerializer(many=True, read_only=True)
+    average_rating = serializers.SerializerMethodField()
+    review_count = serializers.SerializerMethodField()
+    
     # Optional fields based on query parameters
     enrolled_students = serializers.SerializerMethodField()
     enrollment_stats = serializers.SerializerMethodField()
@@ -246,10 +270,21 @@ class CourseDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Course
         fields = [
+            # Basic course info
             'id', 'title', 'description', 'long_description', 'category',
-            'age_range', 'duration', 'level', 'price', 'features',
-            'featured', 'popular', 'color', 'icon', 'max_students',
+            'age_range', 'level', 'price', 'features',
+            'featured', 'popular', 'color', 'icon', 'image', 'max_students',
             'schedule', 'certificate', 'status', 'teacher_name', 'teacher_id',
+            
+            # Introduction/detailed info (now part of Course model)
+            'overview', 'learning_objectives', 'prerequisites_text',
+            'duration_weeks', 'duration', 'sessions_per_week', 'total_projects',
+            'value_propositions',
+            
+            # Reviews and ratings
+            'reviews', 'average_rating', 'review_count',
+            
+            # Computed fields
             'total_lessons', 'total_duration_minutes', 'enrolled_students_count',
             'active_students_count', 'is_featured_eligible', 'enrolled_students', 
             'enrollment_stats', 'created_at', 'updated_at'
@@ -262,6 +297,18 @@ class CourseDetailSerializer(serializers.ModelSerializer):
     def get_active_students_count(self, obj):
         """Get active enrolled students count"""
         return getattr(obj, 'active_count', 0)
+    
+    def get_average_rating(self, obj):
+        """Calculate average rating from reviews"""
+        reviews = obj.reviews.all()
+        if not reviews:
+            return 0
+        total_rating = sum(review.rating for review in reviews)
+        return round(total_rating / len(reviews), 1)
+    
+    def get_review_count(self, obj):
+        """Get total number of reviews"""
+        return obj.reviews.count()
     
     def get_enrolled_students(self, obj):
         """Get enrolled students list if requested"""
@@ -287,10 +334,16 @@ class CourseCreateUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Course
         fields = [
+            # Basic course info
             'title', 'description', 'long_description', 'category',
-            'age_range', 'duration', 'level', 'price', 'features',
-            'featured', 'popular', 'color', 'icon', 'max_students',
-            'schedule', 'certificate', 'status'
+            'age_range', 'level', 'price', 'features',
+            'featured', 'popular', 'color', 'icon', 'image', 'max_students',
+            'schedule', 'certificate', 'status',
+            
+            # Introduction/detailed info
+            'overview', 'learning_objectives', 'prerequisites_text',
+            'duration_weeks', 'sessions_per_week', 'total_projects',
+            'value_propositions'
         ]
     
     def validate_price(self, value):
@@ -319,23 +372,21 @@ class FrontendCourseSerializer(serializers.ModelSerializer):
         model = Course
         fields = [
             'id', 'icon', 'title', 'description', 'longDescription',
-            'age', 'duration', 'level', 'color', 'projects', 'price',
+            'age', 'duration_weeks', 'duration', 'level', 'color', 'projects', 'price',
             'popular', 'featured', 'features', 'schedule', 'classSize', 'certificate'
         ]
     
     def get_projects(self, obj):
-        # Use CourseIntroduction total_projects if available, otherwise fallback to lesson count
-        if hasattr(obj, 'introduction') and obj.introduction and obj.introduction.total_projects:
-            return f"Build {obj.introduction.total_projects} projects"
+        # Use Course total_projects if available, otherwise fallback to lesson count
+        if obj.total_projects and obj.total_projects > 0:
+            return f"Build {obj.total_projects} projects"
         elif obj.total_lessons and obj.total_lessons > 0:
             return f"Build {obj.total_lessons} projects"
         return "Multiple projects"
     
     def get_classSize(self, obj):
-        # Use CourseIntroduction max_students if available, otherwise fallback to course max_students
-        if hasattr(obj, 'introduction') and obj.introduction and obj.introduction.max_students:
-            return f"Max {obj.introduction.max_students} students"
-        elif obj.max_students and obj.max_students > 0:
+        # Use Course max_students field directly
+        if obj.max_students and obj.max_students > 0:
             return f"Max {obj.max_students} students"
         return "Small class size"
 
@@ -347,74 +398,21 @@ class FeaturedCoursesSerializer(serializers.Serializer):
     courses = FrontendCourseSerializer(many=True)
     
     def to_representation(self, instance):
-        # Filter only published and featured courses with CourseIntroduction prefetch
+        # Filter only published and featured courses
         featured_courses = Course.objects.filter(
             status='published',
             featured=True
-        ).select_related('introduction').order_by('-created_at')[:6]  # Limit to 6 featured courses
+        ).select_related('teacher').order_by('-created_at')[:6]  # Limit to 6 featured courses
         
         return {
             'courses': FrontendCourseSerializer(featured_courses, many=True).data
         }
 
 
-class CourseReviewSerializer(serializers.ModelSerializer):
-    """
-    Serializer for course reviews
-    """
-    display_name = serializers.ReadOnlyField()
-    star_rating = serializers.ReadOnlyField()
-    
-    class Meta:
-        model = CourseReview
-        fields = [
-            'id', 'student_name', 'student_age', 'display_name', 
-            'rating', 'star_rating', 'review_text', 'is_verified', 
-            'is_featured', 'created_at'
-        ]
-        read_only_fields = ['id', 'created_at']
+# CourseReviewSerializer moved to top of file
 
 
-class CourseIntroductionDetailSerializer(serializers.ModelSerializer):
-    """
-    Detailed serializer for course introduction with reviews
-    """
-    # Course basic info
-    course_title = serializers.CharField(source='course.title', read_only=True)
-    course_description = serializers.CharField(source='course.description', read_only=True)
-    course_price = serializers.DecimalField(source='course.price', max_digits=10, decimal_places=2, read_only=True)
-    course_level = serializers.CharField(source='course.level', read_only=True)
-    course_age_range = serializers.CharField(source='course.age_range', read_only=True)
-    course_duration = serializers.CharField(source='course.duration', read_only=True)
-    course_features = serializers.JSONField(source='course.features', read_only=True)
-    course_certificate = serializers.BooleanField(source='course.certificate', read_only=True)
-    
-    # Reviews from both sources
-    model_reviews = CourseReviewSerializer(source='course.reviews', many=True, read_only=True)
-    json_reviews = serializers.JSONField(source='reviews', read_only=True)
-    
-    # Computed fields
-    average_rating = serializers.ReadOnlyField()
-    review_count = serializers.ReadOnlyField()
-    
-    class Meta:
-        model = CourseIntroduction
-        fields = [
-            # Course basic info
-            'course_title', 'course_description', 'course_price', 'course_level',
-            'course_age_range', 'course_duration', 'course_features', 'course_certificate',
-            
-            # Introduction details
-            'overview', 'learning_objectives', 'prerequisites',
-            'duration_weeks', 'max_students', 'sessions_per_week', 'total_projects',
-            'value_propositions',
-            
-            # Reviews
-            'model_reviews', 'json_reviews', 'average_rating', 'review_count',
-            
-            # Metadata
-            'created_at', 'updated_at'
-        ]
+# CourseIntroductionDetailSerializer removed - now using CourseDetailSerializer directly
 
 
 class LessonListSerializer(serializers.ModelSerializer):
@@ -727,41 +725,7 @@ class NoteCreateSerializer(serializers.ModelSerializer):
         fields = ['title', 'content', 'category']
 
 
-class CourseIntroductionSerializer(serializers.ModelSerializer):
-    """
-    Serializer for CourseIntroduction model
-    """
-    average_rating = serializers.SerializerMethodField()
-    review_count = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = CourseIntroduction
-        fields = [
-            'id', 'overview', 'learning_objectives', 'prerequisites',
-            'duration_weeks', 'max_students', 'sessions_per_week', 'total_projects',
-            'value_propositions', 'reviews', 'average_rating', 'review_count',
-            'created_at', 'updated_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
-    
-    def get_average_rating(self, obj):
-        return obj.get_average_rating()
-    
-    def get_review_count(self, obj):
-        return obj.get_review_count()
-
-
-class CourseIntroductionCreateSerializer(serializers.ModelSerializer):
-    """
-    Serializer for creating/updating CourseIntroduction
-    """
-    class Meta:
-        model = CourseIntroduction
-        fields = [
-            'overview', 'learning_objectives', 'prerequisites',
-            'duration_weeks', 'max_students', 'sessions_per_week', 'total_projects',
-            'value_propositions'
-        ]
+# CourseIntroduction serializers removed - now using Course serializers directly
 
 
 # ===== CLASS SERIALIZERS =====

@@ -5,7 +5,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 
-from .models import Course, Lesson, Quiz, Question, Note, CourseIntroduction, Class, CourseEnrollment, QuizAttempt
+from .models import Course, Lesson, Quiz, Question, Note, Class, CourseEnrollment, QuizAttempt
+from student.models import EnrolledCourse
 from .serializers import (
     CourseListSerializer, CourseDetailSerializer, CourseCreateUpdateSerializer,
     FrontendCourseSerializer, FeaturedCoursesSerializer,
@@ -13,7 +14,7 @@ from .serializers import (
     LessonReorderSerializer, QuizListSerializer, QuizDetailSerializer,
     QuizCreateUpdateSerializer, QuestionListSerializer, QuestionDetailSerializer,
     QuestionCreateUpdateSerializer, NoteSerializer, NoteCreateSerializer,
-    CourseIntroductionSerializer, CourseIntroductionCreateSerializer, CourseIntroductionDetailSerializer,
+
     ClassListSerializer, ClassDetailSerializer, ClassCreateUpdateSerializer,
     StudentBasicSerializer, TeacherStudentDetailSerializer, TeacherStudentSummarySerializer
 )
@@ -50,7 +51,7 @@ def public_courses_list(request):
     Get all published courses for public viewing
     """
     try:
-        courses = Course.objects.filter(status='published').select_related('introduction').order_by('-featured', '-created_at')
+        courses = Course.objects.filter(status='published').select_related('teacher').order_by('-featured', '-created_at')
         
         # Apply pagination
         paginator = CoursesPagination()
@@ -74,31 +75,16 @@ def public_courses_list(request):
 @permission_classes([permissions.AllowAny])
 def course_introduction_detail(request, course_id):
     """
-    Get detailed course introduction for course details modal
+    Get detailed course information for course details modal
+    Now working directly with Course model (no separate CourseIntroduction)
     """
     try:
         course = get_object_or_404(Course, id=course_id, status='published')
         
-        # Get or create course introduction
-        introduction, created = CourseIntroduction.objects.get_or_create(
-            course=course,
-            defaults={
-                'overview': course.long_description or course.description,
-                'learning_objectives': course.features or [],
-                'prerequisites': '',
-                'duration_weeks': 8,
-                'max_students': course.max_students,
-                'sessions_per_week': 2,
-                'total_projects': 5,
-                'value_propositions': [],
-                'reviews': []
-            }
-        )
-        
         # Prefetch related reviews
-        introduction = CourseIntroduction.objects.select_related('course').prefetch_related('course__reviews').get(id=introduction.id)
+        course = Course.objects.select_related('teacher').prefetch_related('reviews').get(id=course_id, status='published')
         
-        serializer = CourseIntroductionDetailSerializer(introduction)
+        serializer = CourseDetailSerializer(course)
         return Response(serializer.data, status=status.HTTP_200_OK)
         
     except Exception as e:
@@ -835,8 +821,8 @@ def lesson_note_detail(request, lesson_id, note_id):
 @permission_classes([permissions.IsAuthenticated])
 def course_introduction(request, course_id):
     """
-    GET: Get course introduction data
-    PUT: Update course introduction data
+    GET/PUT: Get or update course introduction data (now working directly with Course model)
+    No more separate CourseIntroduction table - all data is in the Course model
     """
     if request.user.role != 'teacher':
         return Response(
@@ -859,69 +845,14 @@ def course_introduction(request, course_id):
             status=status.HTTP_403_FORBIDDEN
         )
     
-    # Get or create introduction
-    introduction, created = CourseIntroduction.objects.get_or_create(
-        course=course,
-        defaults={
-            'overview': course.long_description or course.description,
-            'learning_objectives': [
-                'Visual block-based coding',
-                'Game creation', 
-                'Problem-solving skills',
-                'Interactive storytelling',
-                'Animation basics'
-            ],
-            'prerequisites': 'No prior experience required',
-            'duration_weeks': int(course.duration.split()[0]) if course.duration and course.duration.split() else 8,
-            'max_students': course.max_students,
-            'sessions_per_week': int(course.schedule.split()[0]) if course.schedule and course.schedule.split() else 2,
-            'total_projects': 5,
-            'value_propositions': [
-                {
-                    'title': 'Hands-On Learning',
-                    'description': 'Interactive projects and real-world applications',
-                    'icon': 'play'
-                },
-                {
-                    'title': 'Small Classes',
-                    'description': 'Personalized attention for every student',
-                    'icon': 'users'
-                },
-                {
-                    'title': 'Certification',
-                    'description': 'Recognized completion certificate',
-                    'icon': 'award'
-                }
-            ]
-        }
-    )
-    
-    # Always sync with current course data (for existing introductions)
-    if not created:
-        # Update introduction with current course data
-        introduction.overview = course.long_description or course.description
-        introduction.max_students = course.max_students
-        
-        # Parse duration from course.duration (e.g., "8 weeks" -> 8)
-        if course.duration and course.duration.split():
-            try:
-                introduction.duration_weeks = int(course.duration.split()[0])
-            except (ValueError, IndexError):
-                pass
-        
-        # Parse sessions from course.schedule (e.g., "2 sessions per week" -> 2)
-        if course.schedule and course.schedule.split():
-            try:
-                introduction.sessions_per_week = int(course.schedule.split()[0])
-            except (ValueError, IndexError):
-                pass
-        
-        introduction.save()
-    
     if request.method == 'GET':
+        # Return course data with all introduction fields
         try:
-            serializer = CourseIntroductionSerializer(introduction)
+            # Prefetch related reviews for the course
+            course = Course.objects.select_related('teacher').prefetch_related('reviews').get(id=course_id)
+            serializer = CourseDetailSerializer(course)
             return Response(serializer.data, status=status.HTTP_200_OK)
+            
         except Exception as e:
             return Response(
                 {'error': 'Failed to retrieve course introduction', 'details': str(e)},
@@ -929,40 +860,22 @@ def course_introduction(request, course_id):
             )
     
     elif request.method == 'PUT':
+        # Update course introduction fields directly on the Course model
         try:
-            serializer = CourseIntroductionCreateSerializer(
-                introduction,
+            serializer = CourseCreateUpdateSerializer(
+                course,
                 data=request.data,
                 partial=True
             )
             if serializer.is_valid():
-                updated_intro = serializer.save()
+                updated_course = serializer.save()
                 
-                # Sync changes back to main course
-                try:
-                    course = updated_intro.course
-                    
-                    # Update course fields based on introduction changes
-                    if 'overview' in request.data:
-                        course.long_description = updated_intro.overview
-                    
-                    if 'max_students' in request.data:
-                        course.max_students = updated_intro.max_students
-                    
-                    if 'duration_weeks' in request.data:
-                        course.duration = f"{updated_intro.duration_weeks} weeks"
-                    
-                    if 'sessions_per_week' in request.data:
-                        course.schedule = f"{updated_intro.sessions_per_week} sessions per week"
-                    
-                    course.save()
-                except Exception as e:
-                    # Log error but don't fail the introduction update
-                    print(f"Warning: Failed to sync introduction changes to course: {e}")
-                
-                response_serializer = CourseIntroductionSerializer(updated_intro)
+                # Return the updated course
+                response_serializer = CourseDetailSerializer(updated_course)
                 return Response(response_serializer.data, status=status.HTTP_200_OK)
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                
         except Exception as e:
             return Response(
                 {'error': 'Failed to update course introduction', 'details': str(e)},
@@ -1805,5 +1718,334 @@ def save_quiz_grade(request, attempt_id):
     except Exception as e:
         return Response(
             {'error': 'Failed to save quiz grade', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+# ===== STUDENT ENROLLMENT ENDPOINTS =====
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def student_enrolled_courses(request):
+    """
+    Get all courses the current student is enrolled in
+    """
+    print(f"=== DEBUGGING student_enrolled_courses ===")
+    print(f"Request method: {request.method}")
+    print(f"Request user: {request.user}")
+    print(f"User authenticated: {request.user.is_authenticated}")
+    print(f"User email: {getattr(request.user, 'email', 'No email')}")
+    print(f"User role: {getattr(request.user, 'role', 'No role')}")
+    
+    try:
+        print("Step 1: Getting student profile...")
+        # Get student profile
+        student_profile = getattr(request.user, 'student_profile', None)
+        print(f"Student profile found: {student_profile}")
+        
+        if not student_profile:
+            print("ERROR: No student profile found for user")
+            return Response({
+                'enrolled_courses': [],
+                'message': 'Student profile not found'
+            }, status=status.HTTP_200_OK)
+        
+        print("Step 2: Querying enrolled courses...")
+        # Get enrolled courses
+        enrolled_courses = EnrolledCourse.objects.filter(
+            student_profile=student_profile,
+            status__in=['active', 'completed']
+        ).select_related('course', 'current_lesson').order_by('-enrollment_date')
+        
+        print(f"Found {enrolled_courses.count()} enrolled courses")
+        
+        courses_data = []
+        for i, enrollment in enumerate(enrolled_courses):
+            print(f"Step 3.{i+1}: Processing enrollment {enrollment.id}...")
+            course = enrollment.course
+            print(f"Course: {course.title}")
+            
+            try:
+                # Get course image (fallback to placeholder)
+                print(f"Getting course image...")
+                course_image = getattr(course, 'image', None)
+                if course_image:
+                    image_url = course_image.url if hasattr(course_image, 'url') else str(course_image)
+                else:
+                    image_url = "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=300&h=200&fit=crop"
+                print(f"Image URL: {image_url}")
+                
+                # Calculate next lesson
+                print(f"Calculating next lesson...")
+                next_lesson = "Course Completed!" if enrollment.status == 'completed' else (
+                    enrollment.current_lesson.title if enrollment.current_lesson else "Start Learning"
+                )
+                print(f"Next lesson: {next_lesson}")
+                
+                # Get instructor name
+                print(f"Getting instructor name...")
+                instructor_name = "Little Learners Tech"
+                if hasattr(course, 'instructor') and course.instructor:
+                    instructor_name = course.instructor.get_full_name() or course.instructor.email
+                print(f"Instructor: {instructor_name}")
+                
+                print(f"Building course data...")
+                course_data = {
+                    'id': str(course.id),  # Ensure it's a string
+                    'title': course.title,
+                    'description': course.description,
+                    'instructor': instructor_name,
+                    'image': image_url,
+                    'progress': float(enrollment.progress_percentage),
+                    'total_lessons': enrollment.total_lessons_count,
+                    'completed_lessons': enrollment.completed_lessons_count,
+                    'next_lesson': next_lesson,
+                    'status': enrollment.status,
+                    'enrollment_date': enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
+                    'last_accessed': enrollment.last_accessed.isoformat() if enrollment.last_accessed else None,
+                    'overall_grade': enrollment.overall_grade,
+                    'average_quiz_score': float(enrollment.average_quiz_score) if enrollment.average_quiz_score else None,
+                    'difficulty': getattr(course, 'difficulty_level', 'beginner'),
+                    'category': course.category,
+                    'rating': 4.8,  # Default rating - can be calculated from reviews later
+                }
+                courses_data.append(course_data)
+                print(f"Course data added successfully")
+                
+            except Exception as course_error:
+                print(f"ERROR processing course {course.title}: {course_error}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        print(f"Step 4: Returning response with {len(courses_data)} courses")
+        response_data = {
+            'enrolled_courses': courses_data,
+            'total_enrolled': len(courses_data)
+        }
+        print(f"Response data: {response_data}")
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+    
+    except Exception as e:
+        print(f"CRITICAL ERROR in student_enrolled_courses: {e}")
+        import traceback
+        traceback.print_exc()
+        return Response(
+            {'error': 'Failed to fetch enrolled courses', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def student_course_recommendations(request):
+    """
+    Get course recommendations for the current student
+    """
+    print(f"=== DEBUGGING student_course_recommendations ===")
+    print(f"Request method: {request.method}")
+    print(f"Request user: {request.user}")
+    print(f"User authenticated: {request.user.is_authenticated}")
+    print(f"User email: {getattr(request.user, 'email', 'No email')}")
+    print(f"User role: {getattr(request.user, 'role', 'No role')}")
+    
+    try:
+        print("Step 1: Getting student profile...")
+        # Get student profile
+        student_profile = getattr(request.user, 'student_profile', None)
+        print(f"Student profile found: {student_profile}")
+        
+        print("Step 2: Getting enrolled course IDs to exclude...")
+        # Get already enrolled course IDs to exclude
+        enrolled_course_ids = []
+        if student_profile:
+            enrolled_course_ids = list(
+                EnrolledCourse.objects.filter(
+                    student_profile=student_profile,
+                    status__in=['active', 'completed']
+                ).values_list('course_id', flat=True)
+            )
+        print(f"Enrolled course IDs to exclude: {enrolled_course_ids}")
+        
+        print("Step 3: Querying recommended courses...")
+        # Get recommended courses (featured + not enrolled)
+        recommended_courses = Course.objects.filter(
+            status='published',  # Use status instead of is_published
+            featured=True        # Use featured instead of is_featured
+        ).exclude(id__in=enrolled_course_ids)[:6]
+        
+        print(f"Found {recommended_courses.count()} recommended courses")
+        
+        courses_data = []
+        for i, course in enumerate(recommended_courses):
+            print(f"Step 4.{i+1}: Processing course {course.title}...")
+            
+            try:
+                # Get course image
+                print(f"Getting course image...")
+                course_image = getattr(course, 'image', None)
+                if course_image:
+                    image_url = course_image.url if hasattr(course_image, 'url') else str(course_image)
+                else:
+                    image_url = "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=300&h=200&fit=crop"
+                print(f"Image URL: {image_url}")
+                
+                # Get instructor name
+                print(f"Getting instructor name...")
+                instructor_name = "Little Learners Tech"
+                if hasattr(course, 'teacher') and course.teacher:  # Use 'teacher' instead of 'instructor'
+                    instructor_name = course.teacher.get_full_name() or course.teacher.email
+                print(f"Instructor: {instructor_name}")
+                
+                # Get course details
+                print(f"Getting course details...")
+                total_lessons = getattr(course, 'total_lessons', 12)
+                duration = getattr(course, 'duration', '8 weeks')
+                max_students = getattr(course, 'max_students', 12)
+                difficulty = getattr(course, 'level', 'beginner')  # Use 'level' instead of 'difficulty_level'
+                
+                print(f"Course details - Lessons: {total_lessons}, Duration: {duration}, Max students: {max_students}")
+                
+                print(f"Building course data...")
+                course_data = {
+                    'id': str(course.id),
+                    'uuid': str(course.id),
+                    'title': course.title,
+                    'description': course.description,
+                    'instructor': instructor_name,
+                    'image': image_url,
+                    'total_lessons': total_lessons,
+                    'duration': duration,
+                    'max_students': max_students,
+                    'difficulty': difficulty,
+                    'category': course.category,
+                    'rating': 4.8,  # Default rating
+                    'price': "Free" if not course.price or course.price == 0 else f"${course.price}",
+                    'enrolled_students': 0,  # Can be calculated from enrollments
+                }
+                courses_data.append(course_data)
+                print(f"Course data added successfully")
+                
+            except Exception as course_error:
+                print(f"ERROR processing course {course.title}: {course_error}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        print(f"Step 5: Returning response with {len(courses_data)} courses")
+        response_data = {
+            'recommended_courses': courses_data,
+            'total_recommendations': len(courses_data)
+        }
+        print(f"Response data: {response_data}")
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+    
+    except Exception as e:
+        print(f"CRITICAL ERROR in student_course_recommendations: {e}")
+        import traceback
+        traceback.print_exc()
+        return Response(
+            {'error': 'Failed to fetch course recommendations', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def student_enroll_course(request):
+    """
+    Enroll the current student in a course
+    """
+    print(f"=== DEBUGGING student_enroll_course ===")
+    print(f"Request method: {request.method}")
+    print(f"Request user: {request.user}")
+    print(f"Request data: {request.data}")
+    
+    try:
+        # Get course ID from request
+        course_id = request.data.get('course_id')
+        if not course_id:
+            return Response(
+                {'error': 'Course ID is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        print(f"Step 1: Getting student profile...")
+        # Get student profile
+        student_profile = getattr(request.user, 'student_profile', None)
+        if not student_profile:
+            return Response(
+                {'error': 'Student profile not found. Please complete your profile setup.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        print(f"Step 2: Getting course...")
+        # Get course
+        try:
+            course = Course.objects.get(id=course_id, status='published')
+        except Course.DoesNotExist:
+            return Response(
+                {'error': 'Course not found or not available for enrollment'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        print(f"Step 3: Checking existing enrollment...")
+        # Check if already enrolled
+        existing_enrollment = EnrolledCourse.objects.filter(
+            student_profile=student_profile,
+            course=course
+        ).first()
+        
+        if existing_enrollment:
+            if existing_enrollment.status in ['active', 'completed']:
+                return Response(
+                    {'error': 'You are already enrolled in this course'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            else:
+                # Reactivate dropped/paused enrollment
+                existing_enrollment.status = 'active'
+                existing_enrollment.save()
+                print(f"Reactivated existing enrollment")
+        else:
+            print(f"Step 4: Creating new enrollment...")
+            # Create new enrollment
+            existing_enrollment = EnrolledCourse.objects.create(
+                student_profile=student_profile,
+                course=course,
+                status='active',
+                enrolled_by=request.user,
+                payment_status='free',  # Default to free for now
+                total_lessons_count=course.total_lessons or 0
+            )
+            print(f"Created new enrollment: {existing_enrollment.id}")
+        
+        print(f"Step 5: Preparing response...")
+        # Return enrollment details
+        response_data = {
+            'message': f'Successfully enrolled in {course.title}',
+            'enrollment': {
+                'id': str(existing_enrollment.id),
+                'course_id': str(course.id),
+                'course_title': course.title,
+                'status': existing_enrollment.status,
+                'enrollment_date': existing_enrollment.enrollment_date.isoformat(),
+                'progress': float(existing_enrollment.progress_percentage),
+                'total_lessons': existing_enrollment.total_lessons_count,
+                'completed_lessons': existing_enrollment.completed_lessons_count,
+            }
+        }
+        
+        print(f"Enrollment successful: {response_data}")
+        return Response(response_data, status=status.HTTP_201_CREATED)
+    
+    except Exception as e:
+        print(f"CRITICAL ERROR in student_enroll_course: {e}")
+        import traceback
+        traceback.print_exc()
+        return Response(
+            {'error': 'Failed to enroll in course', 'details': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

@@ -47,4 +47,9 @@ urlpatterns = [
     path('teacher/quiz-submissions/', views.teacher_quiz_submissions, name='teacher_quiz_submissions'),
     path('teacher/quiz-attempts/<uuid:attempt_id>/', views.quiz_attempt_details, name='quiz_attempt_details'),
     path('teacher/quiz-attempts/<uuid:attempt_id>/grade/', views.save_quiz_grade, name='save_quiz_grade'),
+    
+    # Student enrollment endpoints
+    path('student/enrolled/', views.student_enrolled_courses, name='student_enrolled_courses'),
+    path('student/recommendations/', views.student_course_recommendations, name='student_course_recommendations'),
+    path('student/enroll/', views.student_enroll_course, name='student_enroll_course'),
 ]

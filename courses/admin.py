@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Class, ClassEvent, CourseIntroduction, CourseReview
+from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Class, ClassEvent, CourseReview
 
 
 @admin.register(Course)
@@ -30,10 +30,15 @@ class CourseAdmin(admin.ModelAdmin):
             'fields': ('title', 'description', 'long_description', 'teacher', 'category')
         }),
         ('Course Details', {
-            'fields': ('age_range', 'duration', 'level', 'price', 'features')
+            'fields': ('age_range', 'level', 'price', 'features')
+        }),
+        ('Introduction/Detailed Info', {
+            'fields': ('overview', 'learning_objectives', 'prerequisites_text', 
+                      'duration_weeks', 'sessions_per_week', 'total_projects', 'value_propositions'),
+            'classes': ('collapse',)
         }),
         ('Display & Marketing', {
-            'fields': ('featured', 'popular', 'color', 'icon')
+            'fields': ('featured', 'popular', 'color', 'icon', 'image')
         }),
         ('Settings', {
             'fields': ('max_students', 'schedule', 'certificate', 'status')
@@ -170,35 +175,7 @@ class ClassEventAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related('class_instance', 'class_instance__course', 'lesson')
 
 
-@admin.register(CourseIntroduction)
-class CourseIntroductionAdmin(admin.ModelAdmin):
-    list_display = ['course', 'duration_weeks', 'max_students', 'sessions_per_week', 'total_projects', 'review_count', 'average_rating', 'created_at']
-    list_filter = ['duration_weeks', 'sessions_per_week', 'created_at']
-    search_fields = ['course__title', 'overview', 'prerequisites']
-    readonly_fields = ['id', 'review_count', 'average_rating', 'created_at', 'updated_at']
-    
-    fieldsets = (
-        ('Course Information', {
-            'fields': ('course',)
-        }),
-        ('Course Overview', {
-            'fields': ('overview', 'learning_objectives', 'prerequisites')
-        }),
-        ('Course Structure', {
-            'fields': ('duration_weeks', 'max_students', 'sessions_per_week', 'total_projects')
-        }),
-        ('Marketing', {
-            'fields': ('value_propositions', 'reviews')
-        }),
-        ('Statistics', {
-            'fields': ('review_count', 'average_rating'),
-            'classes': ('collapse',)
-        }),
-        ('Metadata', {
-            'fields': ('id', 'created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
-    )
+# CourseIntroduction admin removed - all fields are now managed in CourseAdmin
 
 
 @admin.register(CourseReview)

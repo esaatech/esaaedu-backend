@@ -40,7 +40,6 @@ class Course(models.Model):
     
     # Course Details (matching frontend structure)
     age_range = models.CharField(max_length=50, help_text="Target age range (e.g., 'Ages 6-10')")
-    duration = models.CharField(max_length=50, help_text="Course duration (e.g., '8 weeks')")
     level = models.CharField(max_length=20, choices=LEVEL_CHOICES, default='beginner')
     
     # Pricing & Features
@@ -53,6 +52,36 @@ class Course(models.Model):
     features = models.JSONField(
         default=list, 
         help_text="List of course features/highlights"
+    )
+    
+    # Introduction/Detailed Information (filled in later)
+    overview = models.TextField(
+        blank=True, 
+        help_text="Detailed course overview (extended description)"
+    )
+    learning_objectives = models.JSONField(
+        default=list, 
+        help_text="Detailed learning objectives"
+    )
+    prerequisites_text = models.TextField(
+        blank=True, 
+        help_text="Text description of prerequisites"
+    )
+    duration_weeks = models.PositiveIntegerField(
+        default=8, 
+        help_text="Course duration in weeks"
+    )
+    sessions_per_week = models.PositiveIntegerField(
+        default=2, 
+        help_text="Number of sessions per week"
+    )
+    total_projects = models.PositiveIntegerField(
+        default=5, 
+        help_text="Number of projects students will create"
+    )
+    value_propositions = models.JSONField(
+        default=list, 
+        help_text="List of course benefits and value propositions"
     )
     
     # Display & Marketing
@@ -73,6 +102,12 @@ class Course(models.Model):
         max_length=50, 
         default="Code",
         help_text="Lucide icon name for course"
+    )
+    image = models.ImageField(
+        upload_to='course_images/',
+        blank=True,
+        null=True,
+        help_text="Course cover image (optional)"
     )
     
     # Course Management
@@ -128,6 +163,25 @@ class Course(models.Model):
             self.featured == True
         )
     
+    @property
+    def has_introduction(self):
+        """Check if introduction fields are filled"""
+        return bool(self.overview or self.learning_objectives or self.value_propositions)
+    
+    @property
+    def duration(self):
+        """Generate user-friendly duration string from duration_weeks"""
+        if self.duration_weeks == 1:
+            return "1 week"
+        return f"{self.duration_weeks} weeks"
+    
+    @property
+    def image_url(self):
+        """Get course image URL or fallback to placeholder"""
+        if self.image and hasattr(self.image, 'url'):
+            return self.image.url
+        return '/static/images/course-placeholder.jpg'  # Fallback placeholder
+    
     # Student Relationships (using through model)
     enrolled_students = models.ManyToManyField(
         'users.StudentProfile',
@@ -147,6 +201,8 @@ class Course(models.Model):
     
     def __str__(self):
         return f"{self.title} by {self.teacher.get_full_name()}"
+    
+# No need for custom save method - single table approach
 
 
 class Lesson(models.Model):
@@ -557,50 +613,9 @@ class Note(models.Model):
         return f"{self.title} ({self.get_category_display()}){lesson_info}"
 
 
-class CourseIntroduction(models.Model):
-    """
-    Detailed course introduction information including student reviews
-    """
-    course = models.OneToOneField(Course, on_delete=models.CASCADE, related_name='introduction')
+# CourseIntroduction model removed - all fields moved to Course model
     
-    # Course Overview
-    overview = models.TextField(help_text="Detailed course description")
-    learning_objectives = models.JSONField(default=list, help_text="List of learning objectives")
-    prerequisites = models.TextField(blank=True, help_text="What students should know before starting")
-    
-    # Course Details
-    duration_weeks = models.PositiveIntegerField(default=8, help_text="Course duration in weeks")
-    max_students = models.PositiveIntegerField(default=12, help_text="Maximum number of students")
-    sessions_per_week = models.PositiveIntegerField(default=2, help_text="Number of sessions per week")
-    total_projects = models.PositiveIntegerField(default=5, help_text="Number of projects students will create")
-    
-    # Value Propositions
-    value_propositions = models.JSONField(default=list, help_text="List of course benefits")
-    
-    # Student Reviews
-    reviews = models.JSONField(default=list, help_text="Student reviews and ratings")
-    
-    # Metadata
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        verbose_name = "Course Introduction"
-        verbose_name_plural = "Course Introductions"
-    
-    def __str__(self):
-        return f"Introduction for {self.course.title}"
-    
-    def get_average_rating(self):
-        """Calculate average rating from reviews"""
-        if not self.reviews:
-            return 0
-        total_rating = sum(review.get('rating', 0) for review in self.reviews)
-        return round(total_rating / len(self.reviews), 1)
-    
-    def get_review_count(self):
-        """Get total number of reviews"""
-        return len(self.reviews) if self.reviews else 0
+
 
 
 class Class(models.Model):
@@ -832,82 +847,9 @@ class ClassEvent(models.Model):
         super().save(*args, **kwargs)
 
 
-class CourseIntroduction(models.Model):
-    """
-    Extended course introduction and marketing information
-    """
-    course = models.OneToOneField(
-        Course,
-        on_delete=models.CASCADE,
-        related_name='introduction'
-    )
+# CourseIntroduction model completely removed - all fields are now in Course model
     
-    # Course Overview
-    overview = models.TextField(help_text="Detailed course description")
-    learning_objectives = models.JSONField(
-        default=list,
-        help_text="List of learning objectives"
-    )
-    prerequisites = models.TextField(
-        blank=True,
-        help_text="What students should know before starting"
-    )
-    
-    # Course Structure
-    duration_weeks = models.PositiveIntegerField(
-        default=8,
-        help_text="Course duration in weeks"
-    )
-    max_students = models.PositiveIntegerField(
-        default=12,
-        help_text="Maximum number of students"
-    )
-    sessions_per_week = models.PositiveIntegerField(
-        default=2,
-        help_text="Number of sessions per week"
-    )
-    total_projects = models.PositiveIntegerField(
-        default=5,
-        help_text="Number of projects students will create"
-    )
-    
-    # Marketing Content
-    value_propositions = models.JSONField(
-        default=list,
-        help_text="List of course benefits"
-    )
-    reviews = models.JSONField(
-        default=list,
-        help_text="Student reviews and ratings"
-    )
-    
-    # Metadata
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        verbose_name = "Course Introduction"
-        verbose_name_plural = "Course Introductions"
-    
-    def __str__(self):
-        return f"Introduction for {self.course.title}"
-    
-    @property
-    def average_rating(self):
-        """Calculate average rating from reviews"""
-        if not self.reviews:
-            return 0
-        
-        ratings = [review.get('rating', 0) for review in self.reviews if review.get('rating')]
-        return sum(ratings) / len(ratings) if ratings else 0
-    
-    @property
-    def review_count(self):
-        """Get total number of reviews"""
-        # Count both JSONField reviews and CourseReview model reviews
-        json_reviews = len(self.reviews) if self.reviews else 0
-        model_reviews = self.course.reviews.count() if hasattr(self, 'course') else 0
-        return json_reviews + model_reviews
+
 
 
 class CourseReview(models.Model):
