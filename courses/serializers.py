@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Note, CourseReview, Class, ClassEvent
+from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent
 
 User = get_user_model()
 
@@ -730,6 +730,29 @@ class NoteCreateSerializer(serializers.ModelSerializer):
 
 # ===== CLASS SERIALIZERS =====
 
+class ClassSessionSerializer(serializers.ModelSerializer):
+    """Serializer for class sessions"""
+    day_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ClassSession
+        fields = [
+            'id', 'name', 'day_of_week', 'day_name', 'start_time', 'end_time', 
+            'session_number', 'is_active'
+        ]
+    
+    def get_day_name(self, obj):
+        """Get human-readable day name"""
+        day_choices = dict(ClassSession.DAY_CHOICES)
+        return day_choices.get(obj.day_of_week, 'Unknown')
+    
+    def validate(self, data):
+        """Validate session times"""
+        if data['start_time'] >= data['end_time']:
+            raise serializers.ValidationError("End time must be after start time")
+        return data
+
+
 class StudentBasicSerializer(serializers.ModelSerializer):
     """Basic student information for class enrollment"""
     name = serializers.SerializerMethodField()
@@ -749,13 +772,16 @@ class ClassListSerializer(serializers.ModelSerializer):
     student_count = serializers.IntegerField(read_only=True)
     is_full = serializers.BooleanField(read_only=True)
     available_spots = serializers.IntegerField(read_only=True)
+    formatted_schedule = serializers.CharField(read_only=True)
+    session_count = serializers.IntegerField(read_only=True)
+    sessions = ClassSessionSerializer(many=True, read_only=True)
     
     class Meta:
         model = Class
         fields = [
             'id', 'name', 'description', 'course_title', 'teacher_name',
             'max_capacity', 'student_count', 'is_full', 'available_spots',
-            'schedule', 'is_active', 'created_at'
+            'formatted_schedule', 'session_count', 'sessions', 'is_active', 'created_at'
         ]
 
 
@@ -768,14 +794,17 @@ class ClassDetailSerializer(serializers.ModelSerializer):
     student_count = serializers.IntegerField(read_only=True)
     is_full = serializers.BooleanField(read_only=True)
     available_spots = serializers.IntegerField(read_only=True)
+    formatted_schedule = serializers.CharField(read_only=True)
+    session_count = serializers.IntegerField(read_only=True)
+    sessions = ClassSessionSerializer(many=True, read_only=True)
     
     class Meta:
         model = Class
         fields = [
             'id', 'name', 'description', 'course_id', 'course_title', 
             'teacher_name', 'students', 'max_capacity', 'student_count', 
-            'is_full', 'available_spots', 'schedule', 'meeting_link',
-            'is_active', 'start_date', 'end_date', 'created_at', 'updated_at'
+            'is_full', 'available_spots', 'meeting_link',
+            'formatted_schedule', 'session_count', 'sessions', 'is_active', 'start_date', 'end_date', 'created_at', 'updated_at'
         ]
 
 
@@ -788,12 +817,14 @@ class ClassCreateUpdateSerializer(serializers.ModelSerializer):
         help_text="List of student IDs to enroll in the class"
     )
     
+    sessions = ClassSessionSerializer(many=True, required=False, help_text="List of class sessions")
+    
     class Meta:
         model = Class
         fields = [
             'name', 'description', 'course', 'max_capacity', 
-            'schedule', 'meeting_link', 'is_active', 
-            'start_date', 'end_date', 'student_ids'
+            'meeting_link', 'is_active', 
+            'start_date', 'end_date', 'student_ids', 'sessions'
         ]
     
     def create(self, validated_data):
@@ -809,8 +840,21 @@ class ClassCreateUpdateSerializer(serializers.ModelSerializer):
         logger.info(f"Teacher set to: {validated_data['teacher']}")
         
         try:
+            # Extract sessions data before creating class
+            sessions_data = validated_data.pop('sessions', [])
+            logger.info(f"Creating class with {len(sessions_data)} sessions")
+            
             class_instance = Class.objects.create(**validated_data)
             logger.info(f"Class created successfully: {class_instance.id}")
+            
+            # Create sessions for the class
+            if sessions_data:
+                logger.info(f"Creating {len(sessions_data)} sessions")
+                for session_data in sessions_data:
+                    session_data['class_instance'] = class_instance
+                    ClassSession.objects.create(**session_data)
+                logger.info("All sessions created successfully")
+                
         except Exception as e:
             logger.error(f"Failed to create class: {e}")
             raise
@@ -856,13 +900,55 @@ class ClassCreateUpdateSerializer(serializers.ModelSerializer):
         return class_instance
     
     def update(self, instance, validated_data):
-        student_ids = validated_data.pop('student_ids', None)
+        """Update class and its sessions"""
+        import logging
+        logger = logging.getLogger(__name__)
         
-        # Update basic fields
+        logger.info(f"Updating class {instance.id} with data: {validated_data}")
+        
+        # Extract sessions data before updating class
+        sessions_data = validated_data.pop('sessions', None)
+        
+        # Update basic class fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
         
+        # Handle sessions update
+        if sessions_data is not None:  # Only update if sessions are provided
+            logger.info(f"Updating {len(sessions_data)} sessions")
+            
+            # Delete existing sessions
+            instance.sessions.all().delete()
+            logger.info("Deleted existing sessions")
+            
+            # Create new sessions
+            if sessions_data:
+                for session_data in sessions_data:
+                    session_data['class_instance'] = instance
+                    ClassSession.objects.create(**session_data)
+                logger.info("Created new sessions")
+        
+        # Handle students update if provided
+        student_ids = validated_data.pop('student_ids', None)
+        if student_ids is not None:
+            try:
+                from student.models import EnrolledCourse
+                course = instance.course
+                enrollments = EnrolledCourse.objects.filter(
+                    id__in=student_ids,
+                    course=course
+                ).select_related('student_profile__user')
+                users = [enrollment.student_profile.user for enrollment in enrollments]
+                instance.students.set(users)
+                logger.info(f"Updated students: {len(users)} students")
+            except Exception as e:
+                logger.error(f"Error updating students: {e}")
+                raise
+        
+        logger.info(f"Class update completed: {instance.id}")
+        return instance
+    
         # Update students if provided
         if student_ids is not None:
             from student.models import EnrolledCourse
@@ -875,8 +961,6 @@ class ClassCreateUpdateSerializer(serializers.ModelSerializer):
             users = [enrollment.student_profile.user for enrollment in enrollments]
             
             instance.students.set(users)
-        
-        return instance
     
     def validate_student_ids(self, value):
         """Validate that all student IDs exist as EnrolledCourse records"""
@@ -935,7 +1019,7 @@ class ClassCreateUpdateSerializer(serializers.ModelSerializer):
         return data
 
 
-# ===== CLASS EVENT SERIALIZERS =====
+# ===== CLASS SERIALIZERS =====
 
 class ClassEventListSerializer(serializers.ModelSerializer):
     """Serializer for listing class events"""

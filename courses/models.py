@@ -655,11 +655,6 @@ class Class(models.Model):
         default=10, 
         help_text="Maximum number of students allowed in this class"
     )
-    schedule = models.CharField(
-        max_length=200, 
-        blank=True,
-        help_text="Class schedule (e.g., 'Mon/Wed 9:00 AM')"
-    )
     meeting_link = models.URLField(
         blank=True,
         help_text="Online meeting link for virtual classes"
@@ -698,6 +693,24 @@ class Class(models.Model):
         """Get number of available spots in the class"""
         return max(0, self.max_capacity - self.student_count)
     
+    @property
+    def formatted_schedule(self):
+        """Get formatted schedule string from sessions"""
+        active_sessions = self.sessions.filter(is_active=True).order_by('session_number')
+        if not active_sessions.exists():
+            return "No schedule set"
+        
+        schedule_parts = []
+        for session in active_sessions:
+            schedule_parts.append(session.formatted_schedule)
+        
+        return " • ".join(schedule_parts)
+    
+    @property
+    def session_count(self):
+        """Get number of active sessions"""
+        return self.sessions.filter(is_active=True).count()
+    
     def can_enroll_student(self, student):
         """Check if a student can be enrolled in this class"""
         if self.is_full:
@@ -731,6 +744,91 @@ class Class(models.Model):
             self.students.remove(student)
             return True, f"Student {student.get_full_name()} removed successfully"
         return False, "Student is not enrolled in this class"
+
+
+class ClassSession(models.Model):
+    """
+    Recurring weekly session schedule for a class
+    Defines the days and times when the class meets each week
+    """
+    DAY_CHOICES = [
+        (0, 'Monday'),
+        (1, 'Tuesday'),
+        (2, 'Wednesday'),
+        (3, 'Thursday'),
+        (4, 'Friday'),
+        (5, 'Saturday'),
+        (6, 'Sunday'),
+    ]
+    
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(
+        max_length=100, 
+        blank=True,
+        help_text="Session name (e.g., 'Session 1', 'Morning Session')"
+    )
+    
+    # Relationships
+    class_instance = models.ForeignKey(
+        Class,
+        on_delete=models.CASCADE,
+        related_name='sessions',
+        help_text="The class this session belongs to"
+    )
+    
+    # Schedule Details
+    day_of_week = models.IntegerField(
+        choices=DAY_CHOICES,
+        help_text="Day of the week (0=Monday, 6=Sunday)"
+    )
+    start_time = models.TimeField(help_text="Session start time")
+    end_time = models.TimeField(help_text="Session end time")
+    session_number = models.PositiveIntegerField(
+        help_text="Order of this session (1, 2, 3...)"
+    )
+    
+    # Status
+    is_active = models.BooleanField(default=True, help_text="Whether this session is active")
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'class_sessions'
+        verbose_name = "Class Session"
+        verbose_name_plural = "Class Sessions"
+        ordering = ['class_instance', 'session_number', 'day_of_week']
+        unique_together = ['class_instance', 'session_number']
+    
+    def __str__(self):
+        day_name = dict(self.DAY_CHOICES)[self.day_of_week]
+        return f"{self.class_instance.name} - {day_name} {self.start_time.strftime('%I:%M %p')}"
+    
+    @property
+    def duration_minutes(self):
+        """Calculate session duration in minutes"""
+        start = self.start_time
+        end = self.end_time
+        
+        # Handle time calculation
+        start_minutes = start.hour * 60 + start.minute
+        end_minutes = end.hour * 60 + end.minute
+        
+        if end_minutes < start_minutes:
+            # Session spans midnight
+            end_minutes += 24 * 60
+        
+        return end_minutes - start_minutes
+    
+    @property
+    def formatted_schedule(self):
+        """Get formatted schedule string"""
+        day_name = dict(self.DAY_CHOICES)[self.day_of_week]
+        start_str = self.start_time.strftime('%I:%M %p')
+        end_str = self.end_time.strftime('%I:%M %p')
+        return f"{day_name} {start_str} - {end_str}"
 
 
 class ClassEvent(models.Model):

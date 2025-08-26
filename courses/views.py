@@ -5,7 +5,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 
-from .models import Course, Lesson, Quiz, Question, Note, Class, CourseEnrollment, QuizAttempt
+from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, CourseEnrollment, QuizAttempt
 from student.models import EnrolledCourse
 from .serializers import (
     CourseListSerializer, CourseDetailSerializer, CourseCreateUpdateSerializer,
@@ -108,12 +108,24 @@ def course_available_classes(request, course_id):
         classes = Class.objects.filter(
             course=course,
             is_active=True
-        ).select_related('course', 'teacher').prefetch_related('students').order_by('name')
+        ).select_related('course', 'teacher').prefetch_related('students', 'sessions').order_by('name')
         
         # Filter classes with available spots
         available_classes = []
         for cls in classes:
             if cls.student_count < cls.max_capacity:
+                # Get session information
+                sessions_info = []
+                for session in cls.sessions.filter(is_active=True).order_by('session_number'):
+                    sessions_info.append({
+                        'session_number': session.session_number,
+                        'day_of_week': session.day_of_week,
+                        'day_name': dict(ClassSession.DAY_CHOICES)[session.day_of_week],
+                        'start_time': session.start_time.strftime('%I:%M %p'),
+                        'end_time': session.end_time.strftime('%I:%M %p'),
+                        'formatted_schedule': session.formatted_schedule
+                    })
+                
                 available_classes.append({
                     'id': cls.id,
                     'name': cls.name,
@@ -122,7 +134,9 @@ def course_available_classes(request, course_id):
                     'student_count': cls.student_count,
                     'course_id': cls.course.id,
                     'course_title': cls.course.title,
-                    'schedule': cls.schedule,
+                    'sessions': sessions_info,
+                    'formatted_schedule': cls.formatted_schedule,
+                    'session_count': cls.session_count,
                     'teacher_name': cls.teacher.get_full_name() or cls.teacher.email,
                     'available_spots': cls.available_spots
                 })
@@ -942,7 +956,7 @@ def teacher_classes(request):
     
     if request.method == 'GET':
         try:
-            classes = Class.objects.filter(teacher=request.user).select_related('course', 'teacher').prefetch_related('students').order_by('-created_at')
+            classes = Class.objects.filter(teacher=request.user).select_related('course', 'teacher').prefetch_related('students', 'sessions').order_by('-created_at')
             serializer = ClassDetailSerializer(classes, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
@@ -1007,7 +1021,7 @@ def teacher_class_detail(request, class_id):
     
     try:
         class_instance = get_object_or_404(
-            Class, 
+            Class.objects.select_related('course', 'teacher').prefetch_related('students', 'sessions'), 
             id=class_id, 
             teacher=request.user
         )

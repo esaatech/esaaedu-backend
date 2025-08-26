@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Class, ClassEvent, CourseReview
+from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview
 
 
 @admin.register(Course)
@@ -116,10 +116,10 @@ class QuizAttemptAdmin(admin.ModelAdmin):
 
 @admin.register(Class)
 class ClassAdmin(admin.ModelAdmin):
-    list_display = ['name', 'course', 'teacher', 'student_count', 'max_capacity', 'is_active', 'created_at']
+    list_display = ['name', 'course', 'teacher', 'student_count', 'max_capacity', 'session_count', 'is_active', 'created_at']
     list_filter = ['is_active', 'course__category', 'created_at']
     search_fields = ['name', 'course__title', 'teacher__email', 'description']
-    readonly_fields = ['id', 'student_count', 'is_full', 'available_spots', 'created_at', 'updated_at']
+    readonly_fields = ['id', 'student_count', 'is_full', 'available_spots', 'session_count', 'formatted_schedule', 'created_at', 'updated_at']
     filter_horizontal = ['students']
     
     fieldsets = (
@@ -127,7 +127,11 @@ class ClassAdmin(admin.ModelAdmin):
             'fields': ('name', 'description', 'course', 'teacher')
         }),
         ('Class Configuration', {
-            'fields': ('max_capacity', 'schedule', 'meeting_link')
+            'fields': ('max_capacity', 'meeting_link')
+        }),
+        ('Schedule', {
+            'fields': ('formatted_schedule', 'session_count'),
+            'classes': ('collapse',)
         }),
         ('Students', {
             'fields': ('students',)
@@ -144,6 +148,30 @@ class ClassAdmin(admin.ModelAdmin):
     def student_count(self, obj):
         return obj.student_count
     student_count.short_description = 'Students'
+
+
+@admin.register(ClassSession)
+class ClassSessionAdmin(admin.ModelAdmin):
+    list_display = ['name', 'class_instance', 'day_of_week', 'start_time', 'end_time', 'session_number', 'is_active']
+    list_filter = ['day_of_week', 'is_active', 'class_instance__course__category']
+    search_fields = ['name', 'class_instance__name', 'class_instance__course__title']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('name', 'class_instance', 'session_number')
+        }),
+        ('Schedule', {
+            'fields': ('day_of_week', 'start_time', 'end_time')
+        }),
+        ('Status', {
+            'fields': ('is_active',)
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
 
 
 @admin.register(ClassEvent)
