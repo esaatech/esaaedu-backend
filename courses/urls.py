@@ -16,6 +16,7 @@ urlpatterns = [
     # Lesson management endpoints
     path('<uuid:course_id>/lessons/', views.course_lessons, name='course_lessons'),
     path('lessons/<uuid:lesson_id>/', views.lesson_detail, name='lesson_detail'),
+    path('lessons/<uuid:lesson_id>/complete/', views.complete_lesson, name='complete_lesson'),
     path('<uuid:course_id>/lessons/reorder/', views.reorder_lessons, name='reorder_lessons'),
     
     # Quiz management endpoints
@@ -51,7 +52,11 @@ urlpatterns = [
     # Student enrollment endpoints
     path('student/enrolled/', views.student_enrolled_courses, name='student_enrolled_courses'),
     path('student/recommendations/', views.student_course_recommendations, name='student_course_recommendations'),
-    path('student/enroll/', views.student_enroll_course, name='student_enroll_course'),
+    path('student/enroll/<uuid:course_id>/', views.student_enroll_course, name='student_enroll_course'),
+    path('student/courses/<uuid:course_id>/lessons/', views.student_course_lessons, name='student_course_lessons'),
+    path('student/lessons/<uuid:lesson_id>/', views.student_lesson_detail, name='student_lesson_detail'),
+    path('student/lessons/<uuid:lesson_id>/quiz/', views.student_lesson_quiz, name='student_lesson_quiz'),
+    path('student/lessons/<uuid:lesson_id>/quiz/submit/', views.submit_quiz_attempt, name='submit_quiz_attempt'),
     
     # Course classes endpoint (for enrollment)
     path('<uuid:course_id>/classes/', views.course_available_classes, name='course_available_classes'),

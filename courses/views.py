@@ -4,8 +4,9 @@ from rest_framework import status, permissions
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
+from django.utils import timezone
 
-from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, CourseEnrollment, QuizAttempt
+from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt
 from student.models import EnrolledCourse
 from .serializers import (
     CourseListSerializer, CourseDetailSerializer, CourseCreateUpdateSerializer,
@@ -1838,6 +1839,11 @@ def student_enrolled_courses(request):
                 )
                 print(f"Next lesson: {next_lesson}")
                 
+                # Get actual lesson count from the course (not computed property)
+                print(f"Getting course lesson count...")
+                actual_total_lessons = course.lessons.count()
+                print(f"Course has {actual_total_lessons} lessons")
+                
                 # Get instructor name
                 print(f"Getting instructor name...")
                 instructor_name = "Little Learners Tech"
@@ -1853,8 +1859,8 @@ def student_enrolled_courses(request):
                     'instructor': instructor_name,
                     'image': image_url,
                     'progress': float(enrollment.progress_percentage),
-                    'total_lessons': enrollment.total_lessons_count,
-                    'completed_lessons': enrollment.completed_lessons_count,
+                    'total_lessons': actual_total_lessons,  # Use actual count, not computed property
+                    'completed_lessons': 0,  # Will be calculated properly later
                     'next_lesson': next_lesson,
                     'status': enrollment.status,
                     'enrollment_date': enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
@@ -2119,5 +2125,385 @@ def student_enroll_course(request):
         traceback.print_exc()
         return Response(
             {'error': 'Failed to enroll in course', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def complete_lesson(request, lesson_id):
+    """
+    Mark a lesson as completed for a student
+    """
+    try:
+        # Get the lesson
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+        
+        # Get student profile
+        student_profile = getattr(request.user, 'student_profile', None)
+        if not student_profile:
+            return Response(
+                {'error': 'Student profile not found. Please complete your profile setup.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if student is enrolled in the course
+        try:
+            enrollment = EnrolledCourse.objects.get(
+                student_profile=request.user.student_profile,
+                course=lesson.course,
+                status='active'
+            )
+        except EnrolledCourse.DoesNotExist:
+            return Response(
+                {'error': 'You must be enrolled in this course to complete lessons'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # TODO: Implement lesson progress tracking when LessonProgress model is created
+        # For now, just return success without tracking progress
+        
+        return Response({
+            'message': f'Lesson "{lesson.title}" marked as completed',
+            'lesson_id': str(lesson.id),
+            'status': 'completed'
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        print(f"Error in complete_lesson: {e}")
+        return Response(
+            {'error': 'Failed to complete lesson', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def student_course_lessons(request, course_id):
+    """
+    Get lessons for a course that the authenticated student is enrolled in
+    """
+    print(f"=== DEBUGGING student_course_lessons ===")
+    print(f"Request method: {request.method}")
+    print(f"Request user: {request.user}")
+    print(f"Request data: {request.data}")
+    print(f"Request course_id: {course_id}")
+    
+    try:
+        # Get the course (enrolled students can access regardless of status)
+        course = get_object_or_404(Course, id=course_id)
+        
+        # Check if student is enrolled in this course
+        student_profile = request.user.student_profile
+        enrollment = EnrolledCourse.objects.filter(
+            student_profile=student_profile,
+            course=course,
+            status__in=['active', 'completed']
+        ).first()
+        
+        if not enrollment:
+            return Response(
+                {'error': 'You are not enrolled in this course'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get lessons for the course
+        lessons = course.lessons.all().order_by('order')
+        
+        # Get lesson data for this student
+        lesson_data = []
+        for lesson in lessons:
+            lesson_info = {
+                'id': str(lesson.id),
+                'title': lesson.title,
+                'description': lesson.description or '',
+                'type': lesson.type,
+                'duration': lesson.duration,
+                'order': lesson.order,
+                'status': 'locked'  # Default status
+            }
+            
+            # For now, set first lesson as current, others as locked
+            # TODO: Implement proper lesson progress tracking when LessonProgress model is created
+            if lesson.order == 1:
+                lesson_info['status'] = 'current'
+            else:
+                lesson_info['status'] = 'locked'
+            
+            lesson_data.append(lesson_info)
+        
+        return Response({
+            'course_id': str(course.id),
+            'course_title': course.title,
+            'lessons': lesson_data,
+            'total_lessons': len(lesson_data)
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        print(f"Error in student_course_lessons: {e}")
+        return Response(
+            {'error': 'Failed to fetch course lessons', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def student_lesson_detail(request, lesson_id):
+    """
+    Get detailed information about a specific lesson for an enrolled student
+    """
+    print(f"=== DEBUGGING student_lesson_detail ===")
+    print(f"Request method: {request.method}")
+    print(f"Request user: {request.user}")
+    print(f"Request lesson_id: {lesson_id}")
+    
+    try:
+        # Get the lesson
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+        
+        # Check if student is enrolled in this course
+        student_profile = request.user.student_profile
+        enrollment = EnrolledCourse.objects.filter(
+            student_profile=student_profile,
+            course=lesson.course,
+            status__in=['active', 'completed']
+        ).first()
+        
+        if not enrollment:
+            return Response(
+                {'error': 'You are not enrolled in this course'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Prepare lesson data
+        lesson_data = {
+            'id': str(lesson.id),
+            'title': lesson.title,
+            'description': lesson.description or '',
+            'type': lesson.type,
+            'duration': lesson.duration,
+            'order': lesson.order,
+            'text_content': lesson.text_content or '',
+            'video_url': lesson.video_url or '',
+            'audio_url': lesson.audio_url or '',
+            'materials': lesson.materials or [],
+            'prerequisites': list(lesson.prerequisites.values_list('id', flat=True)) if lesson.prerequisites.exists() else [],
+            'course_id': str(lesson.course.id),
+            'course_title': lesson.course.title,
+            'teacher_name': lesson.course.teacher.get_full_name() or lesson.course.teacher.email,
+            'status': 'locked'  # Default status
+        }
+        
+        # TODO: Implement lesson progress tracking when LessonProgress model is created
+        # For now, set first lesson as current, others as locked
+        if lesson.order == 1:
+            lesson_data['status'] = 'current'
+        else:
+            lesson_data['status'] = 'locked'
+        
+        return Response(lesson_data, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        print(f"Error in student_lesson_detail: {e}")
+        return Response(
+            {'error': 'Failed to fetch lesson details', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def student_lesson_quiz(request, lesson_id):
+    """
+    Get quiz for a specific lesson for an enrolled student
+    """
+    print(f"=== DEBUGGING student_lesson_quiz ===")
+    print(f"Request method: {request.method}")
+    print(f"Request user: {request.user}")
+    print(f"Request lesson_id: {lesson_id}")
+    
+    try:
+        # Get the lesson
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+        
+        # Check if student is enrolled in this course
+        student_profile = request.user.student_profile
+        enrollment = EnrolledCourse.objects.filter(
+            student_profile=student_profile,
+            course=lesson.course,
+            status__in=['active', 'completed']
+        ).first()
+        
+        if not enrollment:
+            return Response(
+                {'error': 'You are not enrolled in this course'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if quiz exists for this lesson
+        try:
+            quiz = Quiz.objects.get(lesson=lesson)
+            
+            # Get all questions for this quiz with their content
+            questions = quiz.questions.all().order_by('order')
+            
+            quiz_data = {
+                # Quiz metadata
+                'id': str(quiz.id),
+                'title': quiz.title,
+                'description': quiz.description or '',
+                'time_limit': quiz.time_limit,
+                'passing_score': quiz.passing_score,
+                'max_attempts': quiz.max_attempts,
+                'show_correct_answers': quiz.show_correct_answers,
+                'randomize_questions': quiz.randomize_questions,
+                'lesson_id': str(lesson.id),
+                'lesson_title': lesson.title,
+                'total_points': quiz.total_points,
+                'question_count': quiz.question_count,
+                
+                # Questions array with full content
+                'questions': [
+                    {
+                        'id': str(q.id),
+                        'question_text': q.question_text,
+                        'order': q.order,
+                        'points': q.points,
+                        'type': q.type,
+                        'content': q.content,  # JSON with options, correct answer, etc.
+                        'explanation': q.explanation or ''
+                    }
+                    for q in questions
+                ]
+            }
+            
+            print(f"Quiz data being returned: {quiz_data}")
+            print(f"Question count: {len(questions)}")
+            print(f"Questions: {[q.question_text[:50] + '...' for q in questions]}")
+            
+            return Response(quiz_data, status=status.HTTP_200_OK)
+            
+        except Quiz.DoesNotExist:
+            # No quiz found for this lesson
+            return Response({
+                'message': 'No quiz found for this lesson',
+                'quiz': None
+            }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        print(f"Error in student_lesson_quiz: {e}")
+        return Response(
+            {'error': 'Failed to fetch lesson quiz', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def submit_quiz_attempt(request, lesson_id):
+    """
+    Submit a quiz attempt for a specific lesson
+    """
+    print(f"=== DEBUGGING submit_quiz_attempt ===")
+    print(f"Request method: {request.method}")
+    print(f"Request user: {request.user}")
+    print(f"Request lesson_id: {lesson_id}")
+    print(f"Request data: {request.data}")
+    
+    try:
+        # Get the lesson and quiz
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+        quiz = get_object_or_404(Quiz, lesson=lesson)
+        
+        # Check if student is enrolled in this course
+        student_profile = request.user.student_profile
+        enrollment = EnrolledCourse.objects.filter(
+            student_profile=student_profile,
+            course=lesson.course,
+            status__in=['active', 'completed']
+        ).first()
+        
+        if not enrollment:
+            return Response(
+                {'error': 'You are not enrolled in this course'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get submitted answers
+        answers = request.data.get('answers', {})
+        time_taken = request.data.get('time_taken')
+        
+        # Calculate next attempt number
+        existing_attempts = QuizAttempt.objects.filter(
+            student=request.user,
+            quiz=quiz
+        ).count()
+        next_attempt_number = existing_attempts + 1
+        
+        # Check if max attempts reached
+        if next_attempt_number > quiz.max_attempts:
+            return Response(
+                {'error': f'Maximum attempts ({quiz.max_attempts}) reached for this quiz'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Calculate score
+        questions = quiz.questions.all().order_by('order')
+        correct_answers = 0
+        total_points = 0
+        
+        for question in questions:
+            user_answer = answers.get(str(question.id))
+            if user_answer:
+                # Handle case-insensitive comparison for true/false questions
+                if question.type == 'true_false':
+                    is_correct = user_answer.lower() == question.content.get('correct_answer', '').lower()
+                else:
+                    is_correct = user_answer == question.content.get('correct_answer', '')
+                
+                if is_correct:
+                    correct_answers += 1
+                    total_points += question.points
+        
+        # Calculate percentage score
+        score_percentage = round((correct_answers / questions.count()) * 100) if questions.count() > 0 else 0
+        passed = score_percentage >= quiz.passing_score
+        
+        # Create quiz attempt
+        quiz_attempt = QuizAttempt.objects.create(
+            student=request.user,
+            quiz=quiz,
+            enrollment=enrollment,
+            attempt_number=next_attempt_number,
+            started_at=timezone.now() - timezone.timedelta(seconds=time_taken or 0),
+            completed_at=timezone.now(),
+            score=score_percentage,
+            points_earned=total_points,
+            passed=passed,
+            answers=answers
+        )
+        
+        # Prepare response data
+        response_data = {
+            'attempt_id': str(quiz_attempt.id),
+            'score': score_percentage,
+            'correct_answers': correct_answers,
+            'total_questions': questions.count(),
+            'points_earned': total_points,
+            'passed': passed,
+            'attempt_number': next_attempt_number,
+            'max_attempts': quiz.max_attempts,
+            'can_retake': next_attempt_number < quiz.max_attempts,
+            'message': 'Quiz submitted successfully'
+        }
+        
+        print(f"Quiz attempt created: {response_data}")
+        return Response(response_data, status=status.HTTP_201_CREATED)
+        
+    except Exception as e:
+        print(f"Error in submit_quiz_attempt: {e}")
+        return Response(
+            {'error': 'Failed to submit quiz attempt', 'details': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

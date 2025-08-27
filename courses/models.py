@@ -273,6 +273,13 @@ class Lesson(models.Model):
         help_text="Additional type-specific lesson content and configuration"
     )
     
+    # Materials & Resources
+    materials = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of lesson materials, resources, and attachments"
+    )
+    
     # Prerequisites & Dependencies
     prerequisites = models.ManyToManyField(
         'self', 
@@ -515,7 +522,7 @@ class QuizAttempt(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='quiz_attempts')
     quiz = models.ForeignKey(Quiz, on_delete=models.CASCADE, related_name='attempts')
-    enrollment = models.ForeignKey(CourseEnrollment, on_delete=models.CASCADE)
+    enrollment = models.ForeignKey('student.EnrolledCourse', on_delete=models.CASCADE)
     
     # Attempt Details
     attempt_number = models.IntegerField(validators=[MinValueValidator(1)])
