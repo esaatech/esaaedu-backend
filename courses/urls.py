@@ -55,7 +55,7 @@ urlpatterns = [
     path('student/enroll/<uuid:course_id>/', views.student_enroll_course, name='student_enroll_course'),
     path('student/courses/<uuid:course_id>/lessons/', views.student_course_lessons, name='student_course_lessons'),
     path('student/lessons/<uuid:lesson_id>/', views.student_lesson_detail, name='student_lesson_detail'),
-    path('student/lessons/<uuid:lesson_id>/quiz/', views.student_lesson_quiz, name='student_lesson_quiz'),
+
     path('student/lessons/<uuid:lesson_id>/quiz/submit/', views.submit_quiz_attempt, name='submit_quiz_attempt'),
     
     # Course classes endpoint (for enrollment)

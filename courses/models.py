@@ -304,6 +304,62 @@ class Lesson(models.Model):
         return f"{self.course.title} - Lesson {self.order}: {self.title}"
 
 
+class LessonMaterial(models.Model):
+    """
+    Pre-class materials and resources for lessons
+    """
+    MATERIAL_TYPES = [
+        ('document', 'Document'),
+        ('video', 'Video'),
+        ('audio', 'Audio'),
+        ('link', 'External Link'),
+        ('image', 'Image'),
+        ('pdf', 'PDF'),
+        ('presentation', 'Presentation'),
+        ('worksheet', 'Worksheet'),
+        ('other', 'Other'),
+    ]
+    
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name='lesson_materials')
+    title = models.CharField(max_length=200, help_text="Material title")
+    description = models.TextField(blank=True, help_text="Material description")
+    material_type = models.CharField(max_length=20, choices=MATERIAL_TYPES)
+    
+    # File/Resource Information
+    file_url = models.URLField(blank=True, null=True, help_text="URL to the material file")
+    file_size = models.PositiveIntegerField(blank=True, null=True, help_text="File size in bytes")
+    file_extension = models.CharField(max_length=10, blank=True, help_text="File extension (e.g., pdf, docx)")
+    
+    # Material Settings
+    is_required = models.BooleanField(default=False, help_text="Whether this material is required before class")
+    is_downloadable = models.BooleanField(default=True, help_text="Whether students can download this material")
+    order = models.PositiveIntegerField(default=0, help_text="Display order of materials")
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['lesson', 'order']
+        unique_together = ['lesson', 'order']
+        indexes = [
+            models.Index(fields=['lesson', 'material_type']),
+            models.Index(fields=['is_required']),
+        ]
+    
+    def __str__(self):
+        return f"{self.lesson.title} - {self.title}"
+    
+    @property
+    def file_size_mb(self):
+        """Convert file size to MB for display"""
+        if self.file_size:
+            return round(self.file_size / (1024 * 1024), 2)
+        return None
+
+
 class Quiz(models.Model):
     """
     Quiz associated with a lesson

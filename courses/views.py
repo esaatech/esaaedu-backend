@@ -1787,18 +1787,11 @@ def student_enrolled_courses(request):
     """
     Get all courses the current student is enrolled in
     """
-    print(f"=== DEBUGGING student_enrolled_courses ===")
-    print(f"Request method: {request.method}")
-    print(f"Request user: {request.user}")
-    print(f"User authenticated: {request.user.is_authenticated}")
-    print(f"User email: {getattr(request.user, 'email', 'No email')}")
-    print(f"User role: {getattr(request.user, 'role', 'No role')}")
+    
     
     try:
-        print("Step 1: Getting student profile...")
         # Get student profile
         student_profile = getattr(request.user, 'student_profile', None)
-        print(f"Student profile found: {student_profile}")
         
         if not student_profile:
             print("ERROR: No student profile found for user")
@@ -1807,20 +1800,16 @@ def student_enrolled_courses(request):
                 'message': 'Student profile not found'
             }, status=status.HTTP_200_OK)
         
-        print("Step 2: Querying enrolled courses...")
         # Get enrolled courses
         enrolled_courses = EnrolledCourse.objects.filter(
             student_profile=student_profile,
             status__in=['active', 'completed']
         ).select_related('course', 'current_lesson').order_by('-enrollment_date')
         
-        print(f"Found {enrolled_courses.count()} enrolled courses")
         
         courses_data = []
         for i, enrollment in enumerate(enrolled_courses):
-            print(f"Step 3.{i+1}: Processing enrollment {enrollment.id}...")
             course = enrollment.course
-            print(f"Course: {course.title}")
             
             try:
                 # Get course image (fallback to placeholder)
@@ -1830,28 +1819,20 @@ def student_enrolled_courses(request):
                     image_url = course_image.url if hasattr(course_image, 'url') else str(course_image)
                 else:
                     image_url = "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=300&h=200&fit=crop"
-                print(f"Image URL: {image_url}")
                 
                 # Calculate next lesson
-                print(f"Calculating next lesson...")
                 next_lesson = "Course Completed!" if enrollment.status == 'completed' else (
                     enrollment.current_lesson.title if enrollment.current_lesson else "Start Learning"
                 )
-                print(f"Next lesson: {next_lesson}")
                 
                 # Get actual lesson count from the course (not computed property)
-                print(f"Getting course lesson count...")
                 actual_total_lessons = course.lessons.count()
-                print(f"Course has {actual_total_lessons} lessons")
                 
                 # Get instructor name
-                print(f"Getting instructor name...")
                 instructor_name = "Little Learners Tech"
                 if hasattr(course, 'instructor') and course.instructor:
                     instructor_name = course.instructor.get_full_name() or course.instructor.email
-                print(f"Instructor: {instructor_name}")
                 
-                print(f"Building course data...")
                 course_data = {
                     'id': str(course.id),  # Ensure it's a string
                     'title': course.title,
@@ -1872,20 +1853,16 @@ def student_enrolled_courses(request):
                     'rating': 4.8,  # Default rating - can be calculated from reviews later
                 }
                 courses_data.append(course_data)
-                print(f"Course data added successfully")
                 
             except Exception as course_error:
-                print(f"ERROR processing course {course.title}: {course_error}")
                 import traceback
                 traceback.print_exc()
                 continue
         
-        print(f"Step 4: Returning response with {len(courses_data)} courses")
         response_data = {
             'enrolled_courses': courses_data,
             'total_enrolled': len(courses_data)
         }
-        print(f"Response data: {response_data}")
         
         return Response(response_data, status=status.HTTP_200_OK)
     
@@ -1905,20 +1882,12 @@ def student_course_recommendations(request):
     """
     Get course recommendations for the current student
     """
-    print(f"=== DEBUGGING student_course_recommendations ===")
-    print(f"Request method: {request.method}")
-    print(f"Request user: {request.user}")
-    print(f"User authenticated: {request.user.is_authenticated}")
-    print(f"User email: {getattr(request.user, 'email', 'No email')}")
-    print(f"User role: {getattr(request.user, 'role', 'No role')}")
+   
     
     try:
-        print("Step 1: Getting student profile...")
         # Get student profile
         student_profile = getattr(request.user, 'student_profile', None)
-        print(f"Student profile found: {student_profile}")
         
-        print("Step 2: Getting enrolled course IDs to exclude...")
         # Get already enrolled course IDs to exclude
         enrolled_course_ids = []
         if student_profile:
@@ -1928,16 +1897,13 @@ def student_course_recommendations(request):
                     status__in=['active', 'completed']
                 ).values_list('course_id', flat=True)
             )
-        print(f"Enrolled course IDs to exclude: {enrolled_course_ids}")
         
-        print("Step 3: Querying recommended courses...")
         # Get recommended courses (featured + not enrolled)
         recommended_courses = Course.objects.filter(
             status='published',  # Use status instead of is_published
             featured=True        # Use featured instead of is_featured
         ).exclude(id__in=enrolled_course_ids)[:6]
         
-        print(f"Found {recommended_courses.count()} recommended courses")
         
         courses_data = []
         for i, course in enumerate(recommended_courses):
@@ -1945,31 +1911,24 @@ def student_course_recommendations(request):
             
             try:
                 # Get course image
-                print(f"Getting course image...")
                 course_image = getattr(course, 'image', None)
                 if course_image:
                     image_url = course_image.url if hasattr(course_image, 'url') else str(course_image)
                 else:
                     image_url = "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=300&h=200&fit=crop"
-                print(f"Image URL: {image_url}")
                 
                 # Get instructor name
-                print(f"Getting instructor name...")
                 instructor_name = "Little Learners Tech"
                 if hasattr(course, 'teacher') and course.teacher:  # Use 'teacher' instead of 'instructor'
                     instructor_name = course.teacher.get_full_name() or course.teacher.email
-                print(f"Instructor: {instructor_name}")
                 
                 # Get course details
-                print(f"Getting course details...")
                 total_lessons = getattr(course, 'total_lessons', 12)
                 duration = getattr(course, 'duration', '8 weeks')
                 max_students = getattr(course, 'max_students', 12)
                 difficulty = getattr(course, 'level', 'beginner')  # Use 'level' instead of 'difficulty_level'
                 
-                print(f"Course details - Lessons: {total_lessons}, Duration: {duration}, Max students: {max_students}")
                 
-                print(f"Building course data...")
                 course_data = {
                     'id': str(course.id),
                     'uuid': str(course.id),
@@ -1987,20 +1946,16 @@ def student_course_recommendations(request):
                     'enrolled_students': 0,  # Can be calculated from enrollments
                 }
                 courses_data.append(course_data)
-                print(f"Course data added successfully")
                 
             except Exception as course_error:
-                print(f"ERROR processing course {course.title}: {course_error}")
                 import traceback
                 traceback.print_exc()
                 continue
         
-        print(f"Step 5: Returning response with {len(courses_data)} courses")
         response_data = {
             'recommended_courses': courses_data,
             'total_recommendations': len(courses_data)
         }
-        print(f"Response data: {response_data}")
         
         return Response(response_data, status=status.HTTP_200_OK)
     
@@ -2181,63 +2136,30 @@ def complete_lesson(request, lesson_id):
 @permission_classes([permissions.IsAuthenticated])
 def student_course_lessons(request, course_id):
     """
-    Get lessons for a course that the authenticated student is enrolled in
+    Get all lessons for a course with progress information
     """
     print(f"=== DEBUGGING student_course_lessons ===")
-    print(f"Request method: {request.method}")
-    print(f"Request user: {request.user}")
-    print(f"Request data: {request.data}")
-    print(f"Request course_id: {course_id}")
+    #print(f"Request method: {request.method}")
+    #print(f"Request user: {request.user}")
+    #print(f"Request data: {request.data}")
+    #print(f"Request course_id: {course_id}")
     
     try:
-        # Get the course (enrolled students can access regardless of status)
-        course = get_object_or_404(Course, id=course_id)
+        from .student_lesson_service import StudentLessonService
         
-        # Check if student is enrolled in this course
-        student_profile = request.user.student_profile
-        enrollment = EnrolledCourse.objects.filter(
-            student_profile=student_profile,
-            course=course,
-            status__in=['active', 'completed']
-        ).first()
+        # Get comprehensive course lessons data using the service
+        lessons_data, error = StudentLessonService.get_course_lessons_with_progress(
+            course_id, 
+            request.user.student_profile
+        )
         
-        if not enrollment:
+        if error:
             return Response(
-                {'error': 'You are not enrolled in this course'},
+                {'error': error},
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        # Get lessons for the course
-        lessons = course.lessons.all().order_by('order')
-        
-        # Get lesson data for this student
-        lesson_data = []
-        for lesson in lessons:
-            lesson_info = {
-                'id': str(lesson.id),
-                'title': lesson.title,
-                'description': lesson.description or '',
-                'type': lesson.type,
-                'duration': lesson.duration,
-                'order': lesson.order,
-                'status': 'locked'  # Default status
-            }
-            
-            # For now, set first lesson as current, others as locked
-            # TODO: Implement proper lesson progress tracking when LessonProgress model is created
-            if lesson.order == 1:
-                lesson_info['status'] = 'current'
-            else:
-                lesson_info['status'] = 'locked'
-            
-            lesson_data.append(lesson_info)
-        
-        return Response({
-            'course_id': str(course.id),
-            'course_title': course.title,
-            'lessons': lesson_data,
-            'total_lessons': len(lesson_data)
-        }, status=status.HTTP_200_OK)
+        return Response(lessons_data, status=status.HTTP_200_OK)
         
     except Exception as e:
         print(f"Error in student_course_lessons: {e}")
@@ -2251,56 +2173,27 @@ def student_course_lessons(request, course_id):
 @permission_classes([permissions.IsAuthenticated])
 def student_lesson_detail(request, lesson_id):
     """
-    Get detailed information about a specific lesson for an enrolled student
+    Get comprehensive lesson data including quiz, class events, and attempt information
     """
     print(f"=== DEBUGGING student_lesson_detail ===")
-    print(f"Request method: {request.method}")
-    print(f"Request user: {request.user}")
-    print(f"Request lesson_id: {lesson_id}")
+    #print(f"Request method: {request.method}")
+    #print(f"Request user: {request.user}")
+    #print(f"Request lesson_id: {lesson_id}")
     
     try:
-        # Get the lesson
-        lesson = get_object_or_404(Lesson, id=lesson_id)
+        from .student_lesson_service import StudentLessonService
         
-        # Check if student is enrolled in this course
-        student_profile = request.user.student_profile
-        enrollment = EnrolledCourse.objects.filter(
-            student_profile=student_profile,
-            course=lesson.course,
-            status__in=['active', 'completed']
-        ).first()
+        # Get comprehensive lesson data using the service
+        lesson_data, error = StudentLessonService.get_comprehensive_lesson_data(
+            lesson_id, 
+            request.user.student_profile
+        )
         
-        if not enrollment:
+        if error:
             return Response(
-                {'error': 'You are not enrolled in this course'},
+                {'error': error},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        # Prepare lesson data
-        lesson_data = {
-            'id': str(lesson.id),
-            'title': lesson.title,
-            'description': lesson.description or '',
-            'type': lesson.type,
-            'duration': lesson.duration,
-            'order': lesson.order,
-            'text_content': lesson.text_content or '',
-            'video_url': lesson.video_url or '',
-            'audio_url': lesson.audio_url or '',
-            'materials': lesson.materials or [],
-            'prerequisites': list(lesson.prerequisites.values_list('id', flat=True)) if lesson.prerequisites.exists() else [],
-            'course_id': str(lesson.course.id),
-            'course_title': lesson.course.title,
-            'teacher_name': lesson.course.teacher.get_full_name() or lesson.course.teacher.email,
-            'status': 'locked'  # Default status
-        }
-        
-        # TODO: Implement lesson progress tracking when LessonProgress model is created
-        # For now, set first lesson as current, others as locked
-        if lesson.order == 1:
-            lesson_data['status'] = 'current'
-        else:
-            lesson_data['status'] = 'locked'
         
         return Response(lesson_data, status=status.HTTP_200_OK)
         
@@ -2319,9 +2212,9 @@ def student_lesson_quiz(request, lesson_id):
     Get quiz for a specific lesson for an enrolled student
     """
     print(f"=== DEBUGGING student_lesson_quiz ===")
-    print(f"Request method: {request.method}")
-    print(f"Request user: {request.user}")
-    print(f"Request lesson_id: {lesson_id}")
+    #print(f"Request method: {request.method}")
+    #print(f"Request user: {request.user}")
+    #print(f"Request lesson_id: {lesson_id}")
     
     try:
         # Get the lesson

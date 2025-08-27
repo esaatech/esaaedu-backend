@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview
 
 
 @admin.register(Course)
@@ -62,13 +62,44 @@ class LessonAdmin(admin.ModelAdmin):
             'fields': ('course', 'title', 'description', 'order', 'duration')
         }),
         ('Lesson Content', {
-            'fields': ('type', 'content')
+            'fields': ('type', 'text_content', 'video_url', 'audio_url', 'live_class_date', 'live_class_status', 'content')
+        }),
+        ('Materials', {
+            'fields': ('materials',),
+            'classes': ('collapse',)
         }),
         ('Metadata', {
             'fields': ('id', 'created_at', 'updated_at'),
             'classes': ('collapse',)
         }),
     )
+
+
+@admin.register(LessonMaterial)
+class LessonMaterialAdmin(admin.ModelAdmin):
+    list_display = ['title', 'lesson', 'material_type', 'is_required', 'order', 'created_at']
+    list_filter = ['material_type', 'is_required', 'is_downloadable', 'created_at']
+    search_fields = ['title', 'description', 'lesson__title', 'lesson__course__title']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('lesson', 'title', 'description', 'material_type')
+        }),
+        ('File/Resource', {
+            'fields': ('file_url', 'file_size', 'file_extension')
+        }),
+        ('Settings', {
+            'fields': ('is_required', 'is_downloadable', 'order')
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('lesson', 'lesson__course')
 
 
 @admin.register(Quiz)
