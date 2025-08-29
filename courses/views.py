@@ -1683,6 +1683,18 @@ def quiz_attempt_details(request, attempt_id):
             # Convert graded_questions list to dict for easy lookup
             for gq in grade.get('graded_questions', []):
                 graded_questions_dict[str(gq.get('question_id'))] = gq
+        elif attempt.score is not None:
+            # Auto-graded quiz - create a grade object from the attempt data
+            grade = {
+                'percentage': attempt.score,
+                'points_earned': attempt.points_earned,
+                'points_possible': attempt.quiz.total_points,
+                'teacher_comments': '',
+                'private_notes': '',
+                'graded_date': attempt.completed_at.isoformat(),
+                'graded_by': 'Auto-graded',
+                'graded_questions': []
+            }
         
         # Prepare questions data with student answers
         questions_data = []
