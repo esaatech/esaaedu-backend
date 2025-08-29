@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent
+from django.utils import timezone
+from datetime import timedelta
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent
 
 User = get_user_model()
 
@@ -22,6 +24,150 @@ class CourseReviewSerializer(serializers.ModelSerializer):
             'is_featured', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']
+
+
+# ===== LESSON MATERIAL SERIALIZER =====
+
+class LessonMaterialSerializer(serializers.ModelSerializer):
+    """
+    Serializer for lesson materials
+    """
+    file_size_mb = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = LessonMaterial
+        fields = [
+            'id', 'title', 'description', 'material_type', 'file_url', 
+            'file_size', 'file_size_mb', 'file_extension', 'is_required', 
+            'is_downloadable', 'order', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+
+
+# ===== OPTIMIZED LESSON SERIALIZERS FOR 2-CALL STRATEGY =====
+
+class LessonListSerializer(serializers.ModelSerializer):
+    """
+    Lightweight serializer for lesson list (first API call)
+    Returns minimal lesson data for the course page
+    """
+    status = serializers.CharField(read_only=True)
+    
+    class Meta:
+        model = Lesson
+        fields = [
+            'id', 'title', 'description', 'type', 'duration', 'order', 
+            'status', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+
+
+class LessonDetailSerializer(serializers.ModelSerializer):
+    """
+    Comprehensive serializer for individual lesson details (second API call)
+    Returns full lesson data including materials, quiz, and class events
+    """
+    materials = serializers.SerializerMethodField()
+    quiz = serializers.SerializerMethodField()
+    class_event = serializers.SerializerMethodField()
+    teacher_name = serializers.SerializerMethodField()
+    course_title = serializers.CharField(source='course.title', read_only=True)
+    prerequisites = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Lesson
+        fields = [
+            'id', 'title', 'description', 'type', 'duration', 'order',
+            'text_content', 'video_url', 'audio_url', 'live_class_date', 
+            'live_class_status', 'content', 'materials', 'prerequisites',
+            'quiz', 'class_event', 'teacher_name', 'course_title',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_quiz(self, obj):
+        """Get pre-computed quiz data from context"""
+        return self.context.get('quiz_data')
+    
+    def get_class_event(self, obj):
+        """Get pre-computed class event data from context"""
+        return self.context.get('class_event_data')
+    
+    def get_materials(self, obj):
+        """Get pre-computed materials data from context"""
+        return self.context.get('materials_data', [])
+    
+    def get_teacher_name(self, obj):
+        """Get pre-computed teacher name from context"""
+        return self.context.get('teacher_name')
+    
+    def get_prerequisites(self, obj):
+        """Get pre-computed prerequisites data from context"""
+        return self.context.get('prerequisites_data', [])
+
+
+# ===== COURSE WITH LESSONS SERIALIZER (FIRST API CALL) =====
+
+class CourseWithLessonsSerializer(serializers.ModelSerializer):
+    """
+    Comprehensive course serializer that includes lesson list and current lesson details
+    This is the first API call that returns everything needed for the course page
+    """
+    lessons = LessonListSerializer(many=True, read_only=True)
+    current_lesson = serializers.SerializerMethodField()
+    teacher_name = serializers.CharField(source='teacher.get_full_name', read_only=True)
+    enrolled_students_count = serializers.ReadOnlyField()
+    total_lessons = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = Course
+        fields = [
+            'id', 'title', 'description', 'long_description', 'category', 'level',
+            'age_range', 'price', 'features', 'overview', 'learning_objectives',
+            'prerequisites_text', 'duration_weeks', 'sessions_per_week', 
+            'total_projects', 'value_propositions', 'featured', 'popular',
+            'color', 'icon', 'image', 'max_students', 'schedule', 'certificate',
+            'status', 'teacher_name', 'enrolled_students_count', 'total_lessons',
+            'lessons', 'current_lesson', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'enrolled_students_count', 'total_lessons']
+    
+    def get_current_lesson(self, obj):
+        """Get detailed information for the current/first lesson"""
+        try:
+            # Get the first lesson or current lesson based on enrollment progress
+            student_profile = self.context.get('student_profile')
+            if student_profile:
+                # Try to get current lesson from enrollment
+                from student.models import EnrolledCourse
+                enrollment = EnrolledCourse.objects.filter(
+                    student_profile=student_profile,
+                    course=obj,
+                    status__in=['active', 'completed']
+                ).first()
+                
+                if enrollment and hasattr(enrollment, 'current_lesson') and enrollment.current_lesson:
+                    current_lesson = enrollment.current_lesson
+                else:
+                    # Fallback to first lesson
+                    current_lesson = obj.lessons.order_by('order').first()
+            else:
+                # No student context, return first lesson
+                current_lesson = obj.lessons.order_by('order').first()
+            
+            if current_lesson:
+                # Use the detailed serializer for current lesson
+                detail_serializer = LessonDetailSerializer(
+                    current_lesson, 
+                    context=self.context
+                )
+                return detail_serializer.data
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error getting current lesson: {str(e)}")
+            return None
 
 
 # ===== ENROLLED STUDENT SERIALIZERS =====
@@ -428,24 +574,6 @@ class LessonListSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
-
-
-class LessonDetailSerializer(serializers.ModelSerializer):
-    """
-    Serializer for detailed lesson view with all content
-    """
-    course_id = serializers.UUIDField(source='course.id', read_only=True)
-    course_title = serializers.CharField(source='course.title', read_only=True)
-    
-    class Meta:
-        model = Lesson
-        fields = [
-            'id', 'course_id', 'course_title', 'title', 'description', 
-            'type', 'duration', 'order', 'text_content', 'video_url', 'audio_url', 
-            'live_class_date', 'live_class_status', 'content', 
-            'created_at', 'updated_at'
-        ]
-        read_only_fields = ['id', 'course_id', 'course_title', 'created_at', 'updated_at']
 
 
 class LessonCreateUpdateSerializer(serializers.ModelSerializer):
