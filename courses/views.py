@@ -1544,19 +1544,14 @@ def teacher_quiz_submissions(request):
                 **quiz_attempts_filter
             ).select_related('student', 'enrollment').order_by('-completed_at')
             
-            # Separate graded and ungraded attempts
-            # Check if there's a corresponding StudentGrade record
-            from student.models import StudentGrade
-            
+            # Separate graded and ungraded attempts (using consolidated model)
             ungraded_attempts = []
             graded_attempts = []
             
             for attempt in quiz_attempts:
-                # Check if this attempt has been graded
-                has_grade = StudentGrade.objects.filter(
-                    quiz_attempt=attempt,
-                    grade_type='quiz'
-                ).exists()
+                # Check if this attempt has been graded (auto-graded or teacher-enhanced)
+                is_graded = attempt.score is not None  # Auto-graded if score exists
+                is_teacher_enhanced = attempt.is_teacher_graded  # Teacher enhanced if flag is True
                 
                 attempt_data = {
                     'id': attempt.id,
@@ -1565,11 +1560,12 @@ def teacher_quiz_submissions(request):
                     'student_email': attempt.student.email,
                     'submitted_at': attempt.completed_at,
                     'time_spent': None,  # Calculate from started_at to completed_at
-                    'score': attempt.score,
-                    'points_earned': attempt.points_earned,
+                    'score': attempt.final_score,  # Use computed property
+                    'points_earned': attempt.final_points_earned,  # Use computed property
                     'passed': attempt.passed,
                     'answers': attempt.answers,
-                    'attempt_number': attempt.attempt_number
+                    'attempt_number': attempt.attempt_number,
+                    'is_teacher_enhanced': is_teacher_enhanced
                 }
                 
                 # Calculate time spent
@@ -1577,20 +1573,34 @@ def teacher_quiz_submissions(request):
                     time_diff = attempt.completed_at - attempt.started_at
                     attempt_data['time_spent'] = int(time_diff.total_seconds() / 60)  # minutes
                 
-                if has_grade:
-                    # Get the grade details
-                    grade = StudentGrade.objects.get(quiz_attempt=attempt, grade_type='quiz')
-                    attempt_data.update({
-                        'teacher_grade': {
-                            'percentage': float(grade.percentage),
-                            'letter_grade': grade.letter_grade,
-                            'points_earned': float(grade.points_earned),
-                            'points_possible': float(grade.points_possible),
-                            'teacher_comments': grade.teacher_comments,
-                            'graded_date': grade.graded_date,
-                            'graded_by': grade.graded_by.get_full_name()
-                        }
-                    })
+                if is_graded:
+                    # Get the grade details from consolidated model
+                    if is_teacher_enhanced and attempt.teacher_grade_data:
+                        grade_data = attempt.teacher_grade_data
+                        attempt_data.update({
+                            'teacher_grade': {
+                                'percentage': float(grade_data.get('percentage', attempt.score)),
+                                'letter_grade': grade_data.get('letter_grade', None),
+                                'points_earned': float(grade_data.get('points_earned', attempt.points_earned)),
+                                'points_possible': float(grade_data.get('points_possible', attempt.quiz.total_points)),
+                                'teacher_comments': grade_data.get('teacher_comments', ''),
+                                'graded_date': grade_data.get('graded_date', attempt.completed_at.isoformat()),
+                                'graded_by': grade_data.get('graded_by', 'Auto-graded')
+                            }
+                        })
+                    else:
+                        # Auto-graded only
+                        attempt_data.update({
+                            'teacher_grade': {
+                                'percentage': float(attempt.score),
+                                'letter_grade': None,
+                                'points_earned': float(attempt.points_earned),
+                                'points_possible': float(attempt.quiz.total_points),
+                                'teacher_comments': '',
+                                'graded_date': attempt.completed_at.isoformat(),
+                                'graded_by': 'Auto-graded'
+                            }
+                        })
                     graded_attempts.append(attempt_data)
                 else:
                     ungraded_attempts.append(attempt_data)
@@ -1663,18 +1673,16 @@ def quiz_attempt_details(request, attempt_id):
         # Get quiz questions
         questions = Question.objects.filter(quiz=attempt.quiz).order_by('order')
         
-        # Check if this attempt has been graded
-        from student.models import StudentGrade
+        # Check if this attempt has been graded (using consolidated model)
         grade = None
         graded_questions_dict = {}
         
-        try:
-            grade = StudentGrade.objects.get(quiz_attempt=attempt, grade_type='quiz')
+        # Check if teacher has enhanced the grading
+        if attempt.is_teacher_graded and attempt.teacher_grade_data:
+            grade = attempt.teacher_grade_data
             # Convert graded_questions list to dict for easy lookup
-            for gq in grade.graded_questions:
+            for gq in grade.get('graded_questions', []):
                 graded_questions_dict[str(gq.get('question_id'))] = gq
-        except StudentGrade.DoesNotExist:
-            pass
         
         # Prepare questions data with student answers
         questions_data = []
@@ -1736,14 +1744,15 @@ def quiz_attempt_details(request, attempt_id):
             },
             'questions': questions_data,
             'grade': {
-                'id': grade.id if grade else None,
-                'percentage': float(grade.percentage) if grade else None,
-                'letter_grade': grade.letter_grade if grade else None,
-                'teacher_comments': grade.teacher_comments if grade else '',
-                'private_notes': grade.private_notes if grade else '',
-                'graded_date': grade.graded_date if grade else None,
-                'graded_by': grade.graded_by.get_full_name() if grade else None,
-                'is_graded': grade is not None
+                'id': str(attempt.id) if grade else None,
+                'percentage': float(grade.get('percentage', 0)) if grade else None,
+                'letter_grade': grade.get('letter_grade', None) if grade else None,
+                'teacher_comments': grade.get('teacher_comments', '') if grade else '',
+                'private_notes': grade.get('private_notes', '') if grade else '',
+                'graded_date': grade.get('graded_date', None) if grade else None,
+                'graded_by': grade.get('graded_by', None) if grade else None,
+                'is_graded': grade is not None,
+                'is_teacher_graded': attempt.is_teacher_graded
             }
         }
         
@@ -1801,46 +1810,30 @@ def save_quiz_grade(request, attempt_id):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Import StudentGrade model
-        from student.models import StudentGrade
+        # Update the quiz attempt with teacher grading data
+        attempt.is_teacher_graded = True
+        attempt.teacher_grade_data = {
+            'points_earned': data['points_earned'],
+            'points_possible': data['points_possible'],
+            'percentage': data['percentage'],
+            'teacher_comments': data.get('teacher_comments', ''),
+            'private_notes': data.get('private_notes', ''),
+            'graded_questions': graded_questions,
+            'graded_by': request.user.email,
+            'graded_date': timezone.now().isoformat()
+        }
         
-        # Create or update the grade record
-        grade, created = StudentGrade.objects.get_or_create(
-            quiz_attempt=attempt,
-            grade_type='quiz',
-            defaults={
-                'student': attempt.student,
-                'course': attempt.quiz.lesson.course,
-                'lesson': attempt.quiz.lesson,
-                'title': f"{attempt.quiz.title} - Attempt {attempt.attempt_number}",
-                'description': f"Quiz attempt for {attempt.quiz.lesson.title}",
-                'points_earned': data['points_earned'],
-                'points_possible': data['points_possible'],
-                'percentage': data['percentage'],
-                'assigned_date': attempt.started_at.date(),
-                'submitted_date': attempt.completed_at,
-                'graded_by': request.user,
-                'teacher_comments': data.get('teacher_comments', ''),
-                'private_notes': data.get('private_notes', ''),
-                'graded_questions': graded_questions
-            }
-        )
+        # Add to grading history
+        attempt.grading_history.append({
+            'date': timezone.now().isoformat(),
+            'action': 'teacher_graded',
+            'graded_by': request.user.email,
+            'percentage': data['percentage'],
+            'points_earned': data['points_earned'],
+            'teacher_comments': data.get('teacher_comments', ''),
+            'private_notes': data.get('private_notes', '')
+        })
         
-        if not created:
-            # Update existing grade
-            grade.points_earned = data['points_earned']
-            grade.points_possible = data['points_possible']
-            grade.percentage = data['percentage']
-            grade.teacher_comments = data.get('teacher_comments', '')
-            grade.private_notes = data.get('private_notes', '')
-            grade.graded_questions = graded_questions
-            grade.graded_by = request.user
-            grade.save()
-        
-        # Update the quiz attempt if needed
-        attempt.score = data['percentage']
-        attempt.points_earned = data['points_earned']
-        attempt.passed = data['percentage'] >= attempt.quiz.passing_score
         attempt.save()
         
         # Update enrollment progress
@@ -1854,20 +1847,20 @@ def save_quiz_grade(request, attempt_id):
         response_data = {
             'message': 'Quiz graded successfully',
             'grade': {
-                'id': str(grade.id),  # Convert UUID to string
-                'percentage': float(grade.percentage),
-                'letter_grade': grade.letter_grade,
-                'points_earned': float(grade.points_earned),
-                'points_possible': float(grade.points_possible),
-                'teacher_comments': grade.teacher_comments,
-                'graded_date': grade.graded_date.isoformat() if grade.graded_date else None,  # Convert datetime to ISO string
-                'created': created
+                'id': str(attempt.id),
+                'percentage': float(data['percentage']),
+                'points_earned': float(data['points_earned']),
+                'points_possible': float(data['points_possible']),
+                'teacher_comments': data.get('teacher_comments', ''),
+                'graded_date': timezone.now().isoformat(),
+                'is_teacher_graded': True
             },
             'attempt': {
-                'id': str(attempt.id),  # Convert UUID to string
-                'score': float(attempt.score) if attempt.score else 0,
-                'points_earned': attempt.points_earned,
-                'passed': attempt.passed
+                'id': str(attempt.id),
+                'score': float(attempt.final_score),
+                'points_earned': attempt.final_points_earned,
+                'passed': attempt.passed,
+                'is_teacher_graded': attempt.is_teacher_graded
             }
         }
         
@@ -2607,6 +2600,8 @@ def submit_quiz_attempt(request, lesson_id):
         answers = request.data.get('answers', {})
         time_taken = request.data.get('time_taken')
         
+
+        
         # Calculate next attempt number
         existing_attempts = QuizAttempt.objects.filter(
             student=request.user,
@@ -2643,18 +2638,45 @@ def submit_quiz_attempt(request, lesson_id):
         score_percentage = round((correct_answers / questions.count()) * 100) if questions.count() > 0 else 0
         passed = score_percentage >= quiz.passing_score
         
+        # Ensure time_taken is a valid number
+        if time_taken is None or time_taken == '':
+            time_taken = 0
+        try:
+            time_taken = int(float(time_taken))
+        except (ValueError, TypeError):
+            time_taken = 0
+        
+        # Calculate started_at based on time_taken
+        started_at = timezone.now() - timezone.timedelta(seconds=time_taken)
+        
         # Create quiz attempt
         quiz_attempt = QuizAttempt.objects.create(
             student=request.user,
             quiz=quiz,
             enrollment=enrollment,
             attempt_number=next_attempt_number,
-            started_at=timezone.now() - timezone.timedelta(seconds=time_taken or 0),
+            started_at=started_at,
             completed_at=timezone.now(),
             score=score_percentage,
             points_earned=total_points,
             passed=passed,
-            answers=answers
+            answers=answers,
+            # Initialize teacher grading fields
+            is_teacher_graded=False,
+            teacher_grade_data={
+                'auto_calculated_score': score_percentage,
+                'auto_calculated_points': total_points,
+                'auto_calculated_passed': passed,
+                'teacher_comments': '',
+                'graded_questions': []
+            },
+            grading_history=[{
+                'date': timezone.now().isoformat(),
+                'action': 'auto_graded',
+                'score': score_percentage,
+                'points_earned': total_points,
+                'passed': passed
+            }]
         )
         
         # Prepare response data

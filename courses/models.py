@@ -582,7 +582,7 @@ class QuizAttempt(models.Model):
     
     # Attempt Details
     attempt_number = models.IntegerField(validators=[MinValueValidator(1)])
-    started_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(auto_now_add=False)
     completed_at = models.DateTimeField(null=True, blank=True)
     
     # Results
@@ -602,16 +602,73 @@ class QuizAttempt(models.Model):
         help_text="Student answers for each question"
     )
     
+    # NEW: Teacher grading fields
+    is_teacher_graded = models.BooleanField(
+        default=False, 
+        help_text="Has teacher manually graded or enhanced this quiz?"
+    )
+    teacher_grade_data = models.JSONField(
+        default=dict,
+        help_text="Teacher's manual grading data (overrides auto-calculated if present)"
+    )
+    grading_history = models.JSONField(
+        default=list,
+        help_text="Audit trail of grading changes and enhancements"
+    )
+    
     class Meta:
         unique_together = ['student', 'quiz', 'attempt_number']
         ordering = ['-started_at']
         indexes = [
             models.Index(fields=['student', 'quiz']),
             models.Index(fields=['enrollment', 'completed_at']),
+            models.Index(fields=['is_teacher_graded']),
         ]
     
     def __str__(self):
         return f"{self.student.get_full_name()} - {self.quiz.title} (Attempt {self.attempt_number})"
+    
+    # NEW: Computed properties for consistent data access
+    @property
+    def final_score(self):
+        """Return teacher grade if available, otherwise auto-calculated"""
+        if self.is_teacher_graded and self.teacher_grade_data.get('percentage'):
+            return self.teacher_grade_data['percentage']
+        return self.score
+    
+    @property
+    def final_points_earned(self):
+        """Return teacher points if available, otherwise auto-calculated"""
+        if self.is_teacher_graded and self.teacher_grade_data.get('points_earned'):
+            return self.teacher_grade_data['points_earned']
+        return self.points_earned
+    
+    @property
+    def final_points_possible(self):
+        """Return teacher points if available, otherwise quiz total"""
+        if self.is_teacher_graded and self.teacher_grade_data.get('points_possible'):
+            return self.teacher_grade_data['points_possible']
+        return self.quiz.total_points
+    
+    @property
+    def teacher_comments(self):
+        """Get teacher comments if available"""
+        return self.teacher_grade_data.get('teacher_comments', '')
+    
+    @property
+    def graded_questions(self):
+        """Get teacher question-level feedback if available"""
+        return self.teacher_grade_data.get('graded_questions', [])
+    
+    @property
+    def display_status(self):
+        """Return status for frontend display"""
+        if self.is_teacher_graded:
+            return "teacher_enhanced"
+        elif self.score is not None:
+            return "auto_graded"
+        else:
+            return "ungraded"
 
 
 class Note(models.Model):
