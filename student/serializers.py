@@ -2,7 +2,8 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import (
     EnrolledCourse, StudentAttendance, StudentGrade, 
-    StudentBehavior, StudentNote, StudentCommunication
+    StudentBehavior, StudentNote, StudentCommunication,
+    QuizQuestionFeedback, QuizAttemptFeedback
 )
 
 User = get_user_model()
@@ -370,3 +371,126 @@ class StudentCommunicationCreateUpdateSerializer(serializers.ModelSerializer):
             'contacted_student', 'contacted_parent', 'parent_email', 'parent_phone',
             'follow_up_required', 'follow_up_date', 'sent_date'
         ]
+
+
+# ===== QUIZ FEEDBACK SERIALIZERS =====
+
+class QuizQuestionFeedbackListSerializer(serializers.ModelSerializer):
+    """List view of quiz question feedback"""
+    teacher_name = serializers.CharField(source='teacher.get_full_name', read_only=True)
+    student_name = serializers.CharField(source='quiz_attempt.student.get_full_name', read_only=True)
+    quiz_title = serializers.CharField(source='quiz_attempt.quiz.title', read_only=True)
+    lesson_title = serializers.CharField(source='quiz_attempt.quiz.lesson.title', read_only=True)
+    
+    class Meta:
+        model = QuizQuestionFeedback
+        fields = [
+            'id', 'teacher_name', 'student_name', 'quiz_title', 'lesson_title',
+            'feedback_text', 'points_earned', 'points_possible', 'is_correct',
+            'created_at', 'updated_at'
+        ]
+
+
+class QuizQuestionFeedbackDetailSerializer(serializers.ModelSerializer):
+    """Detailed view of quiz question feedback"""
+    teacher = BasicUserSerializer(read_only=True)
+    quiz_attempt = serializers.PrimaryKeyRelatedField(read_only=True)
+    question = serializers.PrimaryKeyRelatedField(read_only=True)
+    
+    class Meta:
+        model = QuizQuestionFeedback
+        fields = [
+            'id', 'teacher', 'quiz_attempt', 'question', 'feedback_text',
+            'points_earned', 'points_possible', 'is_correct',
+            'question_text_snapshot', 'student_answer_snapshot', 'correct_answer_snapshot',
+            'created_at', 'updated_at'
+        ]
+
+
+class QuizQuestionFeedbackCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/Update quiz question feedback"""
+    
+    class Meta:
+        model = QuizQuestionFeedback
+        fields = [
+            'feedback_text', 'points_earned', 'points_possible', 'is_correct'
+        ]
+    
+    def validate_feedback_text(self, value):
+        """Ensure feedback text is not empty"""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Feedback text is required")
+        return value.strip()
+    
+    def validate_points_earned(self, value):
+        """Validate points earned is not negative"""
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Points earned cannot be negative")
+        return value
+    
+    def validate_points_possible(self, value):
+        """Validate points possible is positive"""
+        if value is not None and value <= 0:
+            raise serializers.ValidationError("Points possible must be positive")
+        return value
+
+
+class QuizAttemptFeedbackListSerializer(serializers.ModelSerializer):
+    """List view of quiz attempt feedback"""
+    teacher_name = serializers.CharField(source='teacher.get_full_name', read_only=True)
+    student_name = serializers.CharField(source='quiz_attempt.student.get_full_name', read_only=True)
+    quiz_title = serializers.CharField(source='quiz_attempt.quiz.title', read_only=True)
+    lesson_title = serializers.CharField(source='quiz_attempt.quiz.lesson.title', read_only=True)
+    
+    class Meta:
+        model = QuizAttemptFeedback
+        fields = [
+            'id', 'teacher_name', 'student_name', 'quiz_title', 'lesson_title',
+            'feedback_text', 'overall_rating', 'strengths_highlighted',
+            'areas_for_improvement', 'study_recommendations', 'created_at', 'updated_at'
+        ]
+
+
+class QuizAttemptFeedbackDetailSerializer(serializers.ModelSerializer):
+    """Detailed view of quiz attempt feedback"""
+    teacher = BasicUserSerializer(read_only=True)
+    quiz_attempt = serializers.PrimaryKeyRelatedField(read_only=True)
+    
+    class Meta:
+        model = QuizAttemptFeedback
+        fields = [
+            'id', 'teacher', 'quiz_attempt', 'feedback_text', 'overall_rating',
+            'strengths_highlighted', 'areas_for_improvement', 'study_recommendations',
+            'private_notes', 'created_at', 'updated_at'
+        ]
+
+
+class QuizAttemptFeedbackCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/Update quiz attempt feedback"""
+    
+    class Meta:
+        model = QuizAttemptFeedback
+        fields = [
+            'feedback_text', 'overall_rating', 'strengths_highlighted',
+            'areas_for_improvement', 'study_recommendations', 'private_notes'
+        ]
+    
+    def validate_feedback_text(self, value):
+        """Ensure feedback text is not empty"""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Feedback text is required")
+        return value.strip()
+    
+    def validate_overall_rating(self, value):
+        """Validate overall rating is a valid choice"""
+        valid_ratings = ['excellent', 'good', 'satisfactory', 'needs_improvement', 'poor']
+        if value and value not in valid_ratings:
+            raise serializers.ValidationError(f"Overall rating must be one of: {', '.join(valid_ratings)}")
+        return value
+
+
+class StudentFeedbackOverviewSerializer(serializers.Serializer):
+    """Serializer for student feedback overview"""
+    question_feedbacks = QuizQuestionFeedbackListSerializer(many=True, read_only=True)
+    attempt_feedbacks = QuizAttemptFeedbackListSerializer(many=True, read_only=True)
+    total_feedbacks = serializers.IntegerField(read_only=True)

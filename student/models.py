@@ -158,6 +158,17 @@ class EnrolledCourse(models.Model):
         help_text="Special learning accommodations for this student"
     )
     
+    # Assessment Metrics
+    lesson_assessments_count = models.PositiveIntegerField(default=0)
+    teacher_assessments_count = models.PositiveIntegerField(default=0)
+    last_assessment_date = models.DateTimeField(null=True, blank=True)
+    
+    # Enhanced Quiz Metrics
+    total_quizzes_taken = models.PositiveIntegerField(default=0)
+    total_quizzes_passed = models.PositiveIntegerField(default=0)
+    highest_quiz_score = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
+    lowest_quiz_score = models.DecimalField(max_digits=5, decimal_places=2, default=0.00)
+    
     # Tracking & Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -176,6 +187,54 @@ class EnrolledCourse(models.Model):
     
     def __str__(self):
         return f"{self.student_profile.user.get_full_name()} enrolled in {self.course.title}"
+    
+    def update_quiz_metrics(self, quiz_score, passed):
+        """Update quiz-related metrics when a quiz is completed"""
+        self.total_quizzes_taken += 1
+        if passed:
+            self.total_quizzes_passed += 1
+        
+        # Update average score
+        if self.average_quiz_score is None:
+            self.average_quiz_score = quiz_score
+        else:
+            total_score = self.average_quiz_score * (self.total_quizzes_taken - 1) + quiz_score
+            self.average_quiz_score = total_score / self.total_quizzes_taken
+        
+        # Update highest/lowest scores
+        if quiz_score > self.highest_quiz_score:
+            self.highest_quiz_score = quiz_score
+        if quiz_score < self.lowest_quiz_score or self.lowest_quiz_score == 0:
+            self.lowest_quiz_score = quiz_score
+        
+        self.save()
+    
+    def update_assessment_metrics(self, assessment_type):
+        """Update assessment counts when an assessment is added"""
+        if assessment_type == 'lesson':
+            self.lesson_assessments_count += 1
+        elif assessment_type == 'teacher':
+            self.teacher_assessments_count += 1
+        
+        self.last_assessment_date = timezone.now()
+        self.save()
+    
+    def update_progress_metrics(self):
+        """Update overall progress metrics"""
+        # Calculate completion percentage
+        if self.total_lessons_count > 0:
+            self.progress_percentage = (self.completed_lessons_count / self.total_lessons_count) * 100
+        
+        # Update current lesson if needed
+        if not self.current_lesson and self.completed_lessons_count < self.total_lessons_count:
+            # Find next uncompleted lesson
+            next_lesson = self.course.lessons.filter(
+                order__gt=self.completed_lessons_count
+            ).first()
+            if next_lesson:
+                self.current_lesson = next_lesson
+        
+        self.save()
     
     @property
     def is_active(self):
@@ -627,3 +686,296 @@ class StudentCommunication(models.Model):
     
     def __str__(self):
         return f"Communication with {self.student.get_full_name()} - {self.subject}"
+
+
+class LessonAssessment(models.Model):
+    """
+    Teacher's assessment for a student on a specific lesson within a course enrollment
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Relationships
+    enrollment = models.ForeignKey(
+        EnrolledCourse, 
+        on_delete=models.CASCADE, 
+        related_name='lesson_assessments'
+    )
+    lesson = models.ForeignKey(
+        'courses.Lesson', 
+        on_delete=models.CASCADE, 
+        related_name='student_assessments'
+    )
+    teacher = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='lesson_assessments_given'
+    )
+    
+    # Assessment content
+    title = models.CharField(max_length=200)
+    content = models.TextField()
+    assessment_type = models.CharField(max_length=50, choices=[
+        ('strength', 'Strength'),
+        ('weakness', 'Weakness'),
+        ('improvement', 'Improvement Area'),
+        ('general', 'General Note'),
+        ('achievement', 'Achievement'),
+        ('challenge', 'Challenge Faced')
+    ])
+    
+    # Optional: Link to quiz attempt if assessment was added during grading
+    quiz_attempt = models.ForeignKey(
+        'courses.QuizAttempt', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'lesson_assessments'
+        unique_together = ['enrollment', 'lesson', 'teacher']
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['enrollment', 'lesson']),
+            models.Index(fields=['teacher', '-created_at']),
+            models.Index(fields=['assessment_type']),
+        ]
+    
+    def __str__(self):
+        return f"{self.teacher.get_full_name()}'s {self.assessment_type} assessment for {self.enrollment.student_profile.user.get_full_name()} on {self.lesson.title}"
+
+
+class TeacherAssessment(models.Model):
+    """
+    Overall teacher evaluation of student performance in a specific course
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Relationships
+    enrollment = models.ForeignKey(
+        EnrolledCourse, 
+        on_delete=models.CASCADE, 
+        related_name='teacher_assessments'
+    )
+    teacher = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='teacher_assessments_given'
+    )
+    
+    # Overall evaluation
+    academic_performance = models.CharField(max_length=20, choices=[
+        ('excellent', 'Excellent'),
+        ('good', 'Good'),
+        ('satisfactory', 'Satisfactory'),
+        ('needs_improvement', 'Needs Improvement'),
+        ('poor', 'Poor')
+    ])
+    
+    participation_level = models.CharField(max_length=20, choices=[
+        ('very_active', 'Very Active'),
+        ('active', 'Active'),
+        ('moderate', 'Moderate'),
+        ('passive', 'Passive'),
+        ('inactive', 'Inactive')
+    ])
+    
+    strengths = models.TextField(blank=True)
+    weaknesses = models.TextField(blank=True)
+    recommendations = models.TextField(blank=True)
+    general_comments = models.TextField(blank=True)
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'teacher_assessments'
+        # Removed unique_together to allow weekly assessments
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['enrollment', 'teacher']),
+            models.Index(fields=['teacher', '-created_at']),
+            models.Index(fields=['academic_performance']),
+        ]
+    
+    def __str__(self):
+        return f"{self.teacher.get_full_name()}'s assessment for {self.enrollment.student_profile.user.get_full_name()} in {self.enrollment.course.title}"
+
+
+class BaseFeedback(models.Model):
+    """
+    Abstract base model for all feedback types
+    Provides common fields and behavior
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Common feedback fields
+    feedback_text = models.TextField(help_text="The actual feedback content")
+    teacher = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='%(class)s_feedbacks_given'
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        abstract = True
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.teacher.get_full_name()}'s feedback - {self.created_at.strftime('%Y-%m-%d %H:%M')}"
+
+
+class QuizQuestionFeedback(BaseFeedback):
+    """
+    Feedback for individual quiz questions
+    Links directly to quiz attempts and questions
+    """
+    quiz_attempt = models.ForeignKey(
+        'courses.QuizAttempt', 
+        on_delete=models.CASCADE, 
+        related_name='question_feedbacks'
+    )
+    question = models.ForeignKey(
+        'courses.Question', 
+        on_delete=models.CASCADE, 
+        related_name='feedbacks'
+    )
+    
+    # Question-specific feedback fields
+    points_earned = models.DecimalField(
+        max_digits=5, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Points earned for this specific question"
+    )
+    points_possible = models.DecimalField(
+        max_digits=5, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Total points possible for this question"
+    )
+    is_correct = models.BooleanField(
+        null=True, 
+        blank=True,
+        help_text="Whether the student's answer was correct"
+    )
+    
+    # Snapshot data for reference (in case question/answer changes later)
+    question_text_snapshot = models.TextField(
+        blank=True,
+        help_text="Snapshot of question text when feedback was given"
+    )
+    student_answer_snapshot = models.TextField(
+        blank=True,
+        help_text="Snapshot of student's answer when feedback was given"
+    )
+    correct_answer_snapshot = models.TextField(
+        blank=True,
+        help_text="Snapshot of correct answer when feedback was given"
+    )
+    
+    class Meta:
+        db_table = 'quiz_question_feedbacks'
+        unique_together = ['quiz_attempt', 'question', 'teacher']
+        indexes = [
+            models.Index(fields=['quiz_attempt', 'question']),
+            models.Index(fields=['teacher', '-created_at']),
+            models.Index(fields=['is_correct']),
+        ]
+    
+    def __str__(self):
+        return f"{self.teacher.get_full_name()}'s feedback on question {self.question.id} for {self.quiz_attempt.student.get_full_name()}"
+    
+    def save(self, *args, **kwargs):
+        # Auto-capture snapshots if not provided
+        if not self.question_text_snapshot and self.question:
+            self.question_text_snapshot = self.question.question_text
+        if not self.student_answer_snapshot and self.quiz_attempt:
+            student_answer = self.quiz_attempt.answers.get(str(self.question.id), '')
+            self.student_answer_snapshot = str(student_answer)
+        if not self.correct_answer_snapshot and self.question:
+            correct_answer = self.question.content.get('correct_answer', '')
+            self.correct_answer_snapshot = str(correct_answer)
+        
+        super().save(*args, **kwargs)
+
+
+class QuizAttemptFeedback(BaseFeedback):
+    """
+    Overall feedback for an entire quiz attempt
+    Provides comprehensive feedback on student performance
+    """
+    quiz_attempt = models.ForeignKey(
+        'courses.QuizAttempt', 
+        on_delete=models.CASCADE, 
+        related_name='attempt_feedbacks'
+    )
+    
+    # Overall assessment feedback
+    overall_rating = models.CharField(
+        max_length=20,
+        choices=[
+            ('excellent', 'Excellent'),
+            ('good', 'Good'),
+            ('satisfactory', 'Satisfactory'),
+            ('needs_improvement', 'Needs Improvement'),
+            ('poor', 'Poor'),
+        ],
+        null=True,
+        blank=True,
+        help_text="Overall rating of the quiz attempt"
+    )
+    
+    # Detailed feedback sections
+    strengths_highlighted = models.TextField(
+        blank=True,
+        help_text="Student strengths demonstrated in this quiz"
+    )
+    areas_for_improvement = models.TextField(
+        blank=True,
+        help_text="Specific areas where the student can improve"
+    )
+    study_recommendations = models.TextField(
+        blank=True,
+        help_text="Recommended study strategies or resources"
+    )
+    
+    # Private notes (not visible to students)
+    private_notes = models.TextField(
+        blank=True,
+        help_text="Private notes for teachers (not visible to students)"
+    )
+    
+    class Meta:
+        db_table = 'quiz_attempt_feedbacks'
+        unique_together = ['quiz_attempt', 'teacher']
+        indexes = [
+            models.Index(fields=['quiz_attempt']),
+            models.Index(fields=['teacher', '-created_at']),
+            models.Index(fields=['overall_rating']),
+        ]
+    
+    def __str__(self):
+        return f"{self.teacher.get_full_name()}'s overall feedback for {self.quiz_attempt.student.get_full_name()}'s quiz attempt"
+    
+    @property
+    def has_detailed_feedback(self):
+        """Check if this feedback has detailed sections filled out"""
+        return bool(
+            self.strengths_highlighted or 
+            self.areas_for_improvement or 
+            self.study_recommendations
+        )
+
+

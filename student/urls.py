@@ -6,6 +6,20 @@ urlpatterns = [
     path('enrolled-courses/', views.enrolled_courses, name='enrolled_courses'),
     path('enrolled-courses/<uuid:enrollment_id>/', views.enrolled_course_detail, name='enrolled_course_detail'),
     
+    # Assessments
+    path('enrolled-courses/<uuid:enrollment_id>/lesson-assessments/', views.lesson_assessments, name='lesson_assessments'),
+    path('enrolled-courses/<uuid:enrollment_id>/teacher-assessments/', views.teacher_assessments, name='teacher_assessments'),
+    path('students/<int:student_id>/assessments-overview/', views.student_assessments_overview, name='student_assessments_overview'),
+    path('assessments/create-lesson/', views.create_lesson_assessment_direct, name='create_lesson_assessment_direct'),
+    path('assessments/create-teacher/', views.create_teacher_assessment_direct, name='create_teacher_assessment_direct'),
+    path('assessments/update-teacher/<uuid:assessment_id>/', views.update_teacher_assessment, name='update_teacher_assessment'),
+    path('assessments/update-lesson/<uuid:assessment_id>/', views.update_lesson_assessment, name='update_lesson_assessment'),
+    
+    # Feedback System
+    path('feedback/question/<uuid:quiz_attempt_id>/<uuid:question_id>/', views.quiz_question_feedback, name='quiz_question_feedback'),
+    path('feedback/attempt/<uuid:quiz_attempt_id>/', views.quiz_attempt_feedback, name='quiz_attempt_feedback'),
+    path('feedback/overview/<int:student_id>/', views.student_feedback_overview, name='student_feedback_overview'),
+    
     # TODO: Add other student-related endpoints as needed
     # path('attendance/', views.student_attendance, name='student_attendance'),
     # path('attendance/<uuid:attendance_id>/', views.student_attendance_detail, name='student_attendance_detail'),
