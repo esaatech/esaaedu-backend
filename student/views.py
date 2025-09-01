@@ -3,6 +3,7 @@ from rest_framework import status, permissions
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.views import APIView
 
 from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback
 from .serializers import (
@@ -888,3 +889,171 @@ def student_feedback_overview(request, student_id):
             {'error': 'Failed to fetch student feedback overview', 'details': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+class TeacherStudentRecord(APIView):
+    """
+    Class-based view that returns complete student record for teacher management
+    Consolidates all student data into a single, organized response
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, student_id):
+        """
+        GET: Retrieve complete student record for teacher management
+        """
+        try:
+            # Verify user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can access student records'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get course filter from query params
+            course_id = request.GET.get('course_id')
+            
+            # Get student profile
+            from users.models import StudentProfile
+            student_profile = get_object_or_404(StudentProfile, user_id=student_id)
+            
+            # Get enrollments (filtered by course if specified)
+            if course_id:
+                enrollments = EnrolledCourse.objects.filter(
+                    student_profile__user_id=student_id,
+                    course__teacher=request.user,
+                    course_id=course_id
+                )
+            else:
+                enrollments = EnrolledCourse.objects.filter(
+                    student_profile__user_id=student_id,
+                    course__teacher=request.user
+                )
+            
+            if not enrollments.exists():
+                return Response(
+                    {'error': 'No enrollments found for this student in your courses'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Build complete student record
+            student_record = {
+                'basic_info': self.get_student_basic_info(student_profile, enrollments.first()),
+                'performance_metrics': self.get_performance_metrics(enrollments.first()),
+                'teacher_assessments': self.get_teacher_assessments(enrollments),
+                'lesson_assessments': self.get_lesson_assessments(enrollments),
+                'quiz_overview': self.get_quiz_overview(enrollments),
+                'course_progress': self.get_course_progress(enrollments.first())
+            }
+            
+            return Response(student_record, status=status.HTTP_200_OK)
+            
+        except StudentProfile.DoesNotExist:
+            return Response(
+                {'error': 'Student not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch student record', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def get_student_basic_info(self, student_profile, enrollment):
+        """Get basic student information"""
+        user = student_profile.user
+        return {
+            'id': str(user.id),
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'full_name': user.get_full_name(),
+            'email': user.email,
+            'grade_level': student_profile.grade_level,
+            'enrollment_date': enrollment.enrollment_date.isoformat() if enrollment else None,
+            'child_first_name': student_profile.child_first_name,
+            'child_last_name': student_profile.child_last_name
+        }
+    
+    def get_performance_metrics(self, enrollment):
+        """Get performance metrics for the student"""
+        if not enrollment:
+            return {}
+        
+        return {
+            'progress_percentage': float(enrollment.progress_percentage),
+            'overall_grade': enrollment.overall_grade,
+            'average_quiz_score': float(enrollment.average_quiz_score) if enrollment.average_quiz_score else None,
+            'is_at_risk': enrollment.is_at_risk,
+            'completed_lessons_count': enrollment.completed_lessons_count,
+            'total_lessons_count': enrollment.total_lessons_count,
+            'last_accessed': enrollment.last_accessed.isoformat() if enrollment.last_accessed else None
+        }
+    
+    def get_teacher_assessments(self, enrollments):
+        """Get all teacher assessments for the student"""
+        assessments = TeacherAssessment.objects.filter(
+            enrollment__in=enrollments
+        ).select_related('enrollment', 'teacher').order_by('-created_at')
+        
+        return [{
+            'id': assessment.id,
+            'academic_performance': assessment.academic_performance,
+            'participation_level': assessment.participation_level,
+            'strengths': assessment.strengths,
+            'weaknesses': assessment.weaknesses,
+            'recommendations': assessment.recommendations,
+            'general_comments': assessment.general_comments,
+            'course_title': assessment.enrollment.course.title,
+            'teacher_name': assessment.teacher.get_full_name(),
+            'created_at': assessment.created_at.isoformat()
+        } for assessment in assessments]
+    
+    def get_lesson_assessments(self, enrollments):
+        """Get all lesson assessments for the student"""
+        assessments = LessonAssessment.objects.filter(
+            enrollment__in=enrollments
+        ).select_related('enrollment', 'lesson', 'teacher').order_by('-created_at')
+        
+        return [{
+            'id': assessment.id,
+            'title': assessment.title,
+            'content': assessment.content,
+            'assessment_type': assessment.assessment_type,
+            'lesson_title': assessment.lesson.title,
+            'course_title': assessment.enrollment.course.title,
+            'teacher_name': assessment.teacher.get_full_name(),
+            'created_at': assessment.created_at.isoformat()
+        } for assessment in assessments]
+    
+    def get_quiz_overview(self, enrollments):
+        """Get quiz overview data for the student"""
+        from courses.models import QuizAttempt
+        attempts = QuizAttempt.objects.filter(
+            enrollment__in=enrollments
+        ).select_related('quiz', 'quiz__lesson').order_by('-completed_at')
+        
+        return [{
+            'id': attempt.id,
+            'quiz_title': attempt.quiz.title,
+            'lesson_title': attempt.quiz.lesson.title,
+            'course_title': attempt.enrollment.course.title,
+            'score': attempt.score,
+            'passed': attempt.passed,
+            'completed_at': attempt.completed_at.isoformat(),
+            'attempt_number': attempt.attempt_number
+        } for attempt in attempts]
+    
+    def get_course_progress(self, enrollment):
+        """Get course progress for the student"""
+        if not enrollment:
+            return {}
+        
+        return {
+            'course_id': str(enrollment.course.id),
+            'course_title': enrollment.course.title,
+            'current_lesson_id': str(enrollment.current_lesson.id) if enrollment.current_lesson else None,
+            'current_lesson_title': enrollment.current_lesson.title if enrollment.current_lesson else None,
+            'progress_percentage': float(enrollment.progress_percentage),
+            'completed_lessons_count': enrollment.completed_lessons_count,
+            'total_lessons_count': enrollment.total_lessons_count
+        }

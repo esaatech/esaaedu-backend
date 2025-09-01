@@ -39,6 +39,7 @@ urlpatterns = [
     
     # Teacher student management
     path('teacher/students/', views.teacher_students, name='teacher_students'),
+    path('teacher/students/master/', views.teacher_students_master, name='teacher_students_master'),
     
     # Class event endpoints
     path('teacher/classes/<uuid:class_id>/events/', views.class_events, name='class_events'),

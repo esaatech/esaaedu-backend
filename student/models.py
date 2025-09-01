@@ -327,6 +327,101 @@ class EnrolledCourse(models.Model):
             self.save()
             return True
         return False
+    
+    def update_performance_metrics(self, quiz_score, passed, lesson_completed=False, assignment_completed=False):
+        """
+        Comprehensive performance metrics update function
+        Updates all relevant metrics when various events occur
+        
+        Args:
+            quiz_score (float): Quiz score percentage (0-100)
+            passed (bool): Whether the quiz was passed
+            lesson_completed (bool): Whether a lesson was completed
+            assignment_completed (bool): Whether an assignment was completed
+        """
+        try:
+            # Update quiz metrics
+            self.total_quizzes_taken += 1
+            if passed:
+                self.total_quizzes_passed += 1
+            
+            # Update average quiz score
+            if self.average_quiz_score is None:
+                self.average_quiz_score = quiz_score
+            else:
+                total_score = self.average_quiz_score * (self.total_quizzes_taken - 1) + quiz_score
+                self.average_quiz_score = total_score / self.total_quizzes_taken
+            
+            # Update highest/lowest quiz scores
+            if quiz_score > self.highest_quiz_score:
+                self.highest_quiz_score = quiz_score
+            if quiz_score < self.lowest_quiz_score or self.lowest_quiz_score == 0:
+                self.lowest_quiz_score = quiz_score
+            
+            # Update lesson progress if lesson was completed
+            if lesson_completed:
+                self.completed_lessons_count += 1
+                self.update_progress_metrics()
+                
+                # Check if course is completed
+                if self.completed_lessons_count >= self.total_lessons_count:
+                    self.mark_completed()
+            
+            # Update assignment progress if assignment was completed
+            if assignment_completed:
+                self.total_assignments_completed += 1
+            
+            # Update last access time
+            self.last_accessed = timezone.now()
+            
+            # Save all changes
+            self.save()
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error updating performance metrics: {e}")
+            return False
+    
+    def update_quiz_performance(self, quiz_score, passed):
+        """
+        Simple quiz performance update function
+        Updates quiz-related metrics when a quiz is submitted
+        
+        Args:
+            quiz_score (float): Quiz score percentage (0-100)
+            passed (bool): Whether the quiz was passed
+        """
+        try:
+            # Update quiz metrics
+            self.total_quizzes_taken += 1
+            if passed:
+                self.total_quizzes_passed += 1
+            
+            # Update average quiz score
+            if self.average_quiz_score is None:
+                self.average_quiz_score = quiz_score
+            else:
+                total_score = self.average_quiz_score * (self.total_quizzes_taken - 1) + quiz_score
+                self.average_quiz_score = total_score / self.total_quizzes_taken
+            
+            # Update highest/lowest quiz scores
+            if quiz_score > self.highest_quiz_score:
+                self.highest_quiz_score = quiz_score
+            if quiz_score < self.lowest_quiz_score or self.lowest_quiz_score == 0:
+                self.lowest_quiz_score = quiz_score
+            
+            # Update last access time
+            self.last_accessed = timezone.now()
+            
+            # Save all changes
+            self.save()
+            
+            return True
+            
+        except Exception as e:
+            print(f"Error updating quiz performance: {e}")
+            return False
 
 
 class StudentAttendance(models.Model):

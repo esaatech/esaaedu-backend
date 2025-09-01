@@ -15,6 +15,9 @@ urlpatterns = [
     path('assessments/update-teacher/<uuid:assessment_id>/', views.update_teacher_assessment, name='update_teacher_assessment'),
     path('assessments/update-lesson/<uuid:assessment_id>/', views.update_lesson_assessment, name='update_lesson_assessment'),
     
+    # New consolidated endpoint
+    path('teacher-student-record/<int:student_id>/', views.TeacherStudentRecord.as_view(), name='teacher_student_record'),
+    
     # Feedback System
     path('feedback/question/<uuid:quiz_attempt_id>/<uuid:question_id>/', views.quiz_question_feedback, name='quiz_question_feedback'),
     path('feedback/attempt/<uuid:quiz_attempt_id>/', views.quiz_attempt_feedback, name='quiz_attempt_feedback'),

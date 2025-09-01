@@ -1375,6 +1375,122 @@ def teacher_students(request):
         )
 
 
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def teacher_students_master(request):
+    """
+    Consolidated endpoint that returns all teacher courses and students in a single call.
+    This eliminates the need for multiple API calls on page load.
+    
+    Returns:
+    - All courses taught by the teacher
+    - All students enrolled in those courses
+    - Basic student information for the master panel
+    """
+    if request.user.role != 'teacher':
+        return Response(
+            {'error': 'Only teachers can access this endpoint'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    try:
+        from student.models import EnrolledCourse
+        from django.db.models import Q, Prefetch
+        
+        # Get all courses taught by the teacher
+        courses = Course.objects.filter(teacher=request.user).annotate(
+            enrolled_count=models.Count('student_enrollments', distinct=True),
+            active_count=models.Count(
+                'student_enrollments',
+                filter=Q(student_enrollments__status='active'),
+                distinct=True
+            )
+        ).order_by('-created_at')
+        
+        # Get all enrollments for teacher's courses
+        enrollments = EnrolledCourse.objects.filter(
+            course__teacher=request.user
+        ).select_related(
+            'student_profile__user',
+            'course',
+            'current_lesson'
+        ).order_by('-enrollment_date', 'student_profile__user__first_name')
+        
+        # Prepare courses data
+        courses_data = []
+        for course in courses:
+            course_data = {
+                'id': str(course.id),
+                'title': course.title,
+                'description': course.description,
+                'category': course.category,
+                'difficulty_level': getattr(course, 'difficulty_level', 'beginner'),
+                'status': course.status,
+                'created_at': course.created_at.isoformat() if course.created_at else None,
+                'enrolled_count': course.enrolled_count,
+                'active_count': course.active_count,
+                'total_lessons': course.lessons.count()
+            }
+            courses_data.append(course_data)
+        
+        # Prepare students data (summary view for master panel)
+        students_data = []
+        for enrollment in enrollments:
+            student_user = enrollment.student_profile.user
+            student_data = {
+                'id': str(student_user.id),
+                'student_profile_id': str(enrollment.student_profile.id),
+                'first_name': student_user.first_name,
+                'last_name': student_user.last_name,
+                'email': student_user.email,
+                'child_first_name': enrollment.student_profile.child_first_name,
+                'child_last_name': enrollment.student_profile.child_last_name,
+                'grade_level': enrollment.student_profile.grade_level,
+                'enrollment_date': enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
+                'status': enrollment.status,
+                'progress_percentage': float(enrollment.progress_percentage),
+                'overall_grade': enrollment.overall_grade,
+                'average_quiz_score': float(enrollment.average_quiz_score) if enrollment.average_quiz_score else None,
+                'is_at_risk': enrollment.is_at_risk,
+                'course_id': str(enrollment.course.id),
+                'course_title': enrollment.course.title,
+                'current_lesson_id': str(enrollment.current_lesson.id) if enrollment.current_lesson else None,
+                'current_lesson_title': enrollment.current_lesson.title if enrollment.current_lesson else None,
+                'completed_lessons_count': enrollment.completed_lessons_count,
+                'total_lessons_count': enrollment.total_lessons_count,
+                'last_accessed': enrollment.last_accessed.isoformat() if enrollment.last_accessed else None
+            }
+            students_data.append(student_data)
+        
+        # Get summary statistics
+        total_enrollments = enrollments.count()
+        active_students = enrollments.filter(status='active').count()
+        completed_students = enrollments.filter(status='completed').count()
+        at_risk_count = sum(1 for e in enrollments if e.is_at_risk)
+        unique_students = enrollments.values('student_profile__user').distinct().count()
+        
+        response_data = {
+            'courses': courses_data,
+            'students': students_data,
+            'summary': {
+                'total_courses': len(courses_data),
+                'total_enrollments': total_enrollments,
+                'active_students': active_students,
+                'completed_students': completed_students,
+                'at_risk_students': at_risk_count,
+                'unique_students': unique_students
+            }
+        }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        return Response(
+            {'error': 'Failed to fetch teacher students master data', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
 @api_view(['GET', 'POST'])
 @permission_classes([permissions.IsAuthenticated])
 def class_events(request, class_id):
@@ -2122,7 +2238,7 @@ def student_course_recommendations(request):
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
-def student_enroll_course(request):
+def student_enroll_course(request, course_id):
     """
     Enroll the current student in a course
     """
@@ -2130,17 +2246,11 @@ def student_enroll_course(request):
     print(f"Request method: {request.method}")
     print(f"Request user: {request.user}")
     print(f"Request data: {request.data}")
+    print(f"Course ID from URL: {course_id}")
     
     try:
-        # Get course ID and class ID from request
-        course_id = request.data.get('course_id')
+        # Get class ID from request (course_id is now from URL)
         class_id = request.data.get('class_id')  # Optional for now
-        
-        if not course_id:
-            return Response(
-                {'error': 'Course ID is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
         
         print(f"Step 1: Getting student profile...")
         # Get student profile
@@ -2152,7 +2262,7 @@ def student_enroll_course(request):
             )
         
         print(f"Step 2: Getting course...")
-        # Get course
+        # Get course using course_id from URL
         try:
             course = Course.objects.get(id=course_id, status='published')
         except Course.DoesNotExist:
