@@ -494,3 +494,39 @@ class StudentFeedbackOverviewSerializer(serializers.Serializer):
     question_feedbacks = QuizQuestionFeedbackListSerializer(many=True, read_only=True)
     attempt_feedbacks = QuizAttemptFeedbackListSerializer(many=True, read_only=True)
     total_feedbacks = serializers.IntegerField(read_only=True)
+
+
+# ===== SCHEDULE SERIALIZERS =====
+
+class ScheduleEventSerializer(serializers.Serializer):
+    """Serializer for individual schedule events"""
+    id = serializers.UUIDField()
+    title = serializers.CharField()
+    start = serializers.DateTimeField()
+    end = serializers.DateTimeField()
+    description = serializers.CharField(allow_blank=True)
+    event_type = serializers.CharField()
+    meeting_platform = serializers.CharField(allow_null=True, allow_blank=True)
+    meeting_link = serializers.URLField(allow_null=True, allow_blank=True)
+    meeting_id = serializers.CharField(allow_null=True, allow_blank=True)
+    meeting_password = serializers.CharField(allow_null=True, allow_blank=True)
+    backgroundColor = serializers.CharField()
+    borderColor = serializers.CharField()
+    textColor = serializers.CharField()
+
+
+class ClassWithEventsSerializer(serializers.Serializer):
+    """Serializer for a class with its events"""
+    id = serializers.CharField()
+    name = serializers.CharField()
+    course_name = serializers.CharField()
+    color = serializers.CharField()
+    events = ScheduleEventSerializer(many=True)
+
+
+class StudentScheduleSerializer(serializers.Serializer):
+    """Serializer for complete student schedule"""
+    classes = ClassWithEventsSerializer(many=True)
+    total_events = serializers.IntegerField()
+    date_range = serializers.DictField()
+    summary = serializers.DictField()

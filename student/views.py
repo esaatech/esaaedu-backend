@@ -4,8 +4,10 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
+from django.utils import timezone
 
 from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback
+from courses.models import Class, ClassEvent
 from .serializers import (
     EnrolledCourseListSerializer, 
     EnrolledCourseDetailSerializer, 
@@ -14,7 +16,8 @@ from .serializers import (
     QuizQuestionFeedbackCreateUpdateSerializer,
     QuizAttemptFeedbackDetailSerializer,
     QuizAttemptFeedbackCreateUpdateSerializer,
-    StudentFeedbackOverviewSerializer
+    StudentFeedbackOverviewSerializer,
+    StudentScheduleSerializer
 )
 
 
@@ -1057,3 +1060,181 @@ class TeacherStudentRecord(APIView):
             'completed_lessons_count': enrollment.completed_lessons_count,
             'total_lessons_count': enrollment.total_lessons_count
         }
+
+
+class StudentScheduleView(APIView):
+    """
+    Get student's complete schedule with all enrolled courses, classes, and events
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """
+        GET: Retrieve student's complete schedule
+        """
+        try:
+            # Step 1: Validate user is a student
+            if request.user.role != 'student':
+                return Response(
+                    {'error': 'Only students can access their schedule'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Step 2: Get student's enrolled courses
+            try:
+                enrollments = EnrolledCourse.objects.filter(
+                    student_profile__user=request.user,
+                    status='active'
+                ).select_related('course', 'student_profile')
+                
+                if not enrollments.exists():
+                    return Response({
+                        'classes': [],
+                        'total_events': 0,
+                        'date_range': {'start': None, 'end': None},
+                        'summary': {'total_courses': 0, 'total_classes': 0}
+                    }, status=status.HTTP_200_OK)
+                    
+            except Exception as e:
+                print(f"❌ Error fetching enrolled courses: {str(e)}")
+                return Response(
+                    {'error': 'Failed to fetch enrolled courses', 'details': str(e)},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Step 3: Get classes for each enrolled course
+            try:
+                
+                classes_with_events = []
+                color_palette = [
+                    {'bg': '#3B82F6', 'border': '#2563EB', 'text': '#FFFFFF'},  # Blue
+                    {'bg': '#10B981', 'border': '#059669', 'text': '#FFFFFF'},  # Green
+                    {'bg': '#F59E0B', 'border': '#D97706', 'text': '#FFFFFF'},  # Amber
+                    {'bg': '#EF4444', 'border': '#DC2626', 'text': '#FFFFFF'},  # Red
+                    {'bg': '#8B5CF6', 'border': '#7C3AED', 'text': '#FFFFFF'},  # Purple
+                    {'bg': '#06B6D4', 'border': '#0891B2', 'text': '#FFFFFF'},  # Cyan
+                    {'bg': '#F97316', 'border': '#EA580C', 'text': '#FFFFFF'},  # Orange
+                    {'bg': '#EC4899', 'border': '#DB2777', 'text': '#FFFFFF'},  # Pink
+                ]
+                
+                total_events = 0
+                all_event_dates = []
+                
+                for index, enrollment in enumerate(enrollments):
+                    try:
+                        # Get classes for this course
+                        classes = Class.objects.filter(
+                            course=enrollment.course,
+                            is_active=True
+                        ).select_related('course')
+                        
+                        for class_instance in classes:
+                            try:
+                                # Get events for this class
+                                events = ClassEvent.objects.filter(
+                                    class_instance=class_instance,
+                                    start_time__gte=timezone.now() - timezone.timedelta(days=7)  # Show events from 7 days ago
+                                ).select_related('lesson').order_by('start_time')
+                                
+                                if events.exists():
+                                    # Assign color to this class
+                                    color_index = (index + len(classes_with_events)) % len(color_palette)
+                                    colors = color_palette[color_index]
+                                    
+                                    # Convert events to schedule format
+                                    schedule_events = []
+                                    for event in events:
+                                        try:
+                                            schedule_event = {
+                                                'id': str(event.id),
+                                                'title': event.title,
+                                                'start': event.start_time.isoformat(),
+                                                'end': event.end_time.isoformat(),
+                                                'description': event.description or '',
+                                                'event_type': event.event_type,
+                                                'meeting_platform': event.meeting_platform,
+                                                'meeting_link': event.meeting_link,
+                                                'meeting_id': event.meeting_id,
+                                                'meeting_password': event.meeting_password,
+                                                'backgroundColor': colors['bg'],
+                                                'borderColor': colors['border'],
+                                                'textColor': colors['text'],
+                                            }
+                                            schedule_events.append(schedule_event)
+                                            total_events += 1
+                                            all_event_dates.extend([event.start_time, event.end_time])
+                                            
+                                        except Exception as e:
+                                            continue
+                                    
+                                    # Add class with events
+                                    class_with_events = {
+                                        'id': str(class_instance.id),
+                                        'name': class_instance.name,
+                                        'course_name': class_instance.course.title,
+                                        'color': colors['bg'],
+                                        'events': schedule_events
+                                    }
+                                    classes_with_events.append(class_with_events)
+                                    
+                            except Exception as e:
+                                continue
+                                
+                    except Exception as e:
+                        continue
+                
+            except Exception as e:
+                return Response(
+                    {'error': 'Failed to fetch classes and events', 'details': str(e)},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Step 4: Calculate date range and summary
+            try:
+                date_range = {'start': None, 'end': None}
+                if all_event_dates:
+                    date_range = {
+                        'start': min(all_event_dates).isoformat(),
+                        'end': max(all_event_dates).isoformat()
+                    }
+                
+                summary = {
+                    'total_courses': enrollments.count(),
+                    'total_classes': len(classes_with_events),
+                    'total_events': total_events
+                }
+                
+            except Exception as e:
+                date_range = {'start': None, 'end': None}
+                summary = {'total_courses': 0, 'total_classes': 0, 'total_events': 0}
+            
+            # Step 5: Prepare response
+            try:
+                response_data = {
+                    'classes': classes_with_events,
+                    'total_events': total_events,
+                    'date_range': date_range,
+                    'summary': summary
+                }
+                
+                # Validate response with serializer
+                serializer = StudentScheduleSerializer(data=response_data)
+                if serializer.is_valid():
+                    return Response(serializer.data, status=status.HTTP_200_OK)
+                else:
+                    return Response(
+                        {'error': 'Invalid response data format', 'details': serializer.errors},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+                    
+            except Exception as e:
+                return Response(
+                    {'error': 'Failed to prepare response', 'details': str(e)},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+                
+        except Exception as e:
+            return Response(
+                {'error': 'An unexpected error occurred', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
