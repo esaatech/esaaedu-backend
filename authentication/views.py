@@ -74,7 +74,9 @@ class AuthenticatedUserView(APIView):
         """
         Return current user profile information.
         """
-        serializer = UserProfileSerializer(request.user)
+        # Optimize query by prefetching related profiles
+        user = User.objects.select_related('student_profile', 'teacher_profile').get(id=request.user.id)
+        serializer = UserProfileSerializer(user)
         return Response(serializer.data)
 
 
