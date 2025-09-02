@@ -5,9 +5,10 @@ from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
 from django.utils import timezone
+from django.db import models
 
 from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback
-from courses.models import Class, ClassEvent
+from courses.models import Class, ClassEvent, Course, Lesson
 from .serializers import (
     EnrolledCourseListSerializer, 
     EnrolledCourseDetailSerializer, 
@@ -17,7 +18,15 @@ from .serializers import (
     QuizAttemptFeedbackDetailSerializer,
     QuizAttemptFeedbackCreateUpdateSerializer,
     StudentFeedbackOverviewSerializer,
-    StudentScheduleSerializer
+    StudentScheduleSerializer,
+    # Dashboard Overview Serializers
+    DashboardStatisticsSerializer,
+    AudioVideoLessonSerializer,
+    LiveLessonSerializer,
+    TextLessonSerializer,
+    InteractiveLessonSerializer,
+    AchievementSerializer,
+    DashboardOverviewSerializer
 )
 
 
@@ -1234,7 +1243,629 @@ class StudentScheduleView(APIView):
                 )
                 
         except Exception as e:
+                            return Response(
+                    {'error': 'An unexpected error occurred', 'details': str(e)},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+
+class DashboardOverview(APIView):
+    """
+    Class-Based View for Dashboard Overview
+    Provides comprehensive data for the student dashboard overview page
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    # Configuration variables - easily changeable
+    LIVE_LESSONS_LIMIT = 3  # Number of live lessons to show
+    CONTINUE_LEARNING_LIMIT = 25  # Number of continue learning lessons to show
+    SHOW_TODAY_ONLY = False  # If True: show only today's events for BOTH sections, If False: show all upcoming events
+    
+    def get(self, request):
+        """
+        GET: Retrieve all dashboard overview data
+        Returns consolidated data for statistics, lessons, and achievements
+        """
+        try:
+            # Verify user is a student
+            if request.user.role != 'student':
+                return Response(
+                    {'error': 'Only students can access dashboard overview'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get student profile
+            student_profile = getattr(request.user, 'student_profile', None)
+            if not student_profile:
+                return Response(
+                    {'error': 'Student profile not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # OPTIMIZED: Fetch all data once and reuse
+            dashboard_data = self._get_dashboard_data(student_profile)
+            
+            # Collect all data using the cached data
+            overview_data = {
+                'statistics': self._get_statistics_from_data(dashboard_data),
+                'continue_learning_lessons': self._get_continue_learning_lessons_from_data(dashboard_data),
+                'live_lessons': self._get_live_lessons_from_data(dashboard_data),
+                'recent_achievements': self._get_recent_achievements_from_data(dashboard_data)
+            }
+            
+            return Response(overview_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
             return Response(
-                {'error': 'An unexpected error occurred', 'details': str(e)},
+                {'error': 'Failed to fetch dashboard overview', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def _get_dashboard_data(self, student_profile):
+        """
+        OPTIMIZED: Fetch all dashboard data in a single query set
+        Returns a dictionary with all the data needed for dashboard
+        """
+        try:
+            current_time = timezone.now()
+            
+            # Get all enrollments with related data in one query
+            enrollments = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                status='active'
+            ).select_related('course').prefetch_related(
+                'course__lessons'
+            )
+            
+            # Get all class events for enrolled courses in one query
+            course_ids = [enrollment.course.id for enrollment in enrollments]
+            class_events = ClassEvent.objects.filter(
+                class_instance__course_id__in=course_ids
+            ).select_related('class_instance', 'lesson')
+            
+            return {
+                'enrollments': enrollments,
+                'class_events': class_events,
+                'current_time': current_time,
+                'student_profile': student_profile
+            }
+        except Exception as e:
+            print(f"🔍 DEBUG: Error in _get_dashboard_data: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            raise e
+    
+    def _get_statistics_from_data(self, dashboard_data):
+        """Get statistics from cached dashboard data"""
+        enrollments = dashboard_data['enrollments']
+        
+        courses_enrolled = enrollments.count()
+        hours_learned = 0  # Placeholder - would need to calculate from lesson completions
+        learning_streak = 0  # Placeholder - would need to calculate from activity logs
+        
+        return {
+            'courses_enrolled': courses_enrolled,
+            'hours_learned': hours_learned,
+            'learning_streak': learning_streak,
+            'total_courses': courses_enrolled
+        }
+    
+    def _get_continue_learning_lessons_from_data(self, dashboard_data):
+        """Get all non-live lessons (text, audio, video, interactive) from cached dashboard data - ONLY from ClassEvent model"""
+        enrollments = dashboard_data['enrollments']
+        class_events = dashboard_data['class_events']
+        current_time = dashboard_data['current_time']
+        
+        print(f"🔍 DEBUG: Getting continue learning lessons from ClassEvent model only")
+        print(f"🔍 DEBUG: Found {enrollments.count()} active enrollments")
+        print(f"🔍 DEBUG: Found {class_events.count()} total class events")
+        print(f"🔍 DEBUG: Current time: {current_time}")
+        
+        continue_learning_lessons = []
+        
+        for enrollment in enrollments:
+            print(f"🔍 DEBUG: Processing course: {enrollment.course.title} (ID: {enrollment.course.id})")
+            
+            # First, let's see ALL class events for this course
+            all_course_events = class_events.filter(
+                class_instance__course=enrollment.course
+            )
+            print(f"🔍 DEBUG: Total class events for course {enrollment.course.title}: {all_course_events.count()}")
+            
+            for event in all_course_events:
+                print(f"🔍 DEBUG: - Event: {event.title}, Event Type: {event.event_type}, Lesson Type: {event.lesson_type}, Start: {event.start_time}")
+            
+            # Configure time filter based on SHOW_TODAY_ONLY setting (same logic as live lessons)
+            if self.SHOW_TODAY_ONLY:
+                # Show only today's events
+                today_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+                today_end = current_time.replace(hour=23, minute=59, second=59, microsecond=999999)
+                time_filter = {
+                    'start_time__gte': today_start,
+                    'start_time__lte': today_end
+                }
+                print(f"🔍 DEBUG: Continue learning - Filtering for TODAY ONLY: {today_start} to {today_end}")
+            else:
+                # Show all upcoming events
+                time_filter = {
+                    'start_time__gte': current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+                }
+                print(f"🔍 DEBUG: Continue learning - Filtering for ALL UPCOMING events from today onwards")
+            
+            # Get ALL non-live lessons from ClassEvents (scheduled lessons)
+            course_events = class_events.filter(
+                class_instance__course=enrollment.course,
+                event_type='lesson',
+                lesson_type__in=['video', 'audio', 'text', 'interactive'],  # All non-live lesson types
+                **time_filter
+            ).order_by('start_time')[:10]
+            
+            print(f"🔍 DEBUG: Found {course_events.count()} non-live class events for course {enrollment.course.title}")
+            
+            for event in course_events:
+                print(f"🔍 DEBUG: Processing class event: {event.title} (Type: {event.lesson_type}, Start: {event.start_time})")
+                
+                # Create lesson data based on event type
+                lesson_data = {
+                    'id': event.id,
+                    'title': event.title,
+                    'type': event.lesson_type,
+                    'course_title': enrollment.course.title,
+                    'course_id': enrollment.course.id,
+                    'duration': event.duration_minutes,
+                    'media_url': f"/lessons/{event.id}",
+                    'description': event.description[:100] + '...' if event.description and len(event.description) > 100 else event.description,
+                    'start_time': event.start_time  # Use actual event start time
+                }
+                
+                # Add interactive_type for interactive lessons
+                if event.lesson_type == 'interactive':
+                    lesson_data['interactive_type'] = getattr(event, 'interactive_type', 'general')
+                
+                # Use appropriate serializer based on lesson type
+                if event.lesson_type in ['video', 'audio']:
+                    serializer = AudioVideoLessonSerializer(data=lesson_data)
+                elif event.lesson_type == 'text':
+                    serializer = TextLessonSerializer(data=lesson_data)
+                elif event.lesson_type == 'interactive':
+                    serializer = InteractiveLessonSerializer(data=lesson_data)
+                else:
+                    print(f"🔍 DEBUG: Unknown lesson type: {event.lesson_type}")
+                    continue
+                
+                if serializer.is_valid():
+                    print(f"🔍 DEBUG: {event.lesson_type} lesson added: {event.title}")
+                    continue_learning_lessons.append(serializer.data)
+                else:
+                    print(f"🔍 DEBUG: {event.lesson_type} lesson serializer invalid: {serializer.errors}")
+        
+        # Sort all lessons by start_time (earliest first)
+        continue_learning_lessons.sort(key=lambda x: x.get('start_time', current_time))
+        
+        print(f"🔍 DEBUG: Final continue learning lessons count: {len(continue_learning_lessons)}")
+        print(f"🔍 DEBUG: Lessons sorted by start_time, returning top {min(self.CONTINUE_LEARNING_LIMIT, len(continue_learning_lessons))} lessons")
+        
+        return continue_learning_lessons[:self.CONTINUE_LEARNING_LIMIT]  # Return configured limit
+    
+    def _get_live_lessons_from_data(self, dashboard_data):
+        """Get live lessons from cached dashboard data - sorted by time"""
+        enrollments = dashboard_data['enrollments']
+        class_events = dashboard_data['class_events']
+        current_time = dashboard_data['current_time']
+        
+        print(f"🔍 DEBUG: Getting live lessons from ClassEvent model")
+        print(f"🔍 DEBUG: Current time: {current_time}")
+        
+        live_lessons = []
+        
+        for enrollment in enrollments:
+            print(f"🔍 DEBUG: Processing course for live lessons: {enrollment.course.title}")
+            
+            # Configure time filter based on SHOW_TODAY_ONLY setting
+            if self.SHOW_TODAY_ONLY:
+                # Show only today's events
+                today_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+                today_end = current_time.replace(hour=23, minute=59, second=59, microsecond=999999)
+                time_filter = {
+                    'start_time__gte': today_start,
+                    'start_time__lte': today_end
+                }
+                print(f"🔍 DEBUG: Filtering for TODAY ONLY: {today_start} to {today_end}")
+            else:
+                # Show all upcoming events
+                time_filter = {
+                    'start_time__gte': current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+                }
+                print(f"🔍 DEBUG: Filtering for ALL UPCOMING events from today onwards")
+            
+            # Filter class events for this course
+            course_events = class_events.filter(
+                class_instance__course=enrollment.course,
+                event_type='lesson',
+                lesson_type='live',
+                **time_filter
+            ).order_by('start_time')[:5]  # Get more events per course for better selection
+            
+            print(f"🔍 DEBUG: Found {course_events.count()} live events for course {enrollment.course.title}")
+            
+            for event in course_events:
+                print(f"🔍 DEBUG: Processing live event: {event.title} (Start: {event.start_time})")
+                lesson_data = {
+                    'id': event.id,
+                    'title': event.title,
+                    'course_title': enrollment.course.title,
+                    'class_name': event.class_instance.name,
+                    'start_time': event.start_time.isoformat(),
+                    'end_time': event.end_time.isoformat(),
+                    'meeting_platform': event.meeting_platform,
+                    'meeting_link': event.meeting_link,
+                    'meeting_id': event.meeting_id,
+                    'meeting_password': event.meeting_password,
+                    'description': event.description
+                }
+                
+                serializer = LiveLessonSerializer(data=lesson_data)
+                if serializer.is_valid():
+                    print(f"🔍 DEBUG: Live lesson added: {event.title}")
+                    live_lessons.append(serializer.data)
+                else:
+                    print(f"🔍 DEBUG: Live lesson serializer invalid: {serializer.errors}")
+        
+        # Sort all live lessons by start_time (earliest first)
+        live_lessons.sort(key=lambda x: x['start_time'])
+        
+        print(f"🔍 DEBUG: Final live lessons count: {len(live_lessons)}")
+        print(f"🔍 DEBUG: Live lessons sorted by start_time, returning top {min(self.LIVE_LESSONS_LIMIT, len(live_lessons))} lessons")
+        
+        return live_lessons[:self.LIVE_LESSONS_LIMIT]  # Return configured limit
+    
+
+    
+    def _get_recent_achievements_from_data(self, dashboard_data):
+        """Get recent achievements from cached dashboard data"""
+        # Placeholder - would implement achievement logic
+        return []
+    
+    def _get_statistics(self, student_profile):
+        """
+        Get student statistics (courses enrolled, hours learned, learning streak)
+        """
+        try:
+            # Get enrolled courses
+            enrollments = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                status='active'
+            ).select_related('course')
+            
+            # Calculate statistics
+            courses_enrolled = enrollments.count()
+            
+            # Calculate hours learned (estimate based on progress)
+            total_hours = 0
+            for enrollment in enrollments:
+                # Estimate 20 hours per course, adjust based on progress
+                course_hours = 20
+                progress = enrollment.progress_percentage or 0
+                completed_hours = (progress / 100) * course_hours
+                total_hours += completed_hours
+            
+            # Calculate learning streak (placeholder for now)
+            learning_streak = 0  # TODO: Implement streak calculation
+            
+            raw_data = {
+                'courses_enrolled': courses_enrolled,
+                'hours_learned': round(total_hours, 1),
+                'learning_streak': learning_streak,
+                'total_courses': courses_enrolled
+            }
+            
+            # Validate with DashboardStatisticsSerializer
+            serializer = DashboardStatisticsSerializer(data=raw_data)
+            if serializer.is_valid():
+                return serializer.data
+            else:
+                # Return fallback data if validation fails
+                return self._get_fallback_statistics()
+            
+        except Exception as e:
+            return self._get_fallback_statistics()
+    
+    def _get_fallback_statistics(self):
+        """Fallback statistics when main method fails"""
+        return {
+            'courses_enrolled': 0,
+            'hours_learned': 0,
+            'learning_streak': 0,
+            'total_courses': 0
+        }
+    
+    def _get_audio_video_lessons(self, student_profile):
+        """
+        Get audio and video lessons from enrolled courses
+        """
+        try:
+            print(f"🔍 DEBUG: Getting audio/video lessons for student: {student_profile}")
+            
+            enrollments = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                status='active'
+            ).select_related('course')
+            
+            print(f"🔍 DEBUG: Found {enrollments.count()} active enrollments")
+            for enrollment in enrollments:
+                print(f"🔍 DEBUG: - Course: {enrollment.course.title} (ID: {enrollment.course.id})")
+            
+            audio_video_lessons = []
+            current_time = timezone.now()
+            for enrollment in enrollments:
+                print(f"🔍 DEBUG: Checking course: {enrollment.course.title}")
+                
+                # Get ClassEvent objects with only video or audio lesson types (exclude live lessons and past events)
+                class_events = ClassEvent.objects.filter(
+                    class_instance__course=enrollment.course,
+                    event_type='lesson',
+                    lesson_type__in=['video', 'audio'],  # Only actual audio/video lessons
+                    start_time__gte=current_time  # Only future or current events
+                ).select_related('class_instance', 'lesson').order_by('start_time')[:5]  # Limit to 5 per course
+                
+                print(f"🔍 DEBUG: Found {class_events.count()} audio/video class events for course {enrollment.course.title}")
+                
+                # Let's also check all class events for this course
+                all_events = ClassEvent.objects.filter(
+                    class_instance__course=enrollment.course
+                )
+                print(f"🔍 DEBUG: Total class events for course {enrollment.course.title}: {all_events.count()}")
+                
+                for event in all_events:
+                    print(f"🔍 DEBUG: - Event: {event.title}, Event Type: {event.event_type}, Lesson Type: {event.lesson_type}")
+                    print(f"🔍 DEBUG:   Event ID: {event.id}, Start Time: {event.start_time}")
+                
+                for event in class_events:
+                    print(f"🔍 DEBUG: Processing audio/video class event: {event.title}")
+                    lesson_data = {
+                        'id': event.id,  # UUID field
+                        'title': event.title,
+                        'type': event.lesson_type,
+                        'course_title': enrollment.course.title,
+                        'course_id': enrollment.course.id,
+                        'duration': event.duration_minutes,
+                        'media_url': f"/lessons/{event.id}",  # Route to class event ID for in-app playback
+                        'description': event.description[:100] + '...' if event.description and len(event.description) > 100 else event.description
+                    }
+                    
+                    print(f"🔍 DEBUG: Lesson data: {lesson_data}")
+                    
+                    # Validate with AudioVideoLessonSerializer
+                    serializer = AudioVideoLessonSerializer(data=lesson_data)
+                    if serializer.is_valid():
+                        print(f"🔍 DEBUG: Serializer valid, adding lesson")
+                        audio_video_lessons.append(serializer.data)
+                    else:
+                        print(f"🔍 DEBUG: Serializer invalid: {serializer.errors}")
+                        continue
+            
+            print(f"🔍 DEBUG: Final audio_video_lessons count: {len(audio_video_lessons)}")
+            return audio_video_lessons[:10]  # Return top 10
+            
+        except Exception as e:
+            print(f"🔍 DEBUG: Exception in _get_audio_video_lessons: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
+    def _get_live_lessons(self, student_profile):
+        """
+        Get upcoming live lessons from enrolled courses
+        """
+        try:
+            enrollments = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                status='active'
+            ).select_related('course')
+            
+            live_lessons = []
+            current_time = timezone.now()
+            
+            for enrollment in enrollments:
+                # Get live lessons from class events (only future events)
+                live_events = ClassEvent.objects.filter(
+                    class_instance__course=enrollment.course,
+                    event_type='lesson',
+                    lesson_type='live',
+                    start_time__gte=current_time
+                ).select_related('class_instance', 'lesson').order_by('start_time')[:3]  # Next 3 upcoming events
+                
+                for event in live_events:
+                    lesson_data = {
+                        'id': event.id,
+                        'title': event.title,
+                        'course_title': enrollment.course.title,
+                        'class_name': event.class_instance.name,
+                        'start_time': event.start_time.isoformat(),
+                        'end_time': event.end_time.isoformat(),
+                        'meeting_platform': event.meeting_platform,
+                        'meeting_link': event.meeting_link,
+                        'meeting_id': event.meeting_id,
+                        'meeting_password': event.meeting_password,
+                        'description': event.description
+                    }
+                    
+                    # Validate with LiveLessonSerializer
+                    serializer = LiveLessonSerializer(data=lesson_data)
+                    if serializer.is_valid():
+                        live_lessons.append(serializer.data)
+                    else:
+                        # Skip invalid lessons or log errors
+                        continue
+            
+            return live_lessons[:3]  # Return top 3 upcoming events
+            
+        except Exception as e:
+            return []
+    
+    def _get_text_lessons(self, student_profile):
+        """
+        Get text-based lessons from enrolled courses
+        """
+        try:
+            enrollments = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                status='active'
+            ).select_related('course')
+            
+            text_lessons = []
+            for enrollment in enrollments:
+                # Get text lessons
+                lessons = enrollment.course.lessons.filter(
+                    type='text'
+                ).order_by('order')[:5]  # Limit to 5 per course
+                
+                for lesson in lessons:
+                    lesson_data = {
+                        'id': lesson.id,
+                        'title': lesson.title,
+                        'course_title': enrollment.course.title,
+                        'course_id': enrollment.course.id,
+                        'description': lesson.description[:150] + '...' if lesson.description and len(lesson.description) > 150 else lesson.description
+                    }
+                    
+                    # Validate with TextLessonSerializer
+                    serializer = TextLessonSerializer(data=lesson_data)
+                    if serializer.is_valid():
+                        text_lessons.append(serializer.data)
+                    else:
+                        # Skip invalid lessons or log errors
+                        continue
+            
+            return text_lessons[:10]  # Return top 10
+            
+        except Exception as e:
+            return []
+    
+    def _get_interactive_lessons(self, student_profile):
+        """
+        Get interactive lessons from enrolled courses
+        """
+        try:
+            enrollments = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                status='active'
+            ).select_related('course')
+            
+            interactive_lessons = []
+            for enrollment in enrollments:
+                # Get interactive lessons
+                lessons = enrollment.course.lessons.filter(
+                    type='interactive'
+                ).order_by('order')[:5]  # Limit to 5 per course
+                
+                for lesson in lessons:
+                    lesson_data = {
+                        'id': lesson.id,
+                        'title': lesson.title,
+                        'course_title': enrollment.course.title,
+                        'course_id': enrollment.course.id,
+                        'description': lesson.description[:150] + '...' if lesson.description and len(lesson.description) > 150 else lesson.description,
+                        'interactive_type': getattr(lesson, 'interactive_type', 'general')
+                    }
+                    
+                    # Validate with InteractiveLessonSerializer
+                    serializer = InteractiveLessonSerializer(data=lesson_data)
+                    if serializer.is_valid():
+                        interactive_lessons.append(serializer.data)
+                    else:
+                        # Skip invalid lessons or log errors
+                        continue
+            
+            return interactive_lessons[:10]  # Return top 10
+            
+        except Exception as e:
+            return []
+    
+    def _get_recent_achievements(self, student_profile):
+        """
+        Get recent achievements and milestones
+        """
+        try:
+            enrollments = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                status='active'
+            ).select_related('course')
+            
+            achievements = []
+            current_time = timezone.now()
+            
+            for enrollment in enrollments:
+                # Course completion achievements
+                if enrollment.progress_percentage and enrollment.progress_percentage >= 100:
+                    achievement_data = {
+                        'type': 'course_completion',
+                        'title': f'Completed {enrollment.course.title}',
+                        'description': 'Congratulations! You have successfully completed this course.',
+                        'achieved_at': enrollment.updated_at.isoformat(),
+                        'course_title': enrollment.course.title,
+                        'icon': '🎓'
+                    }
+                    
+                    # Validate with AchievementSerializer
+                    serializer = AchievementSerializer(data=achievement_data)
+                    if serializer.is_valid():
+                        achievements.append(serializer.data)
+                
+                # Progress milestones
+                progress = enrollment.progress_percentage or 0
+                if progress >= 25 and progress < 50:
+                    achievement_data = {
+                        'type': 'progress_milestone',
+                        'title': 'Quarter Way There!',
+                        'description': f'You\'ve completed 25% of {enrollment.course.title}',
+                        'achieved_at': enrollment.updated_at.isoformat(),
+                        'course_title': enrollment.course.title,
+                        'icon': '🚀'
+                    }
+                    
+                    # Validate with AchievementSerializer
+                    serializer = AchievementSerializer(data=achievement_data)
+                    if serializer.is_valid():
+                        achievements.append(serializer.data)
+                        
+                elif progress >= 50 and progress < 75:
+                    achievement_data = {
+                        'type': 'progress_milestone',
+                        'title': 'Halfway Point!',
+                        'description': f'You\'ve completed 50% of {enrollment.course.title}',
+                        'achieved_at': enrollment.updated_at.isoformat(),
+                        'course_title': enrollment.course.title,
+                        'icon': '🎯'
+                    }
+                    
+                    # Validate with AchievementSerializer
+                    serializer = AchievementSerializer(data=achievement_data)
+                    if serializer.is_valid():
+                        achievements.append(serializer.data)
+                        
+                elif progress >= 75 and progress < 100:
+                    achievement_data = {
+                        'type': 'progress_milestone',
+                        'title': 'Almost There!',
+                        'description': f'You\'ve completed 75% of {enrollment.course.title}',
+                        'achieved_at': enrollment.updated_at.isoformat(),
+                        'course_title': enrollment.course.title,
+                        'icon': '🏆'
+                    }
+                    
+                    # Validate with AchievementSerializer
+                    serializer = AchievementSerializer(data=achievement_data)
+                    if serializer.is_valid():
+                        achievements.append(serializer.data)
+            
+            # Sort by achieved_at (most recent first) and return top 5
+            achievements.sort(key=lambda x: x['achieved_at'], reverse=True)
+            return achievements[:5]
+            
+        except Exception as e:
+            return []
+    
+
+    
+    

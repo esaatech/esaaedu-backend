@@ -21,6 +21,9 @@ urlpatterns = [
     # Schedule
     path('schedule/', views.StudentScheduleView.as_view(), name='student_schedule'),
     
+    # Dashboard Overview
+    path('dashboard-overview/', views.DashboardOverview.as_view(), name='dashboard_overview'),
+    
     # Feedback System
     path('feedback/question/<uuid:quiz_attempt_id>/<uuid:question_id>/', views.quiz_question_feedback, name='quiz_question_feedback'),
     path('feedback/attempt/<uuid:quiz_attempt_id>/', views.quiz_attempt_feedback, name='quiz_attempt_feedback'),

@@ -530,3 +530,83 @@ class StudentScheduleSerializer(serializers.Serializer):
     total_events = serializers.IntegerField()
     date_range = serializers.DictField()
     summary = serializers.DictField()
+
+
+# ===== DASHBOARD OVERVIEW SERIALIZERS =====
+
+class DashboardStatisticsSerializer(serializers.Serializer):
+    """Serializer for dashboard statistics"""
+    courses_enrolled = serializers.IntegerField()
+    hours_learned = serializers.FloatField()
+    learning_streak = serializers.IntegerField()
+    total_courses = serializers.IntegerField()
+
+
+class AudioVideoLessonSerializer(serializers.Serializer):
+    """Serializer for audio/video lessons"""
+    id = serializers.UUIDField()  # Changed from IntegerField to UUIDField
+    title = serializers.CharField()
+    type = serializers.CharField()
+    course_title = serializers.CharField()
+    course_id = serializers.UUIDField()
+    duration = serializers.CharField(allow_null=True, allow_blank=True)
+    media_url = serializers.CharField(allow_null=True, allow_blank=True)  # Changed from URLField to CharField
+    description = serializers.CharField(allow_null=True, allow_blank=True)
+    start_time = serializers.DateTimeField()  # Added for sorting
+
+
+class LiveLessonSerializer(serializers.Serializer):
+    """Serializer for live lessons"""
+    id = serializers.UUIDField()
+    title = serializers.CharField()
+    course_title = serializers.CharField()
+    class_name = serializers.CharField()
+    start_time = serializers.DateTimeField()
+    end_time = serializers.DateTimeField()
+    meeting_platform = serializers.CharField(allow_null=True, allow_blank=True)
+    meeting_link = serializers.URLField(allow_null=True, allow_blank=True)
+    meeting_id = serializers.CharField(allow_null=True, allow_blank=True)
+    meeting_password = serializers.CharField(allow_null=True, allow_blank=True)
+    description = serializers.CharField(allow_null=True, allow_blank=True)
+
+
+class TextLessonSerializer(serializers.Serializer):
+    """Serializer for text lessons"""
+    id = serializers.UUIDField()  # Changed from IntegerField to UUIDField
+    title = serializers.CharField()
+    course_title = serializers.CharField()
+    course_id = serializers.UUIDField()
+    description = serializers.CharField(allow_null=True, allow_blank=True)
+    start_time = serializers.DateTimeField()  # Added for sorting
+
+
+class InteractiveLessonSerializer(serializers.Serializer):
+    """Serializer for interactive lessons"""
+    id = serializers.UUIDField()  # Changed from IntegerField to UUIDField
+    title = serializers.CharField()
+    course_title = serializers.CharField()
+    course_id = serializers.UUIDField()
+    description = serializers.CharField(allow_null=True, allow_blank=True)
+    interactive_type = serializers.CharField()
+    start_time = serializers.DateTimeField()  # Added for sorting
+
+
+class AchievementSerializer(serializers.Serializer):
+    """Serializer for achievements"""
+    type = serializers.CharField()
+    title = serializers.CharField()
+    description = serializers.CharField()
+    achieved_at = serializers.DateTimeField()
+    course_title = serializers.CharField()
+    icon = serializers.CharField()
+
+
+
+class DashboardOverviewSerializer(serializers.Serializer):
+    """Serializer for complete dashboard overview"""
+    statistics = DashboardStatisticsSerializer()
+    audio_video_lessons = AudioVideoLessonSerializer(many=True)
+    live_lessons = LiveLessonSerializer(many=True)
+    text_lessons = TextLessonSerializer(many=True)
+    interactive_lessons = InteractiveLessonSerializer(many=True)
+    recent_achievements = AchievementSerializer(many=True)

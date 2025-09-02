@@ -997,6 +997,20 @@ class ClassEvent(models.Model):
     start_time = models.DateTimeField(help_text="Event start time")
     end_time = models.DateTimeField(help_text="Event end time")
     
+    # Lesson Type (for lesson events)
+    lesson_type = models.CharField(
+        max_length=20,
+        choices=[
+            ('live', 'Live Lesson'),
+            ('text', 'Text Lesson'),
+            ('video', 'Video Lesson'),
+            ('audio', 'Audio Lesson'),
+            ('interactive', 'Interactive Lesson'),
+        ],
+        default='text',
+        help_text="Type of lesson (live, text, video, audio, interactive)"
+    )
+    
     # Meeting Details (for live classes)
     meeting_platform = models.CharField(
         max_length=20,

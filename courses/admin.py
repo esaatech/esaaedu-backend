@@ -207,15 +207,15 @@ class ClassSessionAdmin(admin.ModelAdmin):
 
 @admin.register(ClassEvent)
 class ClassEventAdmin(admin.ModelAdmin):
-    list_display = ['title', 'class_instance', 'event_type', 'start_time', 'end_time', 'duration_minutes', 'created_at']
-    list_filter = ['event_type', 'start_time', 'class_instance__course__category', 'created_at']
+    list_display = ['title', 'class_instance', 'event_type', 'lesson_type', 'start_time', 'end_time', 'duration_minutes', 'created_at']
+    list_filter = ['event_type', 'lesson_type', 'start_time', 'class_instance__course__category', 'created_at']
     search_fields = ['title', 'description', 'class_instance__name', 'class_instance__course__title']
     readonly_fields = ['id', 'duration_minutes', 'created_at', 'updated_at']
     date_hierarchy = 'start_time'
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('title', 'description', 'class_instance', 'event_type')
+            'fields': ('title', 'description', 'class_instance', 'event_type', 'lesson_type')
         }),
         ('Schedule', {
             'fields': ('start_time', 'end_time', 'duration_minutes')
@@ -223,6 +223,11 @@ class ClassEventAdmin(admin.ModelAdmin):
         ('Lesson Association', {
             'fields': ('lesson',),
             'description': 'Only required for lesson-type events'
+        }),
+        ('Meeting Details (for Live Lessons)', {
+            'fields': ('meeting_platform', 'meeting_link', 'meeting_id', 'meeting_password'),
+            'description': 'Meeting details for live lessons. Leave empty for non-live lessons.',
+            'classes': ('collapse',)
         }),
         ('Metadata', {
             'fields': ('id', 'created_at', 'updated_at'),

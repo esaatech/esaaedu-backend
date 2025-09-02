@@ -1158,7 +1158,7 @@ class ClassEventListSerializer(serializers.ModelSerializer):
         model = ClassEvent
         fields = [
             'id', 'title', 'description', 'event_type', 'start_time', 'end_time',
-            'lesson_title', 'duration_minutes', 'meeting_platform', 'meeting_link',
+            'lesson_title', 'lesson_type', 'duration_minutes', 'meeting_platform', 'meeting_link',
             'meeting_id', 'meeting_password', 'created_at'
         ]
 
@@ -1174,7 +1174,7 @@ class ClassEventDetailSerializer(serializers.ModelSerializer):
         model = ClassEvent
         fields = [
             'id', 'title', 'description', 'event_type', 'start_time', 'end_time',
-            'lesson', 'lesson_id', 'lesson_title', 'class_name', 'duration_minutes',
+            'lesson', 'lesson_id', 'lesson_title', 'lesson_type', 'class_name', 'duration_minutes',
             'meeting_platform', 'meeting_link', 'meeting_id', 'meeting_password',
             'created_at', 'updated_at'
         ]
@@ -1187,7 +1187,7 @@ class ClassEventCreateUpdateSerializer(serializers.ModelSerializer):
         model = ClassEvent
         fields = [
             'title', 'description', 'event_type', 'start_time', 'end_time', 'lesson',
-            'meeting_platform', 'meeting_link', 'meeting_id', 'meeting_password'
+            'lesson_type', 'meeting_platform', 'meeting_link', 'meeting_id', 'meeting_password'
         ]
     
     def validate(self, data):
