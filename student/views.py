@@ -9,6 +9,7 @@ from django.db import models
 
 from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback
 from courses.models import Class, ClassEvent, Course, Lesson
+from settings.models import UserDashboardSettings
 from .serializers import (
     EnrolledCourseListSerializer, 
     EnrolledCourseDetailSerializer, 
@@ -1256,10 +1257,24 @@ class DashboardOverview(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
     
-    # Configuration variables - easily changeable
-    LIVE_LESSONS_LIMIT = 3  # Number of live lessons to show
-    CONTINUE_LEARNING_LIMIT = 25  # Number of continue learning lessons to show
-    SHOW_TODAY_ONLY = False  # If True: show only today's events for BOTH sections, If False: show all upcoming events
+    def get_user_settings(self, user):
+        """
+        Get user's dashboard settings from database
+        Returns default settings if none exist
+        """
+        try:
+            settings = UserDashboardSettings.get_or_create_settings(user)
+            return settings.get_dashboard_config()
+        except Exception as e:
+            print(f"🔍 DEBUG: Error getting user settings: {str(e)}")
+            # Return default settings if there's an error
+            return {
+                'live_lessons_limit': 3,
+                'continue_learning_limit': 25,
+                'show_today_only': False,
+                'theme_preference': 'auto',
+                'notifications_enabled': True,
+            }
     
     def get(self, request):
         """
@@ -1282,14 +1297,17 @@ class DashboardOverview(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
+            # Get user's dashboard settings
+            user_settings = self.get_user_settings(request.user)
+            
             # OPTIMIZED: Fetch all data once and reuse
             dashboard_data = self._get_dashboard_data(student_profile)
             
-            # Collect all data using the cached data
+            # Collect all data using the cached data and user settings
             overview_data = {
                 'statistics': self._get_statistics_from_data(dashboard_data),
-                'continue_learning_lessons': self._get_continue_learning_lessons_from_data(dashboard_data),
-                'live_lessons': self._get_live_lessons_from_data(dashboard_data),
+                'continue_learning_lessons': self._get_continue_learning_lessons_from_data(dashboard_data, user_settings),
+                'live_lessons': self._get_live_lessons_from_data(dashboard_data, user_settings),
                 'recent_achievements': self._get_recent_achievements_from_data(dashboard_data)
             }
             
@@ -1350,7 +1368,7 @@ class DashboardOverview(APIView):
             'total_courses': courses_enrolled
         }
     
-    def _get_continue_learning_lessons_from_data(self, dashboard_data):
+    def _get_continue_learning_lessons_from_data(self, dashboard_data, user_settings):
         """Get all non-live lessons (text, audio, video, interactive) from cached dashboard data - ONLY from ClassEvent model"""
         enrollments = dashboard_data['enrollments']
         class_events = dashboard_data['class_events']
@@ -1375,8 +1393,8 @@ class DashboardOverview(APIView):
             for event in all_course_events:
                 print(f"🔍 DEBUG: - Event: {event.title}, Event Type: {event.event_type}, Lesson Type: {event.lesson_type}, Start: {event.start_time}")
             
-            # Configure time filter based on SHOW_TODAY_ONLY setting (same logic as live lessons)
-            if self.SHOW_TODAY_ONLY:
+            # Configure time filter based on user's SHOW_TODAY_ONLY setting
+            if user_settings['show_today_only']:
                 # Show only today's events
                 today_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
                 today_end = current_time.replace(hour=23, minute=59, second=59, microsecond=999999)
@@ -1443,11 +1461,11 @@ class DashboardOverview(APIView):
         continue_learning_lessons.sort(key=lambda x: x.get('start_time', current_time))
         
         print(f"🔍 DEBUG: Final continue learning lessons count: {len(continue_learning_lessons)}")
-        print(f"🔍 DEBUG: Lessons sorted by start_time, returning top {min(self.CONTINUE_LEARNING_LIMIT, len(continue_learning_lessons))} lessons")
+        print(f"🔍 DEBUG: Lessons sorted by start_time, returning top {min(user_settings['continue_learning_limit'], len(continue_learning_lessons))} lessons")
         
-        return continue_learning_lessons[:self.CONTINUE_LEARNING_LIMIT]  # Return configured limit
+        return continue_learning_lessons[:user_settings['continue_learning_limit']]  # Return user's configured limit
     
-    def _get_live_lessons_from_data(self, dashboard_data):
+    def _get_live_lessons_from_data(self, dashboard_data, user_settings):
         """Get live lessons from cached dashboard data - sorted by time"""
         enrollments = dashboard_data['enrollments']
         class_events = dashboard_data['class_events']
@@ -1461,8 +1479,8 @@ class DashboardOverview(APIView):
         for enrollment in enrollments:
             print(f"🔍 DEBUG: Processing course for live lessons: {enrollment.course.title}")
             
-            # Configure time filter based on SHOW_TODAY_ONLY setting
-            if self.SHOW_TODAY_ONLY:
+            # Configure time filter based on user's SHOW_TODAY_ONLY setting
+            if user_settings['show_today_only']:
                 # Show only today's events
                 today_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
                 today_end = current_time.replace(hour=23, minute=59, second=59, microsecond=999999)
@@ -1515,9 +1533,9 @@ class DashboardOverview(APIView):
         live_lessons.sort(key=lambda x: x['start_time'])
         
         print(f"🔍 DEBUG: Final live lessons count: {len(live_lessons)}")
-        print(f"🔍 DEBUG: Live lessons sorted by start_time, returning top {min(self.LIVE_LESSONS_LIMIT, len(live_lessons))} lessons")
+        print(f"🔍 DEBUG: Live lessons sorted by start_time, returning top {min(user_settings['live_lessons_limit'], len(live_lessons))} lessons")
         
-        return live_lessons[:self.LIVE_LESSONS_LIMIT]  # Return configured limit
+        return live_lessons[:user_settings['live_lessons_limit']]  # Return user's configured limit
     
 
     

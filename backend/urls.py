@@ -28,6 +28,7 @@ urlpatterns = [
     path("api/auth/", include('authentication.urls')),
     path("api/courses/", include('courses.urls')),
     path("api/student/", include('student.urls')),
+    path("api/settings/", include('settings.urls')),
     path("api/", include(router.urls)),
     
     # Health check endpoint
