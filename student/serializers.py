@@ -577,6 +577,7 @@ class TextLessonSerializer(serializers.Serializer):
     course_title = serializers.CharField()
     course_id = serializers.UUIDField()
     description = serializers.CharField(allow_null=True, allow_blank=True)
+    media_url = serializers.CharField(allow_null=True, allow_blank=True)  # Added for lesson navigation
     start_time = serializers.DateTimeField()  # Added for sorting
 
 
@@ -588,6 +589,7 @@ class InteractiveLessonSerializer(serializers.Serializer):
     course_id = serializers.UUIDField()
     description = serializers.CharField(allow_null=True, allow_blank=True)
     interactive_type = serializers.CharField()
+    media_url = serializers.CharField(allow_null=True, allow_blank=True)  # Added for lesson navigation
     start_time = serializers.DateTimeField()  # Added for sorting
 
 
