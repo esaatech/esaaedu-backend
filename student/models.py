@@ -422,6 +422,78 @@ class EnrolledCourse(models.Model):
         except Exception as e:
             print(f"Error updating quiz performance: {e}")
             return False
+    
+    @classmethod
+    def get_total_lessons_completed_for_student(cls, student_profile):
+        """
+        Calculate total lessons completed across all courses for a student
+        
+        Args:
+            student_profile: StudentProfile instance
+            
+        Returns:
+            int: Total number of lessons completed across all courses
+        """
+        return cls.objects.filter(
+            student_profile=student_profile,
+            status__in=['active', 'completed']
+        ).aggregate(
+            total=models.Sum('completed_lessons_count')
+        )['total'] or 0
+    
+    @classmethod
+    def get_average_quiz_score_for_student(cls, student_profile):
+        """
+        Calculate average quiz score across all courses for a student
+        
+        Args:
+            student_profile: StudentProfile instance
+            
+        Returns:
+            float: Average quiz score across all courses (0-100)
+        """
+        enrollments = cls.objects.filter(
+            student_profile=student_profile,
+            status__in=['active', 'completed'],
+            average_quiz_score__isnull=False
+        )
+        
+        if not enrollments.exists():
+            return 0.0
+        
+        total_score = 0
+        total_courses = 0
+        
+        for enrollment in enrollments:
+            if enrollment.average_quiz_score is not None:
+                total_score += float(enrollment.average_quiz_score)
+                total_courses += 1
+        
+        return round(total_score / total_courses, 2) if total_courses > 0 else 0.0
+    
+    @classmethod
+    def get_learning_streak_for_student(cls, student_profile):
+        """
+        Calculate learning streak for a student
+        For now, this returns a simple calculation based on active enrollments
+        You can enhance this later with more sophisticated streak logic
+        
+        Args:
+            student_profile: StudentProfile instance
+            
+        Returns:
+            int: Current learning streak in days
+        """
+        # Simple implementation: count active enrollments as streak
+        # You can enhance this with actual activity tracking later
+        active_enrollments = cls.objects.filter(
+            student_profile=student_profile,
+            status='active'
+        ).count()
+        
+        # For now, return a simple calculation
+        # You might want to add a learning_streak field to track actual consecutive days
+        return min(active_enrollments * 7, 30)  # Max 30 days for now
 
 
 class StudentAttendance(models.Model):

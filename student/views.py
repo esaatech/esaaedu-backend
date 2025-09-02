@@ -1356,15 +1356,38 @@ class DashboardOverview(APIView):
     def _get_statistics_from_data(self, dashboard_data):
         """Get statistics from cached dashboard data"""
         enrollments = dashboard_data['enrollments']
+        student_profile = dashboard_data['student_profile']
         
         courses_enrolled = enrollments.count()
-        hours_learned = 0  # Placeholder - would need to calculate from lesson completions
-        learning_streak = 0  # Placeholder - would need to calculate from activity logs
+        
+        # Use the new class methods to calculate real statistics
+        print(f"🔍 DEBUG: Getting lessons completed for student: {student_profile}")
+        lessons_completed = EnrolledCourse.get_total_lessons_completed_for_student(student_profile)
+        print(f"🔍 DEBUG: Lessons completed: {lessons_completed}")
+        
+        print(f"🔍 DEBUG: Getting average quiz score for student: {student_profile}")
+        print(f"🔍 DEBUG: Student profile type: {type(student_profile)}")
+        print(f"🔍 DEBUG: Student profile: {student_profile}")
+        
+        # Check if the method exists
+        if hasattr(EnrolledCourse, 'get_average_quiz_score_for_student'):
+            print(f"🔍 DEBUG: Method exists, calling it...")
+            try:
+                average_quiz_score = EnrolledCourse.get_average_quiz_score_for_student(student_profile)
+                print(f"🔍 DEBUG: Average quiz score calculated: {average_quiz_score}")
+            except Exception as e:
+                print(f"🔍 DEBUG: Error calculating average quiz score: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                average_quiz_score = 0.0
+        else:
+            print(f"🔍 DEBUG: Method does not exist!")
+            average_quiz_score = 0.0
         
         return {
             'courses_enrolled': courses_enrolled,
-            'hours_learned': hours_learned,
-            'learning_streak': learning_streak,
+            'lessons_completed': lessons_completed,
+            'average_quiz_score': average_quiz_score,
             'total_courses': courses_enrolled
         }
     
@@ -1433,7 +1456,8 @@ class DashboardOverview(APIView):
                     'duration': event.duration_minutes,
                     'media_url': f"/lessons/{event.id}",
                     'description': event.description[:100] + '...' if event.description and len(event.description) > 100 else event.description,
-                    'start_time': event.start_time  # Use actual event start time
+                    'start_time': event.start_time,  # Use actual event start time
+                    'progress_percentage': float(enrollment.progress_percentage)  # Get real progress from enrollment
                 }
                 
                 # Add interactive_type for interactive lessons
