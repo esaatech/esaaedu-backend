@@ -1446,6 +1446,9 @@ class DashboardOverview(APIView):
             for event in course_events:
                 print(f"🔍 DEBUG: Processing class event: {event.title} (Type: {event.lesson_type}, Start: {event.start_time})")
                 
+                # Get actual course lesson count (more reliable than enrollment.total_lessons_count)
+                actual_course_lessons = enrollment.course.lessons.count()
+                
                 # Create lesson data based on event type
                 lesson_data = {
                     'id': event.id,
@@ -1457,8 +1460,14 @@ class DashboardOverview(APIView):
                     'media_url': f"/lessons/{event.id}",
                     'description': event.description[:100] + '...' if event.description and len(event.description) > 100 else event.description,
                     'start_time': event.start_time,  # Use actual event start time
-                    'progress_percentage': float(enrollment.progress_percentage)  # Get real progress from enrollment
+                    'progress_percentage': float(enrollment.progress_percentage),  # Get real progress from enrollment
+                    # Add course-level enrollment information for progress bar
+                    'total_lessons': actual_course_lessons,  # Use actual course lesson count
+                    'completed_lessons_count': enrollment.completed_lessons_count
                 }
+                
+                print(f"🔍 DEBUG: Continue Learning Lesson Data: {lesson_data}")
+                print(f"🔍 DEBUG: Enrollment data - total_lessons_count: {enrollment.total_lessons_count}, completed_lessons_count: {enrollment.completed_lessons_count}, progress_percentage: {enrollment.progress_percentage}")
                 
                 # Add interactive_type for interactive lessons
                 if event.lesson_type == 'interactive':

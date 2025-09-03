@@ -115,6 +115,7 @@ class CourseWithLessonsSerializer(serializers.ModelSerializer):
     """
     lessons = LessonListSerializer(many=True, read_only=True)
     current_lesson = serializers.SerializerMethodField()
+    enrollment_info = serializers.SerializerMethodField()
     teacher_name = serializers.CharField(source='teacher.get_full_name', read_only=True)
     enrolled_students_count = serializers.ReadOnlyField()
     total_lessons = serializers.ReadOnlyField()
@@ -128,7 +129,7 @@ class CourseWithLessonsSerializer(serializers.ModelSerializer):
             'total_projects', 'value_propositions', 'featured', 'popular',
             'color', 'icon', 'image', 'max_students', 'schedule', 'certificate',
             'status', 'teacher_name', 'enrolled_students_count', 'total_lessons',
-            'lessons', 'current_lesson', 'created_at'
+            'lessons', 'current_lesson', 'enrollment_info', 'created_at'
         ]
         read_only_fields = ['id', 'created_at', 'enrolled_students_count', 'total_lessons']
     
@@ -167,6 +168,34 @@ class CourseWithLessonsSerializer(serializers.ModelSerializer):
             
         except Exception as e:
             print(f"Error getting current lesson: {str(e)}")
+            return None
+    
+    def get_enrollment_info(self, obj):
+        """Get enrollment information for the student"""
+        try:
+            student_profile = self.context.get('student_profile')
+            if not student_profile:
+                return None
+                
+            from student.models import EnrolledCourse
+            enrollment = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                course=obj,
+                status__in=['active', 'completed']
+            ).first()
+            
+            if not enrollment:
+                return None
+                
+            return {
+                'current_lesson_id': str(enrollment.current_lesson.id) if enrollment.current_lesson else None,
+                'completed_lessons_count': enrollment.completed_lessons_count,
+                'progress_percentage': float(enrollment.progress_percentage),
+                'course_completed': enrollment.status == 'completed'
+            }
+            
+        except Exception as e:
+            print(f"Error getting enrollment info: {str(e)}")
             return None
 
 

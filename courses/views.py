@@ -3,6 +3,7 @@ from django.db import models
 from rest_framework import status, permissions
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from django.utils import timezone
 from datetime import timedelta
@@ -638,7 +639,7 @@ def lesson_quiz(request, lesson_id):
                 return Response(response_serializer.data, status=status.HTTP_201_CREATED)
             else:
                 print(f"❌ Quiz creation validation failed: {serializer.errors}")
-                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             print(f"❌ Error creating quiz: {e}")
             import traceback
@@ -1941,11 +1942,11 @@ def save_quiz_grade(request, attempt_id):
         # Update the quiz attempt with teacher grading data
         attempt.is_teacher_graded = True
         attempt.teacher_grade_data = {
-            'points_earned': data['points_earned'],
-            'points_possible': data['points_possible'],
-            'percentage': data['percentage'],
-            'teacher_comments': data.get('teacher_comments', ''),
-            'private_notes': data.get('private_notes', ''),
+                'points_earned': data['points_earned'],
+                'points_possible': data['points_possible'],
+                'percentage': data['percentage'],
+                'teacher_comments': data.get('teacher_comments', ''),
+                'private_notes': data.get('private_notes', ''),
             'graded_questions': graded_questions,
             'graded_by': request.user.email,
             'graded_date': timezone.now().isoformat()
@@ -2066,6 +2067,9 @@ def student_enrolled_courses(request):
                 actual_total_lessons = course.lessons.count()
                 print(f"Course has {actual_total_lessons} lessons")
                 
+                # Debug enrollment data
+                print(f"🔍 DEBUG: Enrollment data - completed_lessons_count: {enrollment.completed_lessons_count}, total_lessons_count: {enrollment.total_lessons_count}, progress_percentage: {enrollment.progress_percentage}")
+                
                 # Get instructor name
                 print(f"Getting instructor name...")
                 instructor_name = "Little Learners Tech"
@@ -2082,7 +2086,7 @@ def student_enrolled_courses(request):
                     'image': image_url,
                     'progress': float(enrollment.progress_percentage),
                     'total_lessons': actual_total_lessons,  # Use actual count, not computed property
-                    'completed_lessons': 0,  # Will be calculated properly later
+                    'completed_lessons': enrollment.completed_lessons_count,  # Use actual enrollment data
                     'next_lesson': next_lesson,
                     'status': enrollment.status,
                     'enrollment_date': enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
@@ -2685,6 +2689,336 @@ def student_lesson_detail(request, lesson_id):
             {'error': f'Failed to get lesson details: {str(e)}'}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+class StudentLessonDetailView(APIView):
+    """
+    Class-based view for student lesson details
+    Handles GET (lesson details) and POST (lesson completion)
+    """
+    permission_classes = [permissions.AllowAny]  # Temporarily allow any for testing
+    
+    def get(self, request, lesson_id):
+        """
+        Get detailed lesson information for enrolled students
+        Returns comprehensive lesson data including materials, quiz, and class events
+        """
+        try:
+            print(f"🔍 DEBUGGING StudentLessonDetailView.get")
+            print(f"Request method: {request.method}")
+            print(f"Request user: {request.user.email if request.user.is_authenticated else 'Anonymous'} ({getattr(request.user, 'role', 'unknown')})")
+            print(f"Request lesson_id: {lesson_id}")
+            
+            # Get the lesson
+            lesson = get_object_or_404(Lesson, id=lesson_id)
+            print(f"✅ Lesson found: {lesson.title} (ID: {lesson.id})")
+            print(f"✅ Lesson type: {lesson.type}")
+            print(f"✅ Lesson course: {lesson.course.title}")
+            
+            # Check if lesson has quiz
+            try:
+                quiz = lesson.quiz
+                print(f"🔍 Quiz found: {quiz.title if quiz else 'None'}")
+                if quiz:
+                    print(f"🔍 Quiz questions count: {quiz.questions.count()}")
+                    print(f"🔍 Quiz details: time_limit={quiz.time_limit}, passing_score={quiz.passing_score}")
+            except Exception as e:
+                print(f"❌ Error checking quiz: {e}")
+            
+            # Check if lesson has class event
+            try:
+                from courses.models import ClassEvent
+                class_events = ClassEvent.objects.filter(lesson=lesson)
+                print(f"🔍 Class events found: {class_events.count()}")
+                for event in class_events:
+                    print(f"🔍 Class event: {event.title} - {event.meeting_platform} - {event.meeting_link}")
+            except Exception as e:
+                print(f"❌ Error checking class events: {e}")
+            
+            # Check if lesson has materials
+            try:
+                from courses.models import LessonMaterial
+                materials = LessonMaterial.objects.filter(lesson=lesson)
+                print(f"🔍 Materials found: {materials.count()}")
+                for material in materials:
+                    print(f"🔍 Material: {material.title} - {material.material_type}")
+            except Exception as e:
+                print(f"❌ Error checking materials: {e}")
+            
+            # Check teacher info
+            try:
+                teacher_name = lesson.course.teacher.get_full_name() if lesson.course.teacher else 'Unknown'
+                print(f"🔍 Teacher name: {teacher_name}")
+            except Exception as e:
+                print(f"❌ Error getting teacher name: {e}")
+            
+            # Serialize the lesson
+            print(f"🔍 About to serialize lesson with LessonDetailSerializer")
+            
+            # Pre-compute quiz data (moved from serializer)
+            quiz_data = None
+            try:
+                quiz = lesson.quiz
+                if quiz:
+                    print(f"🔍 Quiz found: {quiz.title}")
+                    print(f"🔍 Quiz questions count: {quiz.questions.count()}")
+                    print(f"🔍 Quiz details: time_limit={quiz.time_limit}, passing_score={quiz.passing_score}")
+                    
+                    # Get questions
+                    questions = quiz.questions.all().order_by('order')
+                    
+                    # Get student attempts if available (using request.user directly)
+                    attempts = []
+                    if request.user.is_authenticated:
+                        attempts = QuizAttempt.objects.filter(
+                            student=request.user,  # Direct reference to User
+                            quiz=quiz
+                        ).order_by('-started_at')
+                        print(f"🔍 Student attempts found: {attempts.count()}")
+                    
+                    # Build quiz data
+                    quiz_data = {
+                        'id': str(quiz.id),
+                        'title': quiz.title,
+                        'description': quiz.description or '',
+                        'time_limit': quiz.time_limit,
+                        'passing_score': quiz.passing_score,
+                        'max_attempts': quiz.max_attempts,
+                        'show_correct_answers': quiz.show_correct_answers,
+                        'randomize_questions': quiz.randomize_questions,
+                        'total_points': quiz.total_points,
+                        'question_count': quiz.question_count,
+                        'questions': [
+                            {
+                                'id': str(q.id),
+                                'question_text': q.question_text,
+                                'type': q.type,
+                                'content': q.content,
+                                'points': q.points,
+                                'explanation': q.explanation or '',
+                                'order': q.order,
+                            } for q in questions
+                        ],
+                        'user_attempts_count': len(attempts),
+                        'can_retake': len(attempts) < quiz.max_attempts if attempts else True,
+                        'has_passed': any(attempt.passed for attempt in attempts),
+                        'last_attempt': attempts[0].score if attempts else None,
+                        'last_attempt_passed': attempts[0].passed if attempts else None,
+                    }
+                    print(f"🔍 Quiz data prepared: {quiz_data}")
+                else:
+                    print(f"🔍 No quiz found for lesson")
+            except Exception as e:
+                print(f"❌ Error preparing quiz data: {e}")
+                import traceback
+                print(f"❌ Traceback: {traceback.format_exc()}")
+            
+            # Pre-compute class event data (moved from serializer)
+            class_event_data = None
+            if lesson.type == 'live_class':
+                try:
+                    from courses.models import ClassEvent
+                    class_events = ClassEvent.objects.filter(lesson=lesson)
+                    print(f"🔍 Class events found: {class_events.count()}")
+                    
+                    if class_events.exists():
+                        class_event = class_events.first()
+                        print(f"🔍 Class event found: {class_event.title}")
+                        
+                        now = timezone.now()
+                        
+                        # Calculate event status
+                        if class_event.start_time <= now <= class_event.end_time:
+                            event_status = 'ongoing'
+                        elif class_event.start_time > now:
+                            event_status = 'upcoming'
+                        else:
+                            event_status = 'completed'
+                        
+                        class_event_data = {
+                            'id': str(class_event.id),
+                            'title': class_event.title,
+                            'description': class_event.description or '',
+                            'start_time': class_event.start_time,
+                            'end_time': class_event.end_time,
+                            'platform': class_event.meeting_platform,
+                            'meeting_url': class_event.meeting_link,
+                            'status': event_status,
+                            'can_join_early': class_event.start_time - timedelta(minutes=5) <= now,
+                        }
+                        print(f"🔍 Class event data prepared: {class_event_data}")
+                except Exception as e:
+                    print(f"❌ Error preparing class event data: {e}")
+                    import traceback
+                    print(f"❌ Traceback: {traceback.format_exc()}")
+            
+            # Pre-compute materials data (moved from serializer)
+            materials_data = []
+            try:
+                from courses.models import LessonMaterial
+                materials = LessonMaterial.objects.filter(lesson=lesson)
+                print(f"🔍 Materials found: {materials.count()}")
+                
+                materials_data = [
+                    {
+                        'id': str(m.id),
+                        'title': m.title,
+                        'description': m.description,
+                        'material_type': m.material_type,
+                        'file_url': m.file_url,
+                        'file_size': m.file_size,
+                        'file_size_mb': m.file_size_mb,
+                        'file_extension': m.file_extension,
+                        'is_required': m.is_required,
+                        'is_downloadable': m.is_downloadable,
+                        'order': m.order,
+                        'created_at': m.created_at,
+                    } for m in materials
+                ]
+                
+                for material in materials:
+                    print(f"🔍 Material: {material.title} - {material.material_type}")
+            except Exception as e:
+                print(f"❌ Error preparing materials data: {e}")
+            
+            # Get teacher info
+            teacher_name = None
+            try:
+                teacher_name = lesson.course.teacher.get_full_name() if lesson.course.teacher else 'Unknown'
+                print(f"🔍 Teacher name: {teacher_name}")
+            except Exception as e:
+                print(f"❌ Error getting teacher name: {e}")
+            
+            # Get prerequisites
+            prerequisites_data = []
+            try:
+                prerequisites = list(lesson.prerequisites.values_list('id', flat=True))
+                print(f"🔍 Prerequisites found: {prerequisites_data}")
+            except Exception as e:
+                print(f"❌ Error getting prerequisites: {e}")
+            
+            # Pass all pre-computed data to serializer context
+            context = {
+                'request': request,
+                'quiz_data': quiz_data,
+                'class_event_data': class_event_data,
+                'materials_data': materials_data,
+                'teacher_name': teacher_name,
+                'prerequisites_data': prerequisites_data,
+            }
+            
+            serializer = LessonDetailSerializer(lesson, context=context)
+            serialized_data = serializer.data
+            
+            print(f"✅ Serialization completed")
+            print(f"🔍 Serialized data keys: {list(serialized_data.keys())}")
+            print(f"🔍 Has quiz in serialized data: {'quiz' in serialized_data}")
+            print(f"🔍 Has class_event in serialized data: {'class_event' in serialized_data}")
+            print(f"🔍 Has materials in serialized data: {'materials' in serialized_data}")
+            print(f"🔍 Has teacher_name in serialized data: {'teacher_name' in serialized_data}")
+            
+            if 'quiz' in serialized_data:
+                print(f"🔍 Quiz data: {serialized_data['quiz']}")
+            if 'class_event' in serialized_data:
+                print(f"🔍 Class event data: {serialized_data['class_event']}")
+            if 'materials' in serialized_data:
+                print(f"🔍 Materials data: {serialized_data['materials']}")
+            if 'teacher_name' in serialized_data:
+                print(f"🔍 Teacher name: {serialized_data['teacher_name']}")
+            
+            return Response(serialized_data)
+            
+        except Exception as e:
+            print(f"❌ ERROR in StudentLessonDetailView.get: {str(e)}")
+            import traceback
+            print(f"❌ Traceback: {traceback.format_exc()}")
+            return Response(
+                {'error': f'Failed to get lesson details: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, lesson_id):
+        """
+        Mark a lesson as complete for the authenticated student
+        """
+        try:
+            print(f"🔍 DEBUGGING StudentLessonDetailView.post")
+            print(f"Request method: {request.method}")
+            print(f"Request user: {request.user.email if request.user.is_authenticated else 'Anonymous'}")
+            print(f"Request lesson_id: {lesson_id}")
+            print(f"Request data: {request.data}")
+            
+            # Check authentication
+            if not request.user.is_authenticated:
+                return Response(
+                    {'error': 'Authentication required'},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            
+            # Get the lesson
+            lesson = get_object_or_404(Lesson, id=lesson_id)
+            print(f"✅ Lesson found: {lesson.title} (ID: {lesson.id})")
+            
+            # Get student profile and enrollment
+            try:
+                student_profile = request.user.student_profile
+                print(f"✅ Student profile found: {student_profile}")
+            except Exception as e:
+                print(f"❌ Error getting student profile: {e}")
+                return Response(
+                    {'error': 'Student profile not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if student is enrolled in this course
+            enrollment = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                course=lesson.course,
+                status__in=['active', 'completed']
+            ).first()
+            
+            if not enrollment:
+                print(f"❌ Student not enrolled in course: {lesson.course.title}")
+                return Response(
+                    {'error': 'You are not enrolled in this course'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            print(f"✅ Enrollment found: {enrollment}")
+            print(f"✅ Current lesson: {enrollment.current_lesson}")
+            print(f"✅ Completed lessons count: {enrollment.completed_lessons_count}")
+            
+            # Mark lesson as complete using the model method
+            success = enrollment.mark_lesson_complete(lesson)
+            
+            if success:
+                print(f"✅ Lesson marked as complete successfully")
+                return Response({
+                    'message': f'Lesson "{lesson.title}" marked as complete',
+                    'current_lesson': {
+                        'id': str(enrollment.current_lesson.id) if enrollment.current_lesson else None,
+                        'title': enrollment.current_lesson.title if enrollment.current_lesson else None,
+                        'order': enrollment.current_lesson.order if enrollment.current_lesson else None,
+                    } if enrollment.current_lesson else None,
+                    'completed_lessons_count': enrollment.completed_lessons_count,
+                    'progress_percentage': float(enrollment.progress_percentage),
+                    'course_completed': enrollment.status == 'completed',
+                }, status=status.HTTP_200_OK)
+            else:
+                print(f"❌ Failed to mark lesson as complete")
+                return Response(
+                    {'error': 'Failed to mark lesson as complete. Check if you can access this lesson.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+        except Exception as e:
+            print(f"❌ ERROR in StudentLessonDetailView.post: {str(e)}")
+            import traceback
+            print(f"❌ Traceback: {traceback.format_exc()}")
+            return Response(
+                {'error': f'Failed to mark lesson complete: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 @api_view(['POST'])

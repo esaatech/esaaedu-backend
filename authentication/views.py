@@ -267,29 +267,30 @@ def student_signup(request):
         # Check if user already exists
         try:
             existing_user = User.objects.get(firebase_uid=firebase_uid)
-            return Response(
-                {'error': 'User already exists', 'user_id': existing_user.id},
-                status=status.HTTP_409_CONFLICT
-            )
+            
+            # Check if user has a student profile
+            try:
+                existing_profile = existing_user.student_profile
+                
+                # User exists and has profile - return existing user
+                user_serializer = UserProfileSerializer(existing_user)
+                return Response({
+                    'message': 'User already exists with complete profile',
+                    'user': user_serializer.data
+                }, status=status.HTTP_200_OK)
+                
+            except Exception as profile_error:
+                # User exists but no profile - complete the signup
+                # We'll continue with the normal signup flow below
+                pass
         except User.DoesNotExist:
+            # User doesn't exist - proceed with creation
             pass
-        
-        # Debug: Print the entire request data to console
-        print("=" * 50)
-        print("🔍 DJANGO DEBUG - Full request data received:")
-        print(f"request.data = {request.data}")
-        print(f"request.data type = {type(request.data)}")
-        print("=" * 50)
         
         # Extract user data from request (prioritize React data over Firebase token)
         user_data = request.data.get('user_data', {})
-        print(f"🔍 DJANGO DEBUG - Extracted user_data: {user_data}")
-        print(f"🔍 DJANGO DEBUG - user_data type: {type(user_data)}")
-        
         first_name = user_data.get('first_name', '')
         last_name = user_data.get('last_name', '')
-        print(f"🔍 DJANGO DEBUG - Extracted names: first_name='{first_name}', last_name='{last_name}'")
-        print("=" * 50)
         
         # Fallback to Firebase token name if React data not provided
         if not first_name and not last_name and name:
@@ -299,18 +300,31 @@ def student_signup(request):
         
         logger.info(f"Creating user with: first_name='{first_name}', last_name='{last_name}', email='{email}'")
         
-        # Create new student user
-        user = User.objects.create_user(
-            firebase_uid=firebase_uid,
-            email=email,
-            first_name=first_name,
-            last_name=last_name,
-            username=email,
-            role=User.Role.STUDENT
-        )
-        
-        # Create student profile
-        student_profile = StudentProfile.objects.create(user=user)
+        # Check if we're completing an existing user's signup or creating a new one
+        if 'existing_user' in locals() and existing_user:
+            user = existing_user
+            # Update user info if provided
+            if first_name:
+                user.first_name = first_name
+            if last_name:
+                user.last_name = last_name
+            user.save()
+            
+            # Create the missing student profile
+            student_profile = StudentProfile.objects.create(user=user)
+        else:
+            # Create new student user
+            user = User.objects.create_user(
+                firebase_uid=firebase_uid,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                username=email,
+                role=User.Role.STUDENT
+            )
+            
+            # Create student profile
+            student_profile = StudentProfile.objects.create(user=user)
         
         # Prepare complete profile data (combine user_data and profile_data)
         profile_update_data = request.data.get('profile_data', {}).copy()

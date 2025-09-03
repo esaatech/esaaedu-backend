@@ -554,6 +554,8 @@ class AudioVideoLessonSerializer(serializers.Serializer):
     description = serializers.CharField(allow_null=True, allow_blank=True)
     start_time = serializers.DateTimeField()  # Added for sorting
     progress_percentage = serializers.FloatField()  # Added for real progress display
+    total_lessons = serializers.IntegerField()  # Added for progress bar
+    completed_lessons_count = serializers.IntegerField()  # Added for progress bar
 
 
 class LiveLessonSerializer(serializers.Serializer):
@@ -581,6 +583,8 @@ class TextLessonSerializer(serializers.Serializer):
     media_url = serializers.CharField(allow_null=True, allow_blank=True)  # Added for lesson navigation
     start_time = serializers.DateTimeField()  # Added for sorting
     progress_percentage = serializers.FloatField()  # Added for real progress display
+    total_lessons = serializers.IntegerField()  # Added for progress bar
+    completed_lessons_count = serializers.IntegerField()  # Added for progress bar
 
 
 class InteractiveLessonSerializer(serializers.Serializer):
@@ -594,6 +598,8 @@ class InteractiveLessonSerializer(serializers.Serializer):
     media_url = serializers.CharField(allow_null=True, allow_blank=True)  # Added for lesson navigation
     start_time = serializers.DateTimeField()  # Added for sorting
     progress_percentage = serializers.FloatField()  # Added for real progress display
+    total_lessons = serializers.IntegerField()  # Added for progress bar
+    completed_lessons_count = serializers.IntegerField()  # Added for progress bar
 
 
 class AchievementSerializer(serializers.Serializer):

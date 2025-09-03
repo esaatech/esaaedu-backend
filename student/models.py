@@ -494,6 +494,64 @@ class EnrolledCourse(models.Model):
         # For now, return a simple calculation
         # You might want to add a learning_streak field to track actual consecutive days
         return min(active_enrollments * 7, 30)  # Max 30 days for now
+    
+    def mark_lesson_complete(self, lesson):
+        """
+        Mark a lesson as complete and update current_lesson
+        
+        Args:
+            lesson: Lesson instance to mark as complete
+            
+        Returns:
+            bool: True if lesson was marked complete, False otherwise
+        """
+        try:
+            # Verify the lesson belongs to this course
+            if lesson.course != self.course:
+                print(f"Error: Lesson {lesson.id} does not belong to course {self.course.id}")
+                return False
+            
+            # Check if this is the current lesson or a previous lesson
+            if self.current_lesson and lesson.order > self.current_lesson.order:
+                print(f"Error: Cannot mark lesson {lesson.order} complete. Current lesson is {self.current_lesson.order}")
+                return False
+            
+            # Update completed lessons count
+            self.completed_lessons_count += 1
+            
+            # Find the next lesson in sequence
+            next_lesson = self.course.lessons.filter(
+                order__gt=lesson.order
+            ).order_by('order').first()
+            
+            # Update current_lesson to the next lesson
+            if next_lesson:
+                self.current_lesson = next_lesson
+                print(f"Updated current_lesson to: {next_lesson.title} (Order: {next_lesson.order})")
+            else:
+                # No more lessons, course is complete
+                self.current_lesson = None
+                self.status = 'completed'
+                self.completion_date = timezone.now().date()
+                self.progress_percentage = 100
+                print(f"Course {self.course.title} completed!")
+            
+            # Update progress percentage
+            if self.total_lessons_count > 0:
+                self.progress_percentage = (self.completed_lessons_count / self.total_lessons_count) * 100
+            
+            # Update last accessed time
+            self.last_accessed = timezone.now()
+            
+            # Save all changes
+            self.save()
+            
+            print(f"Successfully marked lesson '{lesson.title}' as complete for {self.student_profile.user.get_full_name()}")
+            return True
+            
+        except Exception as e:
+            print(f"Error marking lesson complete: {e}")
+            return False
 
 
 class StudentAttendance(models.Model):
