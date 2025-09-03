@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
     EnrolledCourse, StudentAttendance, StudentGrade, StudentBehavior, 
-    StudentNote, StudentCommunication
+    StudentNote, StudentCommunication, StudentLessonProgress
 )
 
 
@@ -236,3 +236,72 @@ class StudentCommunicationAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+
+@admin.register(StudentLessonProgress)
+class StudentLessonProgressAdmin(admin.ModelAdmin):
+    list_display = [
+        'enrollment', 'lesson', 'status', 'time_spent', 'quiz_passed', 
+        'best_quiz_score', 'completed_at', 'created_at'
+    ]
+    list_filter = [
+        'status', 'quiz_passed', 'completed_at', 'created_at', 
+        'enrollment__course', 'enrollment__student_profile__user'
+    ]
+    search_fields = [
+        'enrollment__student_profile__user__email', 
+        'enrollment__student_profile__user__first_name',
+        'enrollment__student_profile__user__last_name', 
+        'lesson__title', 'lesson__course__title'
+    ]
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    date_hierarchy = 'created_at'
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('enrollment', 'lesson', 'status')
+        }),
+        ('Progress Tracking', {
+            'fields': ('started_at', 'completed_at', 'time_spent', 'progress_data')
+        }),
+        ('Quiz Performance', {
+            'fields': ('quiz_attempts_count', 'quiz_passed', 'best_quiz_score')
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    actions = ['mark_completed', 'mark_in_progress', 'reset_progress']
+    
+    def mark_completed(self, request, queryset):
+        count = 0
+        for progress in queryset:
+            if progress.can_be_completed:
+                progress.mark_as_completed()
+                count += 1
+        self.message_user(request, f'{count} lessons marked as completed.')
+    mark_completed.short_description = "Mark selected lessons as completed"
+    
+    def mark_in_progress(self, request, queryset):
+        count = 0
+        for progress in queryset.filter(status='not_started'):
+            progress.mark_as_started()
+            count += 1
+        self.message_user(request, f'{count} lessons marked as in progress.')
+    mark_in_progress.short_description = "Mark selected lessons as in progress"
+    
+    def reset_progress(self, request, queryset):
+        for progress in queryset:
+            progress.status = 'not_started'
+            progress.started_at = None
+            progress.completed_at = None
+            progress.time_spent = 0
+            progress.quiz_attempts_count = 0
+            progress.quiz_passed = False
+            progress.best_quiz_score = None
+            progress.progress_data = {}
+            progress.save()
+        self.message_user(request, f'Progress reset for {queryset.count()} lessons.')
+    reset_progress.short_description = "Reset progress for selected lessons"

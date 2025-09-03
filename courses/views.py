@@ -2989,12 +2989,12 @@ class StudentLessonDetailView(APIView):
             print(f"✅ Completed lessons count: {enrollment.completed_lessons_count}")
             
             # Mark lesson as complete using the model method
-            success = enrollment.mark_lesson_complete(lesson)
+            success, message = enrollment.mark_lesson_complete(lesson)
             
             if success:
-                print(f"✅ Lesson marked as complete successfully")
+                print(f"✅ Lesson marked as complete successfully: {message}")
                 return Response({
-                    'message': f'Lesson "{lesson.title}" marked as complete',
+                    'message': message,
                     'current_lesson': {
                         'id': str(enrollment.current_lesson.id) if enrollment.current_lesson else None,
                         'title': enrollment.current_lesson.title if enrollment.current_lesson else None,
@@ -3005,9 +3005,9 @@ class StudentLessonDetailView(APIView):
                     'course_completed': enrollment.status == 'completed',
                 }, status=status.HTTP_200_OK)
             else:
-                print(f"❌ Failed to mark lesson as complete")
+                print(f"❌ Failed to mark lesson as complete: {message}")
                 return Response(
-                    {'error': 'Failed to mark lesson as complete. Check if you can access this lesson.'},
+                    {'error': message},
                     status=status.HTTP_400_BAD_REQUEST
                 )
                 
@@ -3134,6 +3134,40 @@ def submit_quiz_attempt(request, lesson_id):
                 'passed': passed
             }]
         )
+        
+        # Update enrollment quiz metrics
+        print(f"🔍 DEBUG: Updating enrollment quiz metrics for {enrollment.student_profile.user.email}")
+        print(f"🔍 DEBUG: Quiz score: {score_percentage}%, Passed: {passed}")
+        
+        try:
+            # Update the enrollment's quiz performance metrics
+            success = enrollment.update_quiz_performance(quiz_score=score_percentage, passed=passed)
+            if success:
+                print(f"✅ Successfully updated enrollment quiz metrics")
+                print(f"🔍 DEBUG: New average quiz score: {enrollment.average_quiz_score}")
+                print(f"🔍 DEBUG: Total quizzes taken: {enrollment.total_quizzes_taken}")
+                print(f"🔍 DEBUG: Total quizzes passed: {enrollment.total_quizzes_passed}")
+            else:
+                print(f"❌ Failed to update enrollment quiz metrics")
+        except Exception as e:
+            print(f"❌ Error updating enrollment quiz metrics: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Update lesson progress quiz performance
+        try:
+            from student.models import StudentLessonProgress
+            lesson_progress, created = StudentLessonProgress.objects.get_or_create(
+                enrollment=enrollment,
+                lesson=lesson,
+                defaults={'status': 'not_started'}
+            )
+            lesson_progress.update_quiz_performance(score_percentage, passed)
+            print(f"✅ Successfully updated lesson progress quiz performance")
+        except Exception as e:
+            print(f"❌ Error updating lesson progress quiz performance: {e}")
+            import traceback
+            traceback.print_exc()
         
         # Prepare response data
         response_data = {

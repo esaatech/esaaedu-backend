@@ -495,26 +495,43 @@ class EnrolledCourse(models.Model):
         # You might want to add a learning_streak field to track actual consecutive days
         return min(active_enrollments * 7, 30)  # Max 30 days for now
     
-    def mark_lesson_complete(self, lesson):
+    def mark_lesson_complete(self, lesson, require_quiz=True):
         """
         Mark a lesson as complete and update current_lesson
         
         Args:
             lesson: Lesson instance to mark as complete
+            require_quiz: Whether to require quiz completion (default: True)
             
         Returns:
-            bool: True if lesson was marked complete, False otherwise
+            tuple: (success: bool, message: str)
         """
         try:
             # Verify the lesson belongs to this course
             if lesson.course != self.course:
-                print(f"Error: Lesson {lesson.id} does not belong to course {self.course.id}")
-                return False
+                return False, f"Lesson {lesson.id} does not belong to course {self.course.id}"
             
             # Check if this is the current lesson or a previous lesson
             if self.current_lesson and lesson.order > self.current_lesson.order:
-                print(f"Error: Cannot mark lesson {lesson.order} complete. Current lesson is {self.current_lesson.order}")
-                return False
+                return False, f"Cannot mark lesson {lesson.order} complete. Current lesson is {self.current_lesson.order}"
+            
+            # Get or create lesson progress record
+            lesson_progress, created = StudentLessonProgress.objects.get_or_create(
+                enrollment=self,
+                lesson=lesson,
+                defaults={'status': 'not_started'}
+            )
+            
+            # Check if lesson is already completed
+            if lesson_progress.is_completed:
+                return False, "Lesson already completed"
+            
+            # Check quiz requirement if enabled
+            if require_quiz and lesson_progress.requires_quiz and lesson_progress.quiz_attempts_count == 0:
+                return False, "You must complete the quiz before completing this lesson"
+            
+            # Mark lesson as completed in progress tracking
+            lesson_progress.mark_as_completed()
             
             # Update completed lessons count
             self.completed_lessons_count += 1
@@ -547,11 +564,11 @@ class EnrolledCourse(models.Model):
             self.save()
             
             print(f"Successfully marked lesson '{lesson.title}' as complete for {self.student_profile.user.get_full_name()}")
-            return True
+            return True, f"Lesson '{lesson.title}' marked as complete"
             
         except Exception as e:
             print(f"Error marking lesson complete: {e}")
-            return False
+            return False, f"Error completing lesson: {str(e)}"
 
 
 class StudentAttendance(models.Model):
@@ -1202,5 +1219,117 @@ class QuizAttemptFeedback(BaseFeedback):
             self.areas_for_improvement or 
             self.study_recommendations
         )
+
+
+class StudentLessonProgress(models.Model):
+    """
+    Student progress on individual lessons
+    Tracks detailed progress for each lesson within an enrollment
+    """
+    LESSON_STATUS = [
+        ('not_started', 'Not Started'),
+        ('in_progress', 'In Progress'),
+        ('completed', 'Completed'),
+        ('locked', 'Locked'),
+    ]
+    
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    enrollment = models.ForeignKey(
+        EnrolledCourse, 
+        on_delete=models.CASCADE, 
+        related_name='lesson_progress'
+    )
+    lesson = models.ForeignKey(
+        'courses.Lesson', 
+        on_delete=models.CASCADE,
+        related_name='student_progress'
+    )
+    
+    # Progress Details
+    status = models.CharField(max_length=20, choices=LESSON_STATUS, default='not_started')
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    time_spent = models.IntegerField(default=0, help_text="Time spent in minutes")
+    
+    # Content-specific progress (e.g., video progress, reading progress)
+    progress_data = models.JSONField(
+        default=dict,
+        help_text="Lesson-specific progress data (video position, reading progress, etc.)"
+    )
+    
+    # Quiz Performance (if lesson has quiz)
+    quiz_attempts_count = models.IntegerField(default=0)
+    quiz_passed = models.BooleanField(default=False)
+    best_quiz_score = models.DecimalField(
+        max_digits=5, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Best quiz score as percentage"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['enrollment', 'lesson']
+        ordering = ['lesson__order']
+        verbose_name = 'Student Lesson Progress'
+        verbose_name_plural = 'Student Lesson Progress'
+    
+    def __str__(self):
+        return f"{self.enrollment.student_profile.user.get_full_name()} - {self.lesson.title} ({self.status})"
+    
+    def mark_as_started(self):
+        """Mark lesson as started"""
+        if self.status == 'not_started':
+            self.status = 'in_progress'
+            self.started_at = timezone.now()
+            self.save()
+    
+    def mark_as_completed(self):
+        """Mark lesson as completed"""
+        self.status = 'completed'
+        self.completed_at = timezone.now()
+        self.save()
+    
+    def update_quiz_performance(self, score, passed):
+        """Update quiz performance for this lesson"""
+        self.quiz_attempts_count += 1
+        if passed:
+            self.quiz_passed = True
+        if not self.best_quiz_score or score > self.best_quiz_score:
+            self.best_quiz_score = score
+        self.save()
+    
+    def update_progress_data(self, data):
+        """Update lesson-specific progress data"""
+        self.progress_data.update(data)
+        self.save()
+    
+    @property
+    def is_completed(self):
+        """Check if lesson is completed"""
+        return self.status == 'completed'
+    
+    @property
+    def can_be_completed(self):
+        """Check if lesson can be marked as completed"""
+        # Can be completed if it's in progress or not started
+        return self.status in ['not_started', 'in_progress']
+    
+    @property
+    def requires_quiz(self):
+        """Check if lesson requires quiz completion"""
+        return hasattr(self.lesson, 'quiz') and self.lesson.quiz is not None
+    
+    @property
+    def can_complete_without_quiz(self):
+        """Check if lesson can be completed without quiz"""
+        if not self.requires_quiz:
+            return True
+        return self.quiz_passed
 
 
