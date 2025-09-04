@@ -97,7 +97,7 @@ jobs:
         virtualenvs-in-project: true
     
     - name: Install dependencies
-      run: poetry install --no-interaction --no-root --only=main
+      run: poetry install --no-interaction --no-root
     
     # Add your deployment steps here (e.g., to Railway, Heroku, AWS, etc.)
     # Example for Railway:
