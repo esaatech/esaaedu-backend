@@ -16,7 +16,6 @@ urlpatterns = [
     # Lesson management endpoints
     path('<uuid:course_id>/lessons/', views.course_lessons, name='course_lessons'),
     path('lessons/<uuid:lesson_id>/', views.lesson_detail, name='lesson_detail'),
-    path('lessons/<uuid:lesson_id>/complete/', views.complete_lesson, name='complete_lesson'),
     path('<uuid:course_id>/lessons/reorder/', views.reorder_lessons, name='reorder_lessons'),
     
     # Quiz management endpoints
