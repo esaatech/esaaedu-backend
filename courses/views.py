@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt
+from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview
 from student.models import EnrolledCourse
 from .serializers import (
     CourseListSerializer, CourseDetailSerializer, CourseCreateUpdateSerializer,
@@ -27,6 +27,27 @@ class CoursesPagination(PageNumberPagination):
     page_size = 12
     page_size_query_param = 'page_size'
     max_page_size = 50
+
+
+def get_course_average_rating(course):
+    """
+    Calculate the average rating for a course from CourseReview model.
+    Returns 0.0 if no reviews exist.
+    """
+    try:
+        reviews = CourseReview.objects.filter(course=course)
+        if not reviews.exists():
+            return 0.0
+        
+        # Calculate average rating
+        total_rating = sum(review.rating for review in reviews)
+        average_rating = total_rating / reviews.count()
+        
+        # Round to 1 decimal place
+        return round(average_rating, 1)
+    except Exception as e:
+        print(f"Error calculating rating for course {course.id}: {e}")
+        return 0.0
 
 
 # ===== PUBLIC ENDPOINTS (for frontend/students) =====
@@ -2013,60 +2034,56 @@ def student_enrolled_courses(request):
    
     
     try:
-        print("Step 1: Getting student profile...")
+       
         # Get student profile
         student_profile = getattr(request.user, 'student_profile', None)
-        print(f"Student profile found: {student_profile}")
+        
         
         if not student_profile:
-            print("ERROR: No student profile found for user")
+            
             return Response({
                 'enrolled_courses': [],
                 'message': 'Student profile not found'
             }, status=status.HTTP_200_OK)
         
-        print("Step 2: Querying enrolled courses...")
+      
         # Get enrolled courses
         enrolled_courses = EnrolledCourse.objects.filter(
             student_profile=student_profile,
             status__in=['active', 'completed']
         ).select_related('course', 'current_lesson').order_by('-enrollment_date')
         
-        print(f"Found {enrolled_courses.count()} enrolled courses")
+     
         
         courses_data = []
         for i, enrollment in enumerate(enrolled_courses):
-            print(f"Step 3.{i+1}: Processing enrollment {enrollment.id}...")
             course = enrollment.course
-            print(f"Course: {course.title}")
+            
             
             try:
                 # Get course image (fallback to placeholder)
-                print(f"Getting course image...")
+                
                 course_image = getattr(course, 'image', None)
                 if course_image:
                     image_url = course_image.url if hasattr(course_image, 'url') else str(course_image)
                 else:
                     image_url = "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=300&h=200&fit=crop"
-                print(f"Image URL: {image_url}")
+                
                 
                 # Calculate next lesson
                 print(f"Calculating next lesson...")
                 next_lesson = "Course Completed!" if enrollment.status == 'completed' else (
                     enrollment.current_lesson.title if enrollment.current_lesson else "Start Learning"
                 )
-                print(f"Next lesson: {next_lesson}")
                 
-                # Get actual lesson count from the course (not computed property)
-                print(f"Getting course lesson count...")
                 actual_total_lessons = course.lessons.count()
-                print(f"Course has {actual_total_lessons} lessons")
+                
                 
                 # Debug enrollment data
-                print(f"🔍 DEBUG: Enrollment data - completed_lessons_count: {enrollment.completed_lessons_count}, total_lessons_count: {enrollment.total_lessons_count}, progress_percentage: {enrollment.progress_percentage}")
+                
                 
                 # Get instructor name
-                print(f"Getting instructor name...")
+                
                 instructor_name = "Little Learners Tech"
                 if hasattr(course, 'instructor') and course.instructor:
                     instructor_name = course.instructor.get_full_name() or course.instructor.email
@@ -2079,6 +2096,7 @@ def student_enrolled_courses(request):
                     'description': course.description,
                     'instructor': instructor_name,
                     'image': image_url,
+                    'icon': course.icon,  # Add icon field
                     'progress': float(enrollment.progress_percentage),
                     'total_lessons': actual_total_lessons,  # Use actual count, not computed property
                     'completed_lessons': enrollment.completed_lessons_count,  # Use actual enrollment data
@@ -2090,10 +2108,10 @@ def student_enrolled_courses(request):
                     'average_quiz_score': float(enrollment.average_quiz_score) if enrollment.average_quiz_score else None,
                     'difficulty': getattr(course, 'difficulty_level', 'beginner'),
                     'category': course.category,
-                    'rating': 4.8,  # Default rating - can be calculated from reviews later
+                    'rating': get_course_average_rating(course),  # Calculate actual rating from reviews
                 }
                 courses_data.append(course_data)
-                print(f"Course data added successfully")
+                
                 
             except Exception as course_error:
                 print(f"ERROR processing course {course.title}: {course_error}")
@@ -2193,17 +2211,18 @@ def student_course_recommendations(request):
                     'description': course.description,
                     'instructor': instructor_name,
                     'image': image_url,
+                    'icon': course.icon,  # Add icon field
                     'total_lessons': total_lessons,
                     'duration': duration,
                     'max_students': max_students,
                     'difficulty': difficulty,
                     'category': course.category,
-                    'rating': 4.8,  # Default rating
+                    'rating': get_course_average_rating(course),  # Calculate actual rating from reviews
                     'price': "Free" if not course.price or course.price == 0 else f"${course.price}",
                     'enrolled_students': 0,  # Can be calculated from enrollments
                 }
                 courses_data.append(course_data)
-                print(f"Course data added successfully")
+                
                 
             except Exception as course_error:
                 print(f"ERROR processing course {course.title}: {course_error}")
@@ -2236,11 +2255,7 @@ def student_enroll_course(request, course_id):
     """
     Enroll the current student in a course
     """
-    print(f"=== DEBUGGING student_enroll_course ===")
-    print(f"Request method: {request.method}")
-    print(f"Request user: {request.user}")
-    print(f"Request data: {request.data}")
-    print(f"Course ID from URL: {course_id}")
+    
     
     try:
         # Get class ID from request (course_id is now from URL)
@@ -2338,9 +2353,7 @@ def student_enroll_course(request, course_id):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-
-
-    
+   
 
 @api_view(['GET'])
 @permission_classes([permissions.AllowAny])  # Temporarily allow any for testing
@@ -2406,16 +2419,10 @@ class StudentLessonDetailView(APIView):
         Returns comprehensive lesson data including materials, quiz, and class events
         """
         try:
-            print(f"🔍 DEBUGGING StudentLessonDetailView.get")
-            print(f"Request method: {request.method}")
-            print(f"Request user: {request.user.email if request.user.is_authenticated else 'Anonymous'} ({getattr(request.user, 'role', 'unknown')})")
-            print(f"Request lesson_id: {lesson_id}")
             
             # Get the lesson
             lesson = get_object_or_404(Lesson, id=lesson_id)
-            print(f"✅ Lesson found: {lesson.title} (ID: {lesson.id})")
-            print(f"✅ Lesson type: {lesson.type}")
-            print(f"✅ Lesson course: {lesson.course.title}")
+           
             
             # Check if lesson has quiz
             try:
@@ -2462,9 +2469,6 @@ class StudentLessonDetailView(APIView):
             try:
                 quiz = lesson.quiz
                 if quiz:
-                    print(f"🔍 Quiz found: {quiz.title}")
-                    print(f"🔍 Quiz questions count: {quiz.questions.count()}")
-                    print(f"🔍 Quiz details: time_limit={quiz.time_limit}, passing_score={quiz.passing_score}")
                     
                     # Get questions
                     questions = quiz.questions.all().order_by('order')
@@ -2612,21 +2616,7 @@ class StudentLessonDetailView(APIView):
             serializer = LessonDetailSerializer(lesson, context=context)
             serialized_data = serializer.data
             
-            print(f"✅ Serialization completed")
-            print(f"🔍 Serialized data keys: {list(serialized_data.keys())}")
-            print(f"🔍 Has quiz in serialized data: {'quiz' in serialized_data}")
-            print(f"🔍 Has class_event in serialized data: {'class_event' in serialized_data}")
-            print(f"🔍 Has materials in serialized data: {'materials' in serialized_data}")
-            print(f"🔍 Has teacher_name in serialized data: {'teacher_name' in serialized_data}")
             
-            if 'quiz' in serialized_data:
-                print(f"🔍 Quiz data: {serialized_data['quiz']}")
-            if 'class_event' in serialized_data:
-                print(f"🔍 Class event data: {serialized_data['class_event']}")
-            if 'materials' in serialized_data:
-                print(f"🔍 Materials data: {serialized_data['materials']}")
-            if 'teacher_name' in serialized_data:
-                print(f"🔍 Teacher name: {serialized_data['teacher_name']}")
             
             return Response(serialized_data)
             
@@ -2644,11 +2634,6 @@ class StudentLessonDetailView(APIView):
         Mark a lesson as complete for the authenticated student
         """
         try:
-            print(f"🔍 DEBUGGING StudentLessonDetailView.post")
-            print(f"Request method: {request.method}")
-            print(f"Request user: {request.user.email if request.user.is_authenticated else 'Anonymous'}")
-            print(f"Request lesson_id: {lesson_id}")
-            print(f"Request data: {request.data}")
             
             # Check authentication
             if not request.user.is_authenticated:
@@ -2729,11 +2714,7 @@ def submit_quiz_attempt(request, lesson_id):
     """
     Submit a quiz attempt for a specific lesson
     """
-    print(f"=== DEBUGGING submit_quiz_attempt ===")
-    print(f"Request method: {request.method}")
-    print(f"Request user: {request.user}")
-    print(f"Request lesson_id: {lesson_id}")
-    print(f"Request data: {request.data}")
+   
     
     try:
         # Get the lesson and quiz
