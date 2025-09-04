@@ -2447,9 +2447,6 @@ def student_course_lessons(request, course_id):
         )
 
 
-@api_view(['GET'])
-@permission_classes([permissions.AllowAny])  # Temporarily allow any for testing
-def student_lesson_detail(request, lesson_id):
     """
     Get detailed lesson information for enrolled students
     Returns comprehensive lesson data including materials, quiz, and class events
@@ -2689,7 +2686,6 @@ def student_lesson_detail(request, lesson_id):
             {'error': f'Failed to get lesson details: {str(e)}'}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
-
 
 class StudentLessonDetailView(APIView):
     """
