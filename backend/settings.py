@@ -233,11 +233,14 @@ else:
         DATABASES = {
             'default': {
                 'ENGINE': 'django.db.backends.postgresql',
-                'NAME': config('DB_NAME', default='little_learners_tech'),
+                'NAME': config('DB_NAME', default='stbacedemy-backened'),
                 'USER': config('DB_USER', default='postgres'),
                 'PASSWORD': config('DB_PASSWORD', default=''),
-                'HOST': config('DB_HOST', default='localhost'),
+                'HOST': config('DB_HOST', default='104.197.207.176'),  # Your Cloud SQL IP
                 'PORT': config('DB_PORT', default='5432'),
+                'OPTIONS': {
+                    'sslmode': 'require',
+                },
             }
         }
     else:
