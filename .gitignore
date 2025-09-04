@@ -20,6 +20,11 @@ credentials/
 *.pem
 *.key
 
+# Google Cloud Service Account credentials (NEVER commit these!)
+service-account*.json
+service-ccount*.json
+*-service-account.json
+
 # Python
 *.py[cod]
 *$py.class
