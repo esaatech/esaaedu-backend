@@ -7,19 +7,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Initialize Firebase if not already initialized
-def ensure_firebase_initialized():
-    """Ensure Firebase is initialized before use"""
-    if not firebase_admin._apps:
-        try:
-            from backend.settings import initialize_firebase
-            initialize_firebase()
-        except Exception as e:
-            logger.error(f"Failed to initialize Firebase: {e}")
-            return False
-    return True
-
-
 class FirebaseAuthenticationMiddleware(MiddlewareMixin):
     """
     Middleware to handle Firebase authentication for specific endpoints.
@@ -39,10 +26,7 @@ class FirebaseAuthenticationMiddleware(MiddlewareMixin):
         This can be used for additional Firebase-specific processing,
         logging, or route protection.
         """
-        # Ensure Firebase is initialized
-        if not ensure_firebase_initialized():
-            request.firebase_user = None
-            return None
+        # Firebase is already initialized in settings.py
         
         # Add Firebase user info to request if available
         auth_header = request.META.get('HTTP_AUTHORIZATION')

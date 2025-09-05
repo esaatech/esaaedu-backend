@@ -170,6 +170,9 @@ CORS_ALLOW_CREDENTIALS = True
 
 # Firebase Configuration
 FIREBASE_PROJECT_ID = config('FIREBASE_PROJECT_ID', default='')
+
+# Firebase credentials will be loaded from Google Secret Manager in production
+# Fallback to environment variables for local development
 FIREBASE_PRIVATE_KEY_ID = config('FIREBASE_PRIVATE_KEY_ID', default='')
 FIREBASE_PRIVATE_KEY = config('FIREBASE_PRIVATE_KEY', default='')
 FIREBASE_CLIENT_EMAIL = config('FIREBASE_CLIENT_EMAIL', default='')
@@ -218,8 +221,12 @@ def initialize_firebase():
         logger.error(f"Failed to initialize Firebase: {e}")
         return False
 
-# Initialize Firebase lazily (only when needed)
-# Firebase will be initialized when first accessed, not during settings import
+# Initialize Firebase on startup
+try:
+    initialize_firebase()
+except Exception as e:
+    logger.warning(f"Firebase initialization failed on startup: {e}")
+    # Continue without Firebase - it will be initialized when needed
 
 # Custom User Model
 AUTH_USER_MODEL = 'users.User'
