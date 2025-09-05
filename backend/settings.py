@@ -218,12 +218,8 @@ def initialize_firebase():
         logger.error(f"Failed to initialize Firebase: {e}")
         return False
 
-# Initialize Firebase (with error handling)
-try:
-    initialize_firebase()
-except Exception as e:
-    logger.error(f"Firebase initialization failed: {e}")
-    # Continue without Firebase for now
+# Initialize Firebase lazily (only when needed)
+# Firebase will be initialized when first accessed, not during settings import
 
 # Custom User Model
 AUTH_USER_MODEL = 'users.User'
