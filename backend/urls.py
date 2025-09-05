@@ -33,6 +33,9 @@ urlpatterns = [
     
     # Health check endpoint
     path("health/", lambda request: JsonResponse({"status": "ok"})),
+    
+    # Root endpoint for testing
+    path("", lambda request: JsonResponse({"message": "Little Learners Tech API", "status": "running"})),
 ]
 
 # Import JsonResponse for health check
