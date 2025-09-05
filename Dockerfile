@@ -30,6 +30,10 @@ RUN pip install poetry \
 # Copy project
 COPY . .
 
+# Create staticfiles directory and collect static files
+RUN mkdir -p /app/staticfiles
+RUN python manage.py collectstatic --noinput --clear
+
 # Create a non-root user
 RUN adduser --disabled-password --gecos '' appuser
 RUN chown -R appuser:appuser /app

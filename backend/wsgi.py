@@ -21,3 +21,12 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend.settings")
 print("🚀 DEBUG: Getting WSGI application...")
 application = get_wsgi_application()
 print("🚀 DEBUG: WSGI application loaded successfully!")
+
+# Test database connection
+try:
+    from django.db import connection
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT 1")
+        print("🚀 DEBUG: Database connection successful!")
+except Exception as e:
+    print(f"🚀 DEBUG: Database connection failed: {e}")
