@@ -1,6 +1,9 @@
 # Use Python 3.11 slim image
 FROM python:3.11-slim
 
+# Cache busting - force rebuild
+ARG CACHE_BUST=1
+
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

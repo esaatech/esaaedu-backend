@@ -128,7 +128,7 @@ jobs:
     - name: Build and push Docker image
       run: |
         gcloud auth configure-docker us-central1-docker.pkg.dev
-        docker build -t us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/esaaedu-backend/little-learners-backend .
+        docker build --build-arg CACHE_BUST=$(date +%s) -t us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/esaaedu-backend/little-learners-backend .
         docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/esaaedu-backend/little-learners-backend
     
     - name: Deploy to Cloud Run
