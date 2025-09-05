@@ -90,3 +90,7 @@ htmlcov/
 # Logs
 logs/
 *.log
+
+# Firebase service account files
+*firebase-adminsdk*.json
+firebase-service-account*.json

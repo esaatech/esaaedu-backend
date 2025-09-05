@@ -149,11 +149,7 @@ jobs:
           DEBUG=False
           ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }}
           FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}
-          FIREBASE_PRIVATE_KEY_ID=${{ secrets.FIREBASE_PRIVATE_KEY_ID }}
-          FIREBASE_PRIVATE_KEY=${{ secrets.FIREBASE_PRIVATE_KEY }}
-          FIREBASE_CLIENT_EMAIL=${{ secrets.FIREBASE_CLIENT_EMAIL }}
-          FIREBASE_CLIENT_ID=${{ secrets.FIREBASE_CLIENT_ID }}
-          FIREBASE_CLIENT_X509_CERT_URL=${{ secrets.FIREBASE_CLIENT_X509_CERT_URL }}
+          USE_SECRET_MANAGER=True
           CORS_ALLOW_ALL_ORIGINS=${{ secrets.CORS_ALLOW_ALL_ORIGINS || 'True' }}
         flags: |
           --platform=managed
@@ -169,7 +165,7 @@ jobs:
       run: |
         gcloud run services update little-learners-backend \
           --region=us-central1 \
-          --set-env-vars="DJANGO_SETTINGS_MODULE=backend.settings,DB_ENGINE=${{ secrets.DB_ENGINE }},DB_NAME=${{ secrets.DB_NAME }},DB_USER=${{ secrets.DB_USER }},DB_PASSWORD=${{ secrets.DB_PASSWORD }},DB_HOST=${{ secrets.DB_HOST }},DB_PORT=${{ secrets.DB_PORT }},SECRET_KEY=${{ secrets.SECRET_KEY }},DEBUG=False,ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }},FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }},FIREBASE_PRIVATE_KEY_ID=${{ secrets.FIREBASE_PRIVATE_KEY_ID }},FIREBASE_PRIVATE_KEY=${{ secrets.FIREBASE_PRIVATE_KEY }},FIREBASE_CLIENT_EMAIL=${{ secrets.FIREBASE_CLIENT_EMAIL }},FIREBASE_CLIENT_ID=${{ secrets.FIREBASE_CLIENT_ID }},FIREBASE_CLIENT_X509_CERT_URL=${{ secrets.FIREBASE_CLIENT_X509_CERT_URL }},CORS_ALLOWED_ORIGINS=${{ secrets.CORS_ALLOWED_ORIGINS }}"
+          --set-env-vars="DJANGO_SETTINGS_MODULE=backend.settings,DB_ENGINE=${{ secrets.DB_ENGINE }},DB_NAME=${{ secrets.DB_NAME }},DB_USER=${{ secrets.DB_USER }},DB_PASSWORD=${{ secrets.DB_PASSWORD }},DB_HOST=${{ secrets.DB_HOST }},DB_PORT=${{ secrets.DB_PORT }},SECRET_KEY=${{ secrets.SECRET_KEY }},DEBUG=False,ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }},FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }},USE_SECRET_MANAGER=True,CORS_ALLOWED_ORIGINS=${{ secrets.CORS_ALLOWED_ORIGINS }}"
         
         # Run migrations
         gcloud run services proxy little-learners-backend --port=8080 &
