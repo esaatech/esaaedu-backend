@@ -191,7 +191,9 @@ def initialize_firebase():
         if config('USE_SECRET_MANAGER', default=False, cast=bool):
             try:
                 from .secret_manager import get_secret_manager_client
-                secret_client = get_secret_manager_client(FIREBASE_PROJECT_ID)
+                # Use Google Cloud project ID for Secret Manager access, not Firebase project ID
+                gcp_project_id = config('GCP_PROJECT_ID', default='esaasolution')
+                secret_client = get_secret_manager_client(gcp_project_id)
                 if secret_client:
                     firebase_credentials = secret_client.get_firebase_credentials()
                     if firebase_credentials:
