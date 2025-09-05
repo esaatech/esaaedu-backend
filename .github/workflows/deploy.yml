@@ -127,15 +127,15 @@ jobs:
     
     - name: Build and push Docker image
       run: |
-        gcloud auth configure-docker
-        docker build -t gcr.io/${{ secrets.GCP_PROJECT_ID }}/little-learners-backend .
-        docker push gcr.io/${{ secrets.GCP_PROJECT_ID }}/little-learners-backend
+        gcloud auth configure-docker us-central1-docker.pkg.dev
+        docker build -t us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/esaaedu-backend/little-learners-backend .
+        docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/esaaedu-backend/little-learners-backend
     
     - name: Deploy to Cloud Run
       uses: google-github-actions/deploy-cloudrun@v0
       with:
         service: little-learners-backend
-        image: gcr.io/${{ secrets.GCP_PROJECT_ID }}/little-learners-backend
+        image: us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/esaaedu-backend/little-learners-backend
         region: us-central1
         platform: managed
         allow-unauthenticated: true
