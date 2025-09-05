@@ -281,8 +281,18 @@ if config('DATABASE_URL', default=None):
 else:
     # Use SQLite for development, PostgreSQL for production
     db_engine = config('DB_ENGINE', default='sqlite')
+    print(f"🔍 DEBUG: Database engine: {db_engine}")
     
     if db_engine == 'postgresql':
+        print("🔍 DEBUG: Using PostgreSQL database")
+        db_name = config('DB_NAME', default='stbacedemy-backened')
+        db_user = config('DB_USER', default='postgres')
+        db_host = config('DB_HOST', default='104.197.207.176')
+        db_port = config('DB_PORT', default='5432')
+        print(f"🔍 DEBUG: DB_NAME: {db_name}")
+        print(f"🔍 DEBUG: DB_USER: {db_user}")
+        print(f"🔍 DEBUG: DB_HOST: {db_host}")
+        print(f"🔍 DEBUG: DB_PORT: {db_port}")
         DATABASES = {
             'default': {
                 'ENGINE': 'django.db.backends.postgresql',
@@ -298,6 +308,8 @@ else:
         }
     else:
         # Default to SQLite for development
+        print("🔍 DEBUG: Using SQLite database")
+        print(f"🔍 DEBUG: Database path: {BASE_DIR / 'db.sqlite3'}")
         DATABASES = {
             'default': {
                 'ENGINE': 'django.db.backends.sqlite3',

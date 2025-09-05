@@ -8,9 +8,16 @@ https://docs.djangoproject.com/en/4.2/howto/deployment/wsgi/
 """
 
 import os
+import sys
+
+print("🚀 DEBUG: Starting Django application...")
+print(f"🚀 DEBUG: Python version: {sys.version}")
+print(f"🚀 DEBUG: Django settings module: {os.environ.get('DJANGO_SETTINGS_MODULE', 'not set')}")
 
 from django.core.wsgi import get_wsgi_application
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend.settings")
 
+print("🚀 DEBUG: Getting WSGI application...")
 application = get_wsgi_application()
+print("🚀 DEBUG: WSGI application loaded successfully!")

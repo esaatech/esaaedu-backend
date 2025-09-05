@@ -35,7 +35,14 @@ urlpatterns = [
     path("health/", lambda request: JsonResponse({"status": "ok"})),
     
     # Root endpoint for testing
-    path("", lambda request: JsonResponse({"message": "Little Learners Tech API", "status": "running"})),
+    path("", lambda request: JsonResponse({
+        "message": "Little Learners Tech API", 
+        "status": "running",
+        "debug": {
+            "database_engine": request.META.get('DJANGO_SETTINGS_MODULE', 'unknown'),
+            "environment": request.META.get('ENVIRONMENT', 'unknown')
+        }
+    })),
 ]
 
 # Import JsonResponse for health check
