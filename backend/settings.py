@@ -168,6 +168,22 @@ REST_FRAMEWORK = {
 CORS_ALLOW_ALL_ORIGINS = config('CORS_ALLOW_ALL_ORIGINS', default=False, cast=bool)
 CORS_ALLOW_CREDENTIALS = True
 
+# CSRF Configuration for Cloud Run
+CSRF_TRUSTED_ORIGINS = [
+    'https://esaaedu-backend-578103433472.us-central1.run.app',
+    'https://*.us-central1.run.app',
+]
+
+# Allow CSRF cookies to be sent with requests
+CSRF_COOKIE_SECURE = True
+CSRF_COOKIE_HTTPONLY = False
+CSRF_COOKIE_SAMESITE = 'Lax'
+
+# Session configuration for admin
+SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'
+
 # Firebase Configuration
 FIREBASE_PROJECT_ID = config('FIREBASE_PROJECT_ID', default='')
 
