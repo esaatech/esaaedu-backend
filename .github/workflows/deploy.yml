@@ -132,19 +132,11 @@ jobs:
         docker push us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/esaaedu-backend/little-learners-backend
     
     - name: Deploy to Cloud Run
-      uses: google-github-actions/deploy-cloudrun@v0
+      uses: google-github-actions/deploy-cloudrun@v2
       with:
         service: little-learners-backend
         image: us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/esaaedu-backend/little-learners-backend
         region: us-central1
-        platform: managed
-        allow-unauthenticated: true
-        port: 8080
-        memory: 512Mi
-        cpu: 1
-        min-instances: 0
-        max-instances: 10
-        timeout: 300
         env_vars: |
           DJANGO_SETTINGS_MODULE=backend.settings
           DB_ENGINE=${{ secrets.DB_ENGINE }}
@@ -162,7 +154,16 @@ jobs:
           FIREBASE_CLIENT_EMAIL=${{ secrets.FIREBASE_CLIENT_EMAIL }}
           FIREBASE_CLIENT_ID=${{ secrets.FIREBASE_CLIENT_ID }}
           FIREBASE_CLIENT_X509_CERT_URL=${{ secrets.FIREBASE_CLIENT_X509_CERT_URL }}
-          CORS_ALLOWED_ORIGINS=${{ secrets.CORS_ALLOWED_ORIGINS }}
+          CORS_ALLOW_ALL_ORIGINS=${{ secrets.CORS_ALLOW_ALL_ORIGINS || 'True' }}
+        flags: |
+          --platform=managed
+          --allow-unauthenticated
+          --port=8080
+          --memory=512Mi
+          --cpu=1
+          --min-instances=0
+          --max-instances=10
+          --timeout=300
     
     - name: Run database migrations
       run: |
