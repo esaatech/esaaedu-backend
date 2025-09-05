@@ -30,8 +30,8 @@ RUN pip install poetry \
 # Copy project
 COPY . .
 
-# Collect static files
-RUN python manage.py collectstatic --noinput --clear
+# Make entrypoint executable
+RUN chmod +x entrypoint.sh
 
 # Create a non-root user
 RUN adduser --disabled-password --gecos '' appuser
@@ -46,4 +46,4 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:$PORT/ || exit 1
 
 # Run the application
-CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 --log-level debug backend.wsgi:application
+ENTRYPOINT ["./entrypoint.sh"]
