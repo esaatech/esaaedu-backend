@@ -189,17 +189,25 @@ def initialize_firebase():
     try:
         # Try to get credentials from Google Secret Manager first (for production)
         if config('USE_SECRET_MANAGER', default=False, cast=bool):
-            from .secret_manager import get_secret_manager_client
-            secret_client = get_secret_manager_client(FIREBASE_PROJECT_ID)
-            if secret_client:
-                firebase_credentials = secret_client.get_firebase_credentials()
-                if firebase_credentials:
-                    cred = credentials.Certificate(firebase_credentials)
-                    firebase_admin.initialize_app(cred, {
-                        'projectId': FIREBASE_PROJECT_ID,
-                    })
-                    logger.info(f"Firebase initialized with Secret Manager for project: {FIREBASE_PROJECT_ID}")
-                    return True
+            try:
+                from .secret_manager import get_secret_manager_client
+                secret_client = get_secret_manager_client(FIREBASE_PROJECT_ID)
+                if secret_client:
+                    firebase_credentials = secret_client.get_firebase_credentials()
+                    if firebase_credentials:
+                        cred = credentials.Certificate(firebase_credentials)
+                        firebase_admin.initialize_app(cred, {
+                            'projectId': FIREBASE_PROJECT_ID,
+                        })
+                        logger.info(f"Firebase initialized with Secret Manager for project: {FIREBASE_PROJECT_ID}")
+                        return True
+                    else:
+                        logger.warning("Failed to retrieve Firebase credentials from Secret Manager")
+                else:
+                    logger.warning("Failed to create Secret Manager client")
+            except Exception as e:
+                logger.error(f"Secret Manager error: {e}")
+                logger.info("Falling back to environment variables...")
         
         # Fallback to environment variables (for local development)
         if all([FIREBASE_PRIVATE_KEY_ID, FIREBASE_PRIVATE_KEY, FIREBASE_CLIENT_EMAIL, FIREBASE_CLIENT_ID]):
