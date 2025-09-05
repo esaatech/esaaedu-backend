@@ -28,7 +28,7 @@ RUN pip install poetry \
 COPY . .
 
 # Collect static files
-RUN python manage.py collectstatic --noinput
+RUN python manage.py collectstatic --noinput --clear
 
 # Create a non-root user
 RUN adduser --disabled-password --gecos '' appuser
