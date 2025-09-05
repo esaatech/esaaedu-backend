@@ -179,7 +179,7 @@ FIREBASE_CLIENT_EMAIL = config('FIREBASE_CLIENT_EMAIL', default='')
 FIREBASE_CLIENT_ID = config('FIREBASE_CLIENT_ID', default='')
 FIREBASE_CLIENT_X509_CERT_URL = config('FIREBASE_CLIENT_X509_CERT_URL', default='')
 
-# Initialize Firebase Admin SDK
+# Initialize Firebase Admin SDKk
 def initialize_firebase():
     """Initialize Firebase Admin SDK with Google Secret Manager or environment variables"""
     if not FIREBASE_PROJECT_ID:
