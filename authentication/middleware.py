@@ -1,9 +1,23 @@
 from django.http import JsonResponse
 from django.utils.deprecation import MiddlewareMixin
 from firebase_admin import auth
+import firebase_admin
+from django.conf import settings
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Initialize Firebase if not already initialized
+def ensure_firebase_initialized():
+    """Ensure Firebase is initialized before use"""
+    if not firebase_admin._apps:
+        try:
+            from backend.settings import initialize_firebase
+            initialize_firebase()
+        except Exception as e:
+            logger.error(f"Failed to initialize Firebase: {e}")
+            return False
+    return True
 
 
 class FirebaseAuthenticationMiddleware(MiddlewareMixin):
@@ -25,6 +39,11 @@ class FirebaseAuthenticationMiddleware(MiddlewareMixin):
         This can be used for additional Firebase-specific processing,
         logging, or route protection.
         """
+        # Ensure Firebase is initialized
+        if not ensure_firebase_initialized():
+            request.firebase_user = None
+            return None
+        
         # Add Firebase user info to request if available
         auth_header = request.META.get('HTTP_AUTHORIZATION')
         

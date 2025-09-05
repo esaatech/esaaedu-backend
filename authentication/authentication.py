@@ -2,10 +2,23 @@ from django.contrib.auth import get_user_model
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
 from firebase_admin import auth
+import firebase_admin
 import logging
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
+
+# Initialize Firebase if not already initialized
+def ensure_firebase_initialized():
+    """Ensure Firebase is initialized before use"""
+    if not firebase_admin._apps:
+        try:
+            from backend.settings import initialize_firebase
+            initialize_firebase()
+        except Exception as e:
+            logger.error(f"Failed to initialize Firebase: {e}")
+            return False
+    return True
 
 
 class FirebaseAuthentication(BaseAuthentication):
@@ -23,6 +36,10 @@ class FirebaseAuthentication(BaseAuthentication):
         Returns:
             tuple: (user, token) if authentication successful, None otherwise
         """
+        # Ensure Firebase is initialized
+        if not ensure_firebase_initialized():
+            return None
+            
         auth_header = request.META.get('HTTP_AUTHORIZATION')
         
         if not auth_header:
