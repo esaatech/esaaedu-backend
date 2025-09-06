@@ -1,8 +1,7 @@
 # Use Python 3.11 slim image
 FROM python:3.11-slim
 
-# Cache busting - force rebuild
-ARG CACHE_BUST=1
+
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -34,10 +33,10 @@ COPY . .
 RUN mkdir -p /app/staticfiles
 RUN python manage.py collectstatic --noinput --clear
 
-# Create a non-root user
-RUN adduser --disabled-password --gecos '' appuser
-RUN chown -R appuser:appuser /app
-USER appuser
+# Run database migrations
+RUN python manage.py migrate --noinput
+
+
 
 # Expose port
 EXPOSE 8080
