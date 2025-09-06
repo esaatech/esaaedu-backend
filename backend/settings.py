@@ -70,6 +70,7 @@ MIDDLEWARE = [
     "authentication.middleware.FirebaseAuthenticationMiddleware",  # Custom Firebase auth
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "backend.debug_middleware.DebugMiddleware",  # Add debug middleware last
 ]
 
 ROOT_URLCONF = "backend.urls"

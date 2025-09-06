@@ -43,6 +43,16 @@ urlpatterns = [
             "environment": request.META.get('ENVIRONMENT', 'unknown')
         }
     })),
+    
+    # Debug endpoint to test admin access
+    path("debug/", lambda request: JsonResponse({
+        "message": "Debug endpoint",
+        "admin_url": "/admin/",
+        "database_engine": request.META.get('DJANGO_SETTINGS_MODULE', 'unknown'),
+        "user_authenticated": request.user.is_authenticated if hasattr(request, 'user') else False,
+        "static_url": "/static/",
+        "media_url": "/media/"
+    })),
 ]
 
 # Import JsonResponse for health check
