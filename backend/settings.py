@@ -294,7 +294,7 @@ else:
         
         if is_cloud_run:
             # Use Unix socket for Cloud Run
-            db_host = f"/cloudsql/esaasolution:us-central1-f:engrjoelivon"
+            db_host = f"/cloudsql/esaasolution:us-central1:engrjoelivon"
             db_port = None
             print(f"🔍 DEBUG: Cloud Run detected - using Unix socket")
         else:
