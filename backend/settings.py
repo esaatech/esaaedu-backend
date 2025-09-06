@@ -288,25 +288,42 @@ else:
         print("🔍 DEBUG: Using PostgreSQL database")
         db_name = config('DB_NAME', default='stbacedemy-backened')
         db_user = config('DB_USER', default='postgres')
-        db_host = config('DB_HOST', default='104.197.207.176')
-        db_port = config('DB_PORT', default='5432')
+        
+        # Check if running on Cloud Run (GAE_ENV or Cloud Run specific env)
+        is_cloud_run = config('GAE_ENV', default=None) is not None or config('K_SERVICE', default=None) is not None
+        
+        if is_cloud_run:
+            # Use Unix socket for Cloud Run
+            db_host = f"/cloudsql/esaasolution:us-central1-f:engrjoelivon"
+            db_port = None
+            print(f"🔍 DEBUG: Cloud Run detected - using Unix socket")
+        else:
+            # Use IP for local development
+            db_host = config('DB_HOST', default='104.197.207.176')
+            db_port = config('DB_PORT', default='5432')
+            print(f"🔍 DEBUG: Local development - using IP connection")
+        
         print(f"🔍 DEBUG: DB_NAME: {db_name}")
         print(f"🔍 DEBUG: DB_USER: {db_user}")
         print(f"🔍 DEBUG: DB_HOST: {db_host}")
         print(f"🔍 DEBUG: DB_PORT: {db_port}")
-        DATABASES = {
-            'default': {
-                'ENGINE': 'django.db.backends.postgresql',
-                'NAME': config('DB_NAME', default='stbacedemy-backened'),
-                'USER': config('DB_USER', default='postgres'),
-                'PASSWORD': config('DB_PASSWORD', default=''),
-                'HOST': config('DB_HOST', default='104.197.207.176'),  # Your Cloud SQL IP
-                'PORT': config('DB_PORT', default='5432'),
-                'OPTIONS': {
-                    'sslmode': 'require',
-                },
-            }
+        
+        database_config = {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': db_name,
+            'USER': db_user,
+            'PASSWORD': config('DB_PASSWORD', default=''),
+            'HOST': db_host,
+            'OPTIONS': {
+                'sslmode': 'require',
+            },
         }
+        
+        # Only add PORT if not using Unix socket
+        if db_port:
+            database_config['PORT'] = db_port
+            
+        DATABASES = {'default': database_config}
     else:
         # Default to SQLite for development
         print("🔍 DEBUG: Using SQLite database")
