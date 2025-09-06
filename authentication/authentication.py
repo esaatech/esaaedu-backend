@@ -122,7 +122,9 @@ class FirebaseAuthentication(BaseAuthentication):
                 user.save()
                 
         except User.DoesNotExist:
-            # Create new user
+            # Create new user with STUDENT role as default
+            # Note: Teacher signup should happen through dedicated endpoint
+            # which will update the role before this authentication is called
             name_parts = name.split(' ', 1) if name else ['', '']
             
             user = User.objects.create_user(
@@ -131,9 +133,10 @@ class FirebaseAuthentication(BaseAuthentication):
                 first_name=name_parts[0],
                 last_name=name_parts[1] if len(name_parts) > 1 else '',
                 username=email,  # Use email as username
+                role=User.Role.STUDENT  # Explicitly set default role
             )
             
-            logger.info(f"Created new user: {email}")
+            logger.info(f"Created new user with default student role: {email}")
         
         # Update last login
         from django.utils import timezone

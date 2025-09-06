@@ -241,6 +241,9 @@ def student_signup(request):
         }
     }
     """
+    print(f"🎒🎒🎒 STUDENT SIGNUP ENDPOINT CALLED 🎒🎒🎒")
+    print(f"🎒 Request method: {request.method}")
+    print(f"🎒 Request path: {request.path}")
     serializer = AuthTokenSerializer(data=request.data)
     
     if not serializer.is_valid():
@@ -485,6 +488,9 @@ def teacher_signup(request):
     """
     Teacher signup endpoint - creates a new teacher user and profile
     """
+    print(f"🎓🎓🎓 TEACHER SIGNUP ENDPOINT CALLED 🎓🎓🎓")
+    print(f"🎓 Request method: {request.method}")
+    print(f"🎓 Request path: {request.path}")
     try:
         # Get Firebase token and profile data
         token = request.data.get('token')
@@ -510,41 +516,90 @@ def teacher_signup(request):
             )
 
         # Check if user already exists
-        if User.objects.filter(firebase_uid=firebase_uid).exists():
-            return Response(
-                {'error': 'Teacher account already exists'}, 
-                status=status.HTTP_400_BAD_REQUEST
+        existing_user = User.objects.filter(firebase_uid=firebase_uid).first()
+        if existing_user:
+            print(f"🎓 User already exists with role: {existing_user.role}")
+            
+            # If user exists and is already a teacher, return error
+            if existing_user.role == User.Role.TEACHER:
+                print(f"🎓 User is already a teacher - returning error")
+                return Response(
+                    {'error': 'Teacher account already exists'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # If user exists but is a student (from auth backend auto-creation), 
+            # update them to be a teacher
+            if existing_user.role == User.Role.STUDENT:
+                print(f"🎓 Converting existing student user to teacher")
+                
+                # Delete any existing student profile since they're becoming a teacher
+                try:
+                    if hasattr(existing_user, 'student_profile'):
+                        existing_user.student_profile.delete()
+                        print(f"🎓 Deleted existing student profile")
+                except Exception as e:
+                    print(f"🎓 No student profile to delete: {e}")
+                
+                existing_user.role = User.Role.TEACHER
+                
+                # Update user info if provided
+                user_data = request.data.get('user_data', {})
+                if user_data.get('first_name'):
+                    existing_user.first_name = user_data['first_name']
+                if user_data.get('last_name'):
+                    existing_user.last_name = user_data['last_name']
+                
+                existing_user.save()
+                user = existing_user
+                print(f"🎓 Updated existing user to teacher: {user.role}")
+            else:
+                return Response(
+                    {'error': 'User exists with different role'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            print(f"🎓 Creating new teacher user")
+            # Extract user data and teacher profile data
+            user_data = request.data.get('user_data', {})
+            
+            # Extract user information
+            first_name = user_data.get('first_name', '')
+            last_name = user_data.get('last_name', '')
+            
+            # Create User with TEACHER role
+            print(f"🎓 About to create user with role: {User.Role.TEACHER}")
+            user = User.objects.create_user(
+                firebase_uid=firebase_uid,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                username=email,
+                role=User.Role.TEACHER
             )
 
-        # Extract user data and teacher profile data
-        user_data = request.data.get('user_data', {})
+        # Get teacher profile data for later use
         teacher_data = request.data.get('teacher_data', {})
-        
-        print(f"🎓 Received user_data: {user_data}")
         print(f"🎓 Received teacher_data: {teacher_data}")
         
-        # Extract user information
-        first_name = user_data.get('first_name', '')
-        last_name = user_data.get('last_name', '')
-        phone = user_data.get('phone', '')
-
-        print(f"🎓 Extracted - First: {first_name}, Last: {last_name}, Phone: {phone}")
-
-        # Create User with TEACHER role
-        user = User.objects.create_user(
-            firebase_uid=firebase_uid,
-            email=email,
-            first_name=first_name,
-            last_name=last_name,
-            username=email,
-            role=User.Role.TEACHER
-        )
-        
+        # Immediately verify the user was created with correct role
         print(f"🎓 Created teacher user: {user.id}")
+        print(f"🎓 User role after creation: {user.role}")
+        print(f"🎓 User is_teacher: {user.is_teacher}")
+        print(f"🎓 User is_student: {user.is_student}")
         
-        # Create teacher profile
+        # Re-fetch user from database to double-check
+        user_from_db = User.objects.get(id=user.id)
+        print(f"🎓 User role from DB: {user_from_db.role}")
+        
+        # Create or get teacher profile
         from users.models import TeacherProfile
-        teacher_profile = TeacherProfile.objects.create(user=user)
+        print(f"🎓 About to create/get TeacherProfile for user: {user.id}")
+        teacher_profile, created = TeacherProfile.objects.get_or_create(user=user)
+        if created:
+            print(f"🎓 Created new teacher profile: {teacher_profile.id}")
+        else:
+            print(f"🎓 Using existing teacher profile: {teacher_profile.id}")
         
         # Update teacher profile with provided data
         if teacher_data:
@@ -568,6 +623,8 @@ def teacher_signup(request):
         }
         
         print(f"🎓 Teacher signup successful: {user.email}")
+        print(f"🎓 Final response user role: {user_serializer.data.get('role')}")
+        print(f"🎓 Final response user data: {user_serializer.data}")
         
         return Response(response_data, status=status.HTTP_201_CREATED)
         
