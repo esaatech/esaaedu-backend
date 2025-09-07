@@ -33,7 +33,16 @@ SECRET_KEY = config('SECRET_KEY', default="django-insecure-*%%)uc!v428r3q#r_dbt$
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=True, cast=bool)
 
+# ALLOWED_HOSTS configuration for Cloud Run
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=lambda v: [s.strip() for s in v.split(',')])
+
+# Add Cloud Run specific hosts if running on Cloud Run
+if config('K_SERVICE', default=None):  # Cloud Run environment variable
+    ALLOWED_HOSTS.extend([
+        'dev-578103433472.us-west1.run.app',
+        '*.us-west1.run.app',
+        '*',  # Allow all hosts in Cloud Run for debugging
+    ])
 
 
 # Application definition
@@ -168,6 +177,10 @@ REST_FRAMEWORK = {
 # CORS Configuration
 CORS_ALLOW_ALL_ORIGINS = config('CORS_ALLOW_ALL_ORIGINS', default=False, cast=bool)
 CORS_ALLOW_CREDENTIALS = True
+
+# Enable CORS for all origins in Cloud Run for debugging
+if config('K_SERVICE', default=None):  # Cloud Run environment variable
+    CORS_ALLOW_ALL_ORIGINS = True
 
 # CORS Allowed Origins for production
 CORS_ALLOWED_ORIGINS = [
