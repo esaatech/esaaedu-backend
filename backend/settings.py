@@ -322,12 +322,12 @@ else:
         
         if is_cloud_run:
             # Use Unix socket for Cloud Run
-            db_host = f"/cloudsql/esaasolution:us-central1:engrjoelivon"
+            db_host = f"/cloudsql/esaasolution:us-central1:sbtacedemy"
             db_port = None
             print(f"🔍 DEBUG: Cloud Run detected - using Unix socket")
         else:
             # Use IP for local development
-            db_host = config('DB_HOST', default='104.197.207.176')
+            db_host = config('DB_HOST', default='34.42.36.55')
             db_port = config('DB_PORT', default='5432')
             print(f"🔍 DEBUG: Local development - using IP connection")
         
