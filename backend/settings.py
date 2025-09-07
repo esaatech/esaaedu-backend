@@ -169,6 +169,24 @@ REST_FRAMEWORK = {
 CORS_ALLOW_ALL_ORIGINS = config('CORS_ALLOW_ALL_ORIGINS', default=False, cast=bool)
 CORS_ALLOW_CREDENTIALS = True
 
+# CORS Allowed Origins for production
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",  # React dev server
+    "http://localhost:8080",  # Vite dev server
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:8080", 
+    # Add your production frontend domains here when you deploy
+    # "https://your-frontend-domain.com",
+]
+
+# CORS Allowed Origin Regexes for flexible domain matching
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://.*\.vercel\.app$",  # Vercel deployments
+    r"^https://.*\.netlify\.app$", # Netlify deployments  
+    r"^https://.*\.firebase\.app$", # Firebase hosting
+    r"^https://.*\.web\.app$",     # Firebase hosting custom domains
+]
+
 # CSRF Configuration for Cloud Run
 CSRF_TRUSTED_ORIGINS = [
     'https://esaaedu-backend-578103433472.us-central1.run.app',
