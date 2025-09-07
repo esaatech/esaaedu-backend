@@ -39,7 +39,9 @@ ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=lamb
 # Add Cloud Run specific hosts if running on Cloud Run
 if config('K_SERVICE', default=None):  # Cloud Run environment variable
     ALLOWED_HOSTS.extend([
-        'dev-578103433472.us-west1.run.app',
+        'esaaedu-backend-578103433472.us-central1.run.app',
+        '*.us-central1.run.app',
+        'dev-578103433472.us-west1.run.app',  # Keep old one for compatibility
         '*.us-west1.run.app',
         '*',  # Allow all hosts in Cloud Run for debugging
     ])
