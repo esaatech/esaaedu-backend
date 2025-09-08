@@ -247,3 +247,216 @@ class TeacherProfileAPIView(APIView):
             teacher_profile.twitter_url = data['twitter_url']
         
         teacher_profile.save()
+
+
+class TeacherScheduleAPIView(APIView):
+    """
+    API view for teacher schedule management
+    Handles different types of schedule data for the teacher calendar
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """
+        Get teacher's schedule data for calendar display
+        """
+        try:
+            teacher = request.user
+            
+            # Get all events for teacher's courses
+            events = self.get_teacher_events(teacher)
+            
+            # Get upcoming events
+            upcoming_events = self.get_upcoming_events(teacher)
+            
+            # Get events by type
+            events_by_type = self.get_events_by_type(teacher)
+            
+            # Get events by course
+            events_by_course = self.get_events_by_course(teacher)
+            
+            return Response({
+                'events': events,
+                'upcoming_events': upcoming_events,
+                'events_by_type': events_by_type,
+                'events_by_course': events_by_course,
+                'summary': self.get_schedule_summary(teacher)
+            })
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch schedule data', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def get_teacher_events(self, teacher):
+        """
+        Get all events for teacher's courses
+        """
+        events = ClassEvent.objects.filter(
+            class_instance__course__teacher=teacher
+        ).select_related(
+            'class_instance__course',
+            'lesson'
+        ).order_by('start_time')
+        
+        return [
+            {
+                'id': str(event.id),
+                'title': event.title,
+                'description': event.description,
+                'start_time': event.start_time.isoformat(),
+                'end_time': event.end_time.isoformat(),
+                'event_type': event.event_type,
+                'lesson_type': event.lesson_type,
+                'meeting_platform': event.meeting_platform,
+                'meeting_link': event.meeting_link,
+                'meeting_id': event.meeting_id,
+                'meeting_password': event.meeting_password,
+                'course_id': str(event.class_instance.course.id),
+                'course_title': event.class_instance.course.title,
+                'class_name': event.class_instance.name,
+                'lesson_title': event.lesson.title if event.lesson else None,
+                'duration_minutes': event.duration_minutes,
+                'created_at': event.created_at.isoformat(),
+            }
+            for event in events
+        ]
+    
+    def get_upcoming_events(self, teacher):
+        """
+        Get upcoming events (next 30 days)
+        """
+        from datetime import datetime, timedelta
+        
+        now = datetime.now()
+        future_date = now + timedelta(days=30)
+        
+        events = ClassEvent.objects.filter(
+            class_instance__course__teacher=teacher,
+            start_time__gte=now,
+            start_time__lte=future_date
+        ).select_related(
+            'class_instance__course',
+            'lesson'
+        ).order_by('start_time')
+        
+        return [
+            {
+                'id': str(event.id),
+                'title': event.title,
+                'start_time': event.start_time.isoformat(),
+                'end_time': event.end_time.isoformat(),
+                'event_type': event.event_type,
+                'course_title': event.class_instance.course.title,
+                'class_name': event.class_instance.name,
+                'meeting_link': event.meeting_link,
+                'meeting_platform': event.meeting_platform,
+            }
+            for event in events
+        ]
+    
+    def get_events_by_type(self, teacher):
+        """
+        Get events grouped by type
+        """
+        events = ClassEvent.objects.filter(
+            class_instance__course__teacher=teacher
+        ).select_related('class_instance__course')
+        
+        events_by_type = {
+            'lesson': [],
+            'meeting': [],
+            'break': []
+        }
+        
+        for event in events:
+            event_data = {
+                'id': str(event.id),
+                'title': event.title,
+                'start_time': event.start_time.isoformat(),
+                'end_time': event.end_time.isoformat(),
+                'course_title': event.class_instance.course.title,
+                'class_name': event.class_instance.name,
+            }
+            events_by_type[event.event_type].append(event_data)
+        
+        return events_by_type
+    
+    def get_events_by_course(self, teacher):
+        """
+        Get events grouped by course
+        """
+        events = ClassEvent.objects.filter(
+            class_instance__course__teacher=teacher
+        ).select_related('class_instance__course')
+        
+        events_by_course = {}
+        
+        for event in events:
+            course_id = str(event.class_instance.course.id)
+            course_title = event.class_instance.course.title
+            
+            if course_id not in events_by_course:
+                events_by_course[course_id] = {
+                    'course_id': course_id,
+                    'course_title': course_title,
+                    'events': []
+                }
+            
+            event_data = {
+                'id': str(event.id),
+                'title': event.title,
+                'start_time': event.start_time.isoformat(),
+                'end_time': event.end_time.isoformat(),
+                'event_type': event.event_type,
+                'lesson_type': event.lesson_type,
+                'class_name': event.class_instance.name,
+            }
+            events_by_course[course_id]['events'].append(event_data)
+        
+        return list(events_by_course.values())
+    
+    def get_schedule_summary(self, teacher):
+        """
+        Get schedule summary statistics
+        """
+        from datetime import datetime, timedelta
+        
+        now = datetime.now()
+        today = now.date()
+        week_start = today - timedelta(days=today.weekday())
+        week_end = week_start + timedelta(days=6)
+        
+        # Total events
+        total_events = ClassEvent.objects.filter(
+            class_instance__course__teacher=teacher
+        ).count()
+        
+        # This week's events
+        this_week_events = ClassEvent.objects.filter(
+            class_instance__course__teacher=teacher,
+            start_time__date__gte=week_start,
+            start_time__date__lte=week_end
+        ).count()
+        
+        # Today's events
+        today_events = ClassEvent.objects.filter(
+            class_instance__course__teacher=teacher,
+            start_time__date=today
+        ).count()
+        
+        # Upcoming live classes
+        upcoming_live_classes = ClassEvent.objects.filter(
+            class_instance__course__teacher=teacher,
+            event_type='lesson',
+            lesson_type='live',
+            start_time__gte=now
+        ).count()
+        
+        return {
+            'total_events': total_events,
+            'this_week_events': this_week_events,
+            'today_events': today_events,
+            'upcoming_live_classes': upcoming_live_classes,
+        }
