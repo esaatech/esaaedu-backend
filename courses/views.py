@@ -1,3 +1,4 @@
+from multiprocessing import parent_process
 from django.shortcuts import get_object_or_404
 from django.db import models
 from rest_framework import status, permissions
@@ -9,6 +10,8 @@ from django.utils import timezone
 from datetime import timedelta
 from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview
 from student.models import EnrolledCourse
+from django.db.models import Sum
+from courses.models import ClassEvent
 from .serializers import (
     CourseListSerializer, CourseDetailSerializer, CourseCreateUpdateSerializer,
     FrontendCourseSerializer, FeaturedCoursesSerializer,
@@ -791,6 +794,9 @@ def quiz_questions(request, quiz_id):
                 'received_data': request.data
             }, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
+            import traceback
+            print(f"🚨 Exception in quiz_questions POST: {str(e)}")
+            print(f"🚨 Traceback: {traceback.format_exc()}")
             return Response(
                 {'error': 'Failed to create question', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -2878,3 +2884,201 @@ def submit_quiz_attempt(request, lesson_id):
 
 
 
+
+@permission_classes([permissions.IsAuthenticated])
+class TeacherDashboardAPIView(APIView):
+    
+    
+    def get(self, request):
+        teacher = request.user
+        
+        return Response({
+            'header_data': self.get_header_data(teacher),
+            'upcoming_classes': self.get_upcoming_classes(teacher),
+            'recent_activity': self.get_recent_activity(teacher),
+        })
+
+
+    def get_header_data(self, teacher):
+        """Get welcome message and quick stats"""
+        return {
+            'teacher_name': teacher.get_full_name() or teacher.first_name,
+            'total_students': self.get_total_students(teacher),
+            'active_courses': self.get_active_courses(teacher),
+            'monthly_revenue': self.get_monthly_revenue(teacher),
+        }
+
+    def get_total_students(self, teacher):
+        """Count total students across all teacher's courses"""
+        return EnrolledCourse.objects.filter(
+            course__teacher=teacher
+        ).values('student_profile').distinct().count()
+
+    def get_active_courses(self, teacher):
+        """Count published/active courses"""
+        return Course.objects.filter(
+            teacher=teacher,
+            status='published'
+        ).count()
+
+    def get_monthly_revenue(self, teacher):
+        """Calculate revenue for current month from course enrollments"""
+        from datetime import datetime
+        from django.db.models import Sum
+        
+        current_month = datetime.now().replace(day=1)
+        
+        # Get all enrollments for this month
+        monthly_enrollments = EnrolledCourse.objects.filter(
+            course__teacher=teacher,
+            enrollment_date__gte=current_month,
+            payment_status='paid'
+        )
+        
+        # Calculate total revenue
+        total_revenue = 0
+        for enrollment in monthly_enrollments:
+            total_revenue += float(enrollment.course.price)
+        
+        return total_revenue
+
+    def get_upcoming_classes(self, teacher):
+        """Get today's and upcoming live classes"""
+        from datetime import datetime, timedelta
+        
+        today = datetime.now().date()
+        end_of_week = today + timedelta(days=7)
+        
+        # Get ClassEvents with lesson_type='live' for teacher's courses
+        live_classes = ClassEvent.objects.filter(
+            class_instance__course__teacher=teacher,
+            lesson_type='live',
+            start_time__date__range=[today, end_of_week]
+        ).select_related('class_instance', 'class_instance__course').order_by('start_time')
+        
+        return {
+            'today_classes': [
+                {
+                    'id': str(cls.id),
+                    'title': cls.title,
+                    'course_name': cls.class_instance.course.title,
+                    'scheduled_date': cls.start_time.date().isoformat(),
+                    'start_time': cls.start_time.isoformat(),
+                    'end_time': cls.end_time.isoformat(),
+                    'student_count': 0,  # Placeholder - no enrolled_students relationship in ClassEvent
+                    'meeting_link': cls.meeting_link,
+                    'meeting_platform': cls.meeting_platform,
+                    'meeting_id': cls.meeting_id,
+                    'meeting_password': cls.meeting_password,
+                    'duration_minutes': cls.duration_minutes,
+                    'description': cls.description,
+                }
+                for cls in live_classes.filter(start_time__date=today)
+            ],
+            'upcoming_classes': [
+                {
+                    'id': str(cls.id),
+                    'title': cls.title,
+                    'course_name': cls.class_instance.course.title,
+                    'scheduled_date': cls.start_time.date().isoformat(),
+                    'start_time': cls.start_time.isoformat(),
+                    'end_time': cls.end_time.isoformat(),
+                    'student_count': 0,  # Placeholder - no enrolled_students relationship in ClassEvent
+                    'meeting_link': cls.meeting_link,
+                    'meeting_platform': cls.meeting_platform,
+                    'meeting_id': cls.meeting_id,
+                    'meeting_password': cls.meeting_password,
+                    'duration_minutes': cls.duration_minutes,
+                    'description': cls.description,
+                }
+                for cls in live_classes.filter(start_time__date__gt=today)
+            ],
+            'total_count': live_classes.count()
+        }
+
+    def get_recent_activity(self, teacher):
+        """Get recent activity across all teacher's courses"""
+        from datetime import datetime, timedelta
+        
+        activities = []
+        
+        # Student enrollments
+        enrollments = EnrolledCourse.objects.filter(
+            course__teacher=teacher,
+            enrollment_date__gte=datetime.now() - timedelta(days=7)
+        ).select_related('student_profile__user', 'course')[:5]
+        
+        for enrollment in enrollments:
+            student_name = enrollment.student_profile.user.get_full_name() or enrollment.student_profile.user.first_name
+            activities.append({
+                'id': enrollment.id,
+                'type': 'enrollment',
+                'message': f"New student enrolled in {enrollment.course.title}",
+                'student_name': student_name,
+                'course_name': enrollment.course.title,
+                'timestamp': enrollment.enrollment_date,
+                'icon': 'user-plus',
+                'time_ago': self.get_time_ago(enrollment.enrollment_date)
+            })
+        
+        
+        # Course reviews
+        reviews = CourseReview.objects.filter(
+            course__teacher=teacher,
+            created_at__gte=datetime.now() - timedelta(days=7)
+        ).select_related('course')[:5]
+        
+        for review in reviews:
+            activities.append({
+                'id': review.id,
+                'type': 'review',
+                'message': f"New {review.rating}-star review for {review.course.title}",
+                'student_name': review.student_name,
+                'course_name': review.course.title,
+                'rating': review.rating,
+                'timestamp': review.created_at,
+                'icon': 'star',
+                'time_ago': self.get_time_ago(review.created_at)
+            })
+        
+        # Sort by timestamp and return latest 10
+        activities.sort(key=lambda x: x['timestamp'], reverse=True)
+        return activities[:10]
+
+    def get_time_ago(self, timestamp):
+        """Helper method to format time ago"""
+        from datetime import datetime, date
+        
+        # Handle both date and datetime objects
+        if isinstance(timestamp, date) and not isinstance(timestamp, datetime):
+            # For date-only fields, calculate based on days difference
+            today = date.today()
+            diff_days = (today - timestamp).days
+            
+            if diff_days == 0:
+                return "Today"
+            elif diff_days == 1:
+                return "Yesterday"
+            elif diff_days < 7:
+                return f"{diff_days} days ago"
+            elif diff_days < 30:
+                weeks = diff_days // 7
+                return f"{weeks} week{'s' if weeks > 1 else ''} ago"
+            else:
+                months = diff_days // 30
+                return f"{months} month{'s' if months > 1 else ''} ago"
+        else:
+            # For datetime fields, use the original calculation
+            now = datetime.now(timestamp.tzinfo) if hasattr(timestamp, 'tzinfo') and timestamp.tzinfo else datetime.now()
+            diff = now - timestamp
+            
+            if diff.days > 0:
+                return f"{diff.days} day{'s' if diff.days > 1 else ''} ago"
+            elif diff.seconds > 3600:
+                hours = diff.seconds // 3600
+                return f"{hours} hour{'s' if hours > 1 else ''} ago"
+            elif diff.seconds > 60:
+                minutes = diff.seconds // 60
+                return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
+            else:
+                return "Just now"

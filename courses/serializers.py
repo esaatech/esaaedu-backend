@@ -772,14 +772,18 @@ class QuestionCreateUpdateSerializer(serializers.ModelSerializer):
     Serializer for creating and updating questions
     """
     # Virtual fields that will be stored in the content JSONField
-    question_type = serializers.CharField(source='type')
+    # NOTE: We accept both 'question_type' and 'type' for backward compatibility
+    # Frontend components (both teacher and student) may send either field name
+    # This prevents breaking changes when shared components are used
+    question_type = serializers.CharField(required=False, write_only=True)
+    type = serializers.CharField(required=False, write_only=True)
     options = serializers.ListField(required=False, allow_empty=True, allow_null=True)
     correct_answer = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     
     class Meta:
         model = Question
         fields = [
-            'question_text', 'question_type', 'options', 'correct_answer',
+            'question_text', 'question_type', 'type', 'options', 'correct_answer',
             'explanation', 'points', 'order'
         ]
         extra_kwargs = {
@@ -797,7 +801,18 @@ class QuestionCreateUpdateSerializer(serializers.ModelSerializer):
         return value
     
     def validate(self, data):
-        question_type = data.get('type')  # Note: using 'type' since it's the source
+        # Handle both 'question_type' and 'type' field names for backward compatibility
+        question_type = data.get('question_type') or data.get('type')
+        
+        # For updates, type field is optional if not being changed
+        # For creates, type field is required
+        if not question_type and not self.instance:
+            raise serializers.ValidationError("Either 'question_type' or 'type' is required")
+        
+        # If no type provided for update, use existing type
+        if not question_type and self.instance:
+            question_type = self.instance.type
+        
         options = data.get('options')
         correct_answer = data.get('correct_answer')
         
@@ -818,6 +833,15 @@ class QuestionCreateUpdateSerializer(serializers.ModelSerializer):
         # Extract virtual fields
         options = validated_data.pop('options', None)
         correct_answer = validated_data.pop('correct_answer', None)
+        question_type = validated_data.pop('question_type', None)
+        type_field = validated_data.pop('type', None)
+        
+        # Set the type field (either from question_type or type)
+        if question_type:
+            validated_data['type'] = question_type
+        elif type_field:
+            validated_data['type'] = type_field
+        # For creates, type is required (validated above)
         
         # Create content dict
         content = {}
@@ -833,6 +857,15 @@ class QuestionCreateUpdateSerializer(serializers.ModelSerializer):
         # Extract virtual fields
         options = validated_data.pop('options', None)
         correct_answer = validated_data.pop('correct_answer', None)
+        question_type = validated_data.pop('question_type', None)
+        type_field = validated_data.pop('type', None)
+        
+        # Set the type field (either from question_type or type)
+        if question_type:
+            validated_data['type'] = question_type
+        elif type_field:
+            validated_data['type'] = type_field
+        # For updates, if no type provided, keep existing type (don't set validated_data['type'])
         
         # Update content dict
         content = instance.content or {}

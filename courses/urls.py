@@ -11,6 +11,7 @@ urlpatterns = [
     
     # Teacher endpoints
     path('teacher/', views.teacher_courses, name='teacher_courses'),
+    path('teacher/dashboard/', views.TeacherDashboardAPIView.as_view(), name='teacher_dashboard'),
     path('teacher/<uuid:course_id>/', views.teacher_course_detail, name='teacher_course_detail'),
     
     # Lesson management endpoints

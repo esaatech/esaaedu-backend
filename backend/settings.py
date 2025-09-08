@@ -310,7 +310,7 @@ if config('DATABASE_URL', default=None):
 else:
     # Use SQLite for development, PostgreSQL for production
     db_engine = config('DB_ENGINE', default='sqlite')
-    print(f"🔍 DEBUG: Database engine: {db_engine}")
+   
     
     if db_engine == 'postgresql':
         print("🔍 DEBUG: Using PostgreSQL database")
@@ -324,17 +324,14 @@ else:
             # Use Unix socket for Cloud Run
             db_host = f"/cloudsql/esaasolution:us-central1:sbtacedemy"
             db_port = None
-            print(f"🔍 DEBUG: Cloud Run detected - using Unix socket")
+            
         else:
             # Use IP for local development
             db_host = config('DB_HOST', default='34.42.36.55')
             db_port = config('DB_PORT', default='5432')
-            print(f"🔍 DEBUG: Local development - using IP connection")
+            
         
-        print(f"🔍 DEBUG: DB_NAME: {db_name}")
-        print(f"🔍 DEBUG: DB_USER: {db_user}")
-        print(f"🔍 DEBUG: DB_HOST: {db_host}")
-        print(f"🔍 DEBUG: DB_PORT: {db_port}")
+        
         
         database_config = {
             'ENGINE': 'django.db.backends.postgresql',
