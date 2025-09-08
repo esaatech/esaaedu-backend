@@ -2910,9 +2910,19 @@ class TeacherDashboardAPIView(APIView):
 
     def get_total_students(self, teacher):
         """Count total students across all teacher's courses"""
-        return EnrolledCourse.objects.filter(
-            course__teacher=teacher
-        ).values('student_profile').distinct().count()
+        # Debug: Check teacher's courses
+        teacher_courses = Course.objects.filter(teacher=teacher)
+        print(f"DEBUG TOTAL STUDENTS: Teacher {teacher.email} has {teacher_courses.count()} courses")
+        
+        # Debug: Check all enrollments for this teacher's courses
+        enrollments = EnrolledCourse.objects.filter(course__teacher=teacher)
+        print(f"DEBUG TOTAL STUDENTS: Found {enrollments.count()} total enrollments")
+        
+        # Debug: Check distinct students
+        distinct_students = enrollments.values('student_profile__user').distinct()
+        print(f"DEBUG TOTAL STUDENTS: Found {distinct_students.count()} distinct students")
+        
+        return distinct_students.count()
 
     def get_active_courses(self, teacher):
         """Count published/active courses"""
@@ -2928,11 +2938,11 @@ class TeacherDashboardAPIView(APIView):
         
         current_month = datetime.now().replace(day=1)
         
-        # Get all enrollments for this month
+        # Get all enrollments for this month (assuming all enrollments are paid)
         monthly_enrollments = EnrolledCourse.objects.filter(
             course__teacher=teacher,
-            enrollment_date__gte=current_month,
-            payment_status='paid'
+            enrollment_date__gte=current_month.date(),
+            status='active'  # Only count active enrollments
         )
         
         # Calculate total revenue
@@ -3002,21 +3012,32 @@ class TeacherDashboardAPIView(APIView):
         
         activities = []
         
+        # Debug: Check teacher's courses
+        teacher_courses = Course.objects.filter(teacher=teacher)
+        print(f"DEBUG RECENT ACTIVITY: Teacher {teacher.email} has {teacher_courses.count()} courses")
+        
         # Student enrollments
         enrollments = EnrolledCourse.objects.filter(
             course__teacher=teacher,
-            enrollment_date__gte=datetime.now() - timedelta(days=7)
+            enrollment_date__gte=datetime.now().date() - timedelta(days=7)
         ).select_related('student_profile__user', 'course')[:5]
+        
+        print(f"DEBUG RECENT ACTIVITY: Found {enrollments.count()} recent enrollments")
         
         for enrollment in enrollments:
             student_name = enrollment.student_profile.user.get_full_name() or enrollment.student_profile.user.first_name
+            # Convert date to timezone-aware datetime for consistent sorting
+            from django.utils import timezone as django_timezone
+            enrollment_datetime = django_timezone.make_aware(
+                datetime.combine(enrollment.enrollment_date, datetime.min.time())
+            )
             activities.append({
                 'id': enrollment.id,
                 'type': 'enrollment',
                 'message': f"New student enrolled in {enrollment.course.title}",
                 'student_name': student_name,
                 'course_name': enrollment.course.title,
-                'timestamp': enrollment.enrollment_date,
+                'timestamp': enrollment_datetime,
                 'icon': 'user-plus',
                 'time_ago': self.get_time_ago(enrollment.enrollment_date)
             })

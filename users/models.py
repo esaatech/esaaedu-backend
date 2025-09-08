@@ -66,8 +66,8 @@ class TeacherProfile(models.Model):
     years_of_experience = models.PositiveIntegerField(null=True, blank=True)
     
     # Social links
-    linkedin_url = models.URLField(blank=True)
-    twitter_url = models.URLField(blank=True)
+    linkedin_url = models.URLField(max_length=500, blank=True)
+    twitter_url = models.URLField(max_length=500, blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
