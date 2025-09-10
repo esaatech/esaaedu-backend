@@ -300,6 +300,37 @@ except Exception as e:
     logger.warning(f"Firebase initialization failed on startup: {e}")
     # Continue without Firebase - it will be initialized when needed
 
+# Stripe Configuration
+def get_stripe_config():
+    """Get Stripe configuration from Secret Manager or environment variables"""
+    # Try Secret Manager first (for production)
+    if config('USE_SECRET_MANAGER', default=False, cast=bool):
+        try:
+            from .secret_manager import get_secret_manager_client
+            gcp_project_id = 'esaasolution'
+            secret_client = get_secret_manager_client(gcp_project_id)
+            if secret_client:
+                return {
+                    'STRIPE_SECRET_KEY': secret_client.get_stripe_secret_key() or '',
+                    'STRIPE_PUBLISHABLE_KEY': secret_client.get_stripe_publishable_key() or '',
+                    'STRIPE_WEBHOOK_SECRET': secret_client.get_stripe_webhook_secret() or '',
+                }
+        except Exception as e:
+            logger.warning(f"Failed to get Stripe config from Secret Manager: {e}")
+    
+    # Fallback to environment variables
+    return {
+        'STRIPE_SECRET_KEY': config('STRIPE_SECRET_KEY', default=''),
+        'STRIPE_PUBLISHABLE_KEY': config('STRIPE_PUBLISHABLE_KEY', default=''),
+        'STRIPE_WEBHOOK_SECRET': config('STRIPE_WEBHOOK_SECRET', default=''),
+    }
+
+# Load Stripe configuration
+stripe_config = get_stripe_config()
+STRIPE_SECRET_KEY = stripe_config['STRIPE_SECRET_KEY']
+STRIPE_PUBLISHABLE_KEY = stripe_config['STRIPE_PUBLISHABLE_KEY']
+STRIPE_WEBHOOK_SECRET = stripe_config['STRIPE_WEBHOOK_SECRET']
+
 # Custom User Model
 AUTH_USER_MODEL = 'users.User'
 

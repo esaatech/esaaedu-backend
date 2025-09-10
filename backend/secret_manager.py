@@ -86,6 +86,18 @@ class SecretManagerClient:
         except Exception as e:
             logger.error(f"Error retrieving Firebase credentials: {e}")
             return None
+    
+    def get_stripe_secret_key(self) -> Optional[str]:
+        """Retrieve Stripe secret key from Secret Manager."""
+        return self.get_secret("stripe-secret-key")
+    
+    def get_stripe_publishable_key(self) -> Optional[str]:
+        """Retrieve Stripe publishable key from Secret Manager."""
+        return self.get_secret("stripe-publishable-key")
+    
+    def get_stripe_webhook_secret(self) -> Optional[str]:
+        """Retrieve Stripe webhook secret from Secret Manager."""
+        return self.get_secret("stripe-webhook-secret")
 
 def get_secret_manager_client(project_id: str) -> Optional[SecretManagerClient]:
     """

@@ -21,6 +21,7 @@ dj-database-url = "^2.1.0"
 pillow = "^11.3.0"
 gunicorn = "^21.2.0"
 whitenoise = "^6.6.0"
+stripe = "^12.5.1"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.0.0"
