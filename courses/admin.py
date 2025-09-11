@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview
 
 
 @admin.register(Course)
@@ -122,19 +122,8 @@ class QuestionAdmin(admin.ModelAdmin):
     question_text_short.short_description = 'Question'
 
 
-@admin.register(CourseEnrollment)
-class CourseEnrollmentAdmin(admin.ModelAdmin):
-    list_display = ['student', 'course', 'status', 'progress_percentage', 'enrolled_at']
-    list_filter = ['status', 'enrolled_at', 'course__category']
-    search_fields = ['student__email', 'course__title']
-    readonly_fields = ['id', 'progress_percentage', 'completed_lessons_count', 'enrolled_at']
 
 
-@admin.register(LessonProgress)
-class LessonProgressAdmin(admin.ModelAdmin):
-    list_display = ['enrollment', 'lesson', 'status', 'time_spent', 'completed_at']
-    list_filter = ['status', 'completed_at']
-    search_fields = ['enrollment__student__email', 'lesson__title']
 
 
 @admin.register(QuizAttempt)

@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from users.models import User, TeacherProfile
 from .serializers import TeacherProfileSerializer, TeacherProfileUpdateSerializer
-from courses.models import Course, ClassEvent, CourseReview, LessonProgress
+from courses.models import Course, ClassEvent, CourseReview
 from student.models import EnrolledCourse
 from django.db.models import Count, Avg, Sum
 from datetime import datetime, timedelta

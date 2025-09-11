@@ -469,105 +469,8 @@ class Question(models.Model):
         return f"Q{self.order}: {self.question_text[:50]}..."
 
 
-class CourseEnrollment(models.Model):
-    """
-    Student enrollment in a course
-    """
-    ENROLLMENT_STATUS = [
-        ('active', 'Active'),
-        ('completed', 'Completed'),
-        ('dropped', 'Dropped'),
-        ('paused', 'Paused'),
-    ]
-    
-    # Basic Information
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    student = models.ForeignKey(
-        User, 
-        on_delete=models.CASCADE, 
-        related_name='course_enrollments',
-        limit_choices_to={'role': 'student'}
-    )
-    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='enrollments')
-    
-    # Enrollment Details
-    status = models.CharField(max_length=20, choices=ENROLLMENT_STATUS, default='active')
-    enrolled_at = models.DateTimeField(auto_now_add=True)
-    completed_at = models.DateTimeField(null=True, blank=True)
-    last_accessed_at = models.DateTimeField(default=timezone.now)
-    
-    # Progress Tracking
-    current_lesson = models.ForeignKey(
-        Lesson, 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        blank=True,
-        help_text="Current lesson the student is on"
-    )
-    
-    @property
-    def progress_percentage(self):
-        if not self.course.total_lessons:
-            return 0
-        completed_lessons = self.lesson_progress.filter(status='completed').count()
-        return round((completed_lessons / self.course.total_lessons) * 100)
-    
-    @property
-    def completed_lessons_count(self):
-        return self.lesson_progress.filter(status='completed').count()
-    
-    class Meta:
-        unique_together = ['student', 'course']
-        ordering = ['-enrolled_at']
-        indexes = [
-            models.Index(fields=['student', 'status']),
-            models.Index(fields=['course', 'status']),
-        ]
-    
-    def __str__(self):
-        return f"{self.student.get_full_name()} - {self.course.title}"
 
 
-class LessonProgress(models.Model):
-    """
-    Student progress on individual lessons
-    """
-    LESSON_STATUS = [
-        ('not_started', 'Not Started'),
-        ('in_progress', 'In Progress'),
-        ('completed', 'Completed'),
-        ('locked', 'Locked'),
-    ]
-    
-    # Basic Information
-    enrollment = models.ForeignKey(
-        CourseEnrollment, 
-        on_delete=models.CASCADE, 
-        related_name='lesson_progress'
-    )
-    lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE)
-    
-    # Progress Details
-    status = models.CharField(max_length=20, choices=LESSON_STATUS, default='not_started')
-    started_at = models.DateTimeField(null=True, blank=True)
-    completed_at = models.DateTimeField(null=True, blank=True)
-    time_spent = models.IntegerField(default=0, help_text="Time spent in minutes")
-    
-    # Content-specific progress (e.g., video progress, reading progress)
-    progress_data = models.JSONField(
-        default=dict,
-        help_text="Lesson-specific progress data"
-    )
-    
-    class Meta:
-        unique_together = ['enrollment', 'lesson']
-        indexes = [
-            models.Index(fields=['enrollment', 'status']),
-            models.Index(fields=['lesson', 'status']),
-        ]
-    
-    def __str__(self):
-        return f"{self.enrollment.student.get_full_name()} - {self.lesson.title} ({self.status})"
 
 
 class QuizAttempt(models.Model):
@@ -839,15 +742,16 @@ class Class(models.Model):
         if student in self.students.all():
             return False, "Student is already enrolled in this class"
         
-        # Check if student is enrolled in the course
+            # Check if student is enrolled in the course
+        from student.models import EnrolledCourse
         try:
-            enrollment = CourseEnrollment.objects.get(
-                student=student, 
+            enrollment = EnrolledCourse.objects.get(
+                student_profile__user=student, 
                 course=self.course,
                 status='active'
             )
             return True, "Student can be enrolled"
-        except CourseEnrollment.DoesNotExist:
+        except EnrolledCourse.DoesNotExist:
             return False, "Student must be enrolled in the course first"
     
     def enroll_student(self, student):
