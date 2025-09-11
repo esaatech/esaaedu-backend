@@ -9,20 +9,17 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RemoveIndex(
+            model_name="lessonprogress",
+            name="courses_les_enrollm_0e4f7b_idx",
+        ),
+        migrations.RemoveIndex(
+            model_name="lessonprogress",
+            name="courses_les_lesson__b05e6f_idx",
+        ),
         migrations.AlterUniqueTogether(
             name="lessonprogress",
             unique_together=None,
-        ),
-        migrations.RemoveField(
-            model_name="lessonprogress",
-            name="enrollment",
-        ),
-        migrations.RemoveField(
-            model_name="lessonprogress",
-            name="lesson",
-        ),
-        migrations.DeleteModel(
-            name="CourseEnrollment",
         ),
         migrations.DeleteModel(
             name="LessonProgress",

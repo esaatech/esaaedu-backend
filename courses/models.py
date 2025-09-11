@@ -154,7 +154,7 @@ class Course(models.Model):
     
     @property
     def enrolled_students_count(self):
-        return self.enrollments.count()
+        return self.enrolled_students.through.objects.filter(course=self).count()
     
     @property
     def is_featured_eligible(self):
