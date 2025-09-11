@@ -3139,3 +3139,328 @@ class TeacherDashboardAPIView(APIView):
                 return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
             else:
                 return "Just now"
+
+
+# ===== COMPREHENSIVE STUDENT DASHBOARD =====
+
+class StudentCourseDashboardView(APIView):
+    """
+    Comprehensive student course dashboard - returns everything in one call:
+    - Enrolled courses with progress
+    - Recommended courses with billing & class data
+    - All necessary data for enrollment flow
+    
+    This eliminates multiple API calls and improves performance.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """
+        Get comprehensive student dashboard data
+        """
+        try:
+            print("=== Student Course Dashboard API ===")
+            
+            # Get student profile
+            student_profile = getattr(request.user, 'student_profile', None)
+            print(f"Student profile: {student_profile}")
+            
+            # Initialize response data
+            response_data = {}
+            
+            # 1. GET ENROLLED COURSES
+            print("Step 1: Getting enrolled courses...")
+            enrolled_courses_data = self.get_enrolled_courses_data(student_profile)
+            response_data['enrolled_courses'] = enrolled_courses_data['courses']
+            response_data['total_enrolled'] = enrolled_courses_data['total']
+            
+            # 2. GET RECOMMENDED COURSES (with comprehensive data)
+            print("Step 2: Getting recommended courses with billing and classes...")
+            recommended_courses_data = self.get_recommended_courses_data(student_profile, request.user)
+            response_data['recommended_courses'] = recommended_courses_data['courses']
+            response_data['total_recommendations'] = recommended_courses_data['total']
+            
+            # 3. ADD DASHBOARD METADATA
+            response_data['dashboard_metadata'] = {
+                'user_id': str(request.user.id),
+                'student_profile_id': str(student_profile.id) if student_profile else None,
+                'generated_at': timezone.now().isoformat(),
+                'api_version': '2.0'
+            }
+            
+            print(f"Dashboard response complete: {len(response_data['enrolled_courses'])} enrolled, {len(response_data['recommended_courses'])} recommended")
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"CRITICAL ERROR in StudentCourseDashboardView: {e}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': 'Failed to fetch student dashboard data', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def get_enrolled_courses_data(self, student_profile):
+        """
+        Get enrolled courses data with comprehensive information
+        """
+        try:
+            if not student_profile:
+                return {'courses': [], 'total': 0}
+            
+            # Get enrolled courses
+            enrolled_courses = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                status__in=['active', 'completed']
+            ).select_related('course', 'current_lesson').order_by('-enrollment_date')
+            
+            courses_data = []
+            for enrollment in enrolled_courses:
+                course = enrollment.course
+                
+                try:
+                    # Get course image
+                    course_image = getattr(course, 'image', None)
+                    if course_image:
+                        image_url = course_image.url if hasattr(course_image, 'url') else str(course_image)
+                    else:
+                        image_url = "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=300&h=200&fit=crop"
+                    
+                    # Calculate next lesson
+                    next_lesson = "Course Completed!" if enrollment.status == 'completed' else (
+                        enrollment.current_lesson.title if enrollment.current_lesson else "Start Learning"
+                    )
+                    
+                    # Get instructor name
+                    instructor_name = "Little Learners Tech"
+                    if hasattr(course, 'teacher') and course.teacher:
+                        instructor_name = course.teacher.get_full_name() or course.teacher.email
+                    
+                    # Build course data
+                    course_data = {
+                        'id': str(course.id),
+                        'title': course.title,
+                        'description': course.description,
+                        'instructor': instructor_name,
+                        'image': image_url,
+                        'icon': course.icon,
+                        'progress': float(enrollment.progress_percentage),
+                        'total_lessons': course.lessons.count(),
+                        'completed_lessons': enrollment.completed_lessons_count,
+                        'next_lesson': next_lesson,
+                        'status': enrollment.status,
+                        'enrollment_date': enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
+                        'last_accessed': enrollment.last_accessed.isoformat() if enrollment.last_accessed else None,
+                        'overall_grade': enrollment.overall_grade,
+                        'average_quiz_score': float(enrollment.average_quiz_score) if enrollment.average_quiz_score else None,
+                        'difficulty': getattr(course, 'level', 'beginner'),
+                        'category': course.category,
+                        'rating': get_course_average_rating(course),
+                        
+                        # Add billing data for enrolled courses (for potential upgrades/changes)
+                        'billing': self.get_course_billing_data(course)
+                    }
+                    courses_data.append(course_data)
+                    
+                except Exception as course_error:
+                    print(f"ERROR processing enrolled course {course.title}: {course_error}")
+                    continue
+            
+            return {'courses': courses_data, 'total': len(courses_data)}
+            
+        except Exception as e:
+            print(f"Error getting enrolled courses: {e}")
+            return {'courses': [], 'total': 0}
+    
+    def get_recommended_courses_data(self, student_profile, user):
+        """
+        Get recommended courses with comprehensive billing and class data
+        """
+        try:
+            # Get enrolled course IDs to exclude
+            enrolled_course_ids = []
+            if student_profile:
+                enrolled_course_ids = list(
+                    EnrolledCourse.objects.filter(
+                        student_profile=student_profile,
+                        status__in=['active', 'completed']
+                    ).values_list('course_id', flat=True)
+                )
+            
+            # Get recommended courses (featured + not enrolled)
+            recommended_courses = Course.objects.filter(
+                status='published',
+                featured=True
+            ).exclude(id__in=enrolled_course_ids)[:6]
+            
+            courses_data = []
+            for course in recommended_courses:
+                try:
+                    # Get course image
+                    course_image = getattr(course, 'image', None)
+                    if course_image:
+                        image_url = course_image.url if hasattr(course_image, 'url') else str(course_image)
+                    else:
+                        image_url = "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=300&h=200&fit=crop"
+                    
+                    # Get instructor name
+                    instructor_name = "Little Learners Tech"
+                    if hasattr(course, 'teacher') and course.teacher:
+                        instructor_name = course.teacher.get_full_name() or course.teacher.email
+                    
+                    # Build comprehensive course data
+                    course_data = {
+                        'id': str(course.id),
+                        'uuid': str(course.id),
+                        'title': course.title,
+                        'description': course.description,
+                        'instructor': instructor_name,
+                        'image': image_url,
+                        'icon': course.icon,
+                        'total_lessons': getattr(course, 'total_lessons', 12),
+                        'duration': getattr(course, 'duration', '8 weeks'),
+                        'max_students': getattr(course, 'max_students', 12),
+                        'difficulty': getattr(course, 'level', 'beginner'),
+                        'category': course.category,
+                        'rating': get_course_average_rating(course),
+                        'price': float(course.price) if course.price else 0,
+                        'enrolled_students': 0,  # Can be calculated from enrollments
+                        
+                        # COMPREHENSIVE DATA (eliminates additional API calls)
+                        'billing': self.get_course_billing_data(course),
+                        'available_classes': self.get_course_available_classes_data(course),
+                        'enrollment_status': self.get_course_enrollment_status(course, user)
+                    }
+                    courses_data.append(course_data)
+                    
+                except Exception as course_error:
+                    print(f"ERROR processing recommended course {course.title}: {course_error}")
+                    continue
+            
+            return {'courses': courses_data, 'total': len(courses_data)}
+            
+        except Exception as e:
+            print(f"Error getting recommended courses: {e}")
+            return {'courses': [], 'total': 0}
+    
+    def get_course_billing_data(self, course):
+        """
+        Get comprehensive billing information for a course
+        """
+        try:
+            billing_product = getattr(course, 'billing_product', None)
+            if not billing_product:
+                return None
+            
+            # Calculate prices using existing logic
+            from .price_calculator import calculate_course_prices
+            prices = calculate_course_prices(float(course.price), getattr(course, 'duration_weeks', 8))
+            
+            # Get Stripe price IDs
+            one_time_price = billing_product.prices.filter(billing_period='one_time', is_active=True).first()
+            monthly_price = billing_product.prices.filter(billing_period='monthly', is_active=True).first()
+            
+            billing_data = {
+                "stripe_product_id": billing_product.stripe_product_id,
+                "pricing_options": {
+                    "one_time": {
+                        "amount": prices['one_time_price'],
+                        "currency": "usd",
+                        "stripe_price_id": one_time_price.stripe_price_id if one_time_price else None,
+                        "savings": round(prices['monthly_total'] - prices['one_time_price'], 2) if prices['total_months'] > 1 else 0
+                    }
+                },
+                "trial": {
+                    "duration_days": 14,
+                    "available": True,
+                    "requires_payment_method": True
+                }
+            }
+            
+            # Add monthly option if available
+            if prices['total_months'] > 1 and monthly_price:
+                billing_data["pricing_options"]["monthly"] = {
+                    "amount": prices['monthly_price'],
+                    "currency": "usd",
+                    "stripe_price_id": monthly_price.stripe_price_id,
+                    "total_months": prices['total_months'],
+                    "total_amount": prices['monthly_total']
+                }
+            
+            return billing_data
+            
+        except Exception as e:
+            print(f"Error getting billing data for course {course.id}: {e}")
+            return None
+    
+    def get_course_available_classes_data(self, course):
+        """
+        Get available classes for a course (eliminates separate API call)
+        """
+        try:
+            from datetime import datetime, timedelta
+            
+            # Get classes that are still accepting enrollments
+            available_classes = course.classes.filter(
+                is_active=True,
+                start_date__gte=timezone.now().date()
+            ).select_related('teacher').order_by('start_date', 'start_time')
+            
+            classes_data = []
+            for class_obj in available_classes:
+                # Calculate spots remaining
+                spots_remaining = getattr(course, 'max_students', 8) - getattr(class_obj, 'current_enrollments', 0)
+                
+                class_data = {
+                    'id': str(class_obj.id),
+                    'schedule': f"{getattr(class_obj, 'day_of_week', 'TBA')} {class_obj.start_time.strftime('%I:%M %p') if class_obj.start_time else 'TBA'}",
+                    'teacher': class_obj.teacher.get_full_name() if class_obj.teacher else "TBA",
+                    'spots_remaining': max(0, spots_remaining),
+                    'max_students': getattr(course, 'max_students', 8),
+                    'start_date': class_obj.start_date.isoformat(),
+                    'end_date': class_obj.end_date.isoformat() if getattr(class_obj, 'end_date', None) else None,
+                    'timezone': 'EST',  # From settings
+                    'price': float(course.price) if course.price else 0
+                }
+                classes_data.append(class_data)
+            
+            return classes_data
+            
+        except Exception as e:
+            print(f"Error getting classes for course {course.id}: {e}")
+            return []
+    
+    def get_course_enrollment_status(self, course, user):
+        """
+        Check user's enrollment status for a course
+        """
+        try:
+            student_profile = getattr(user, 'student_profile', None)
+            if not student_profile:
+                return {
+                    "is_enrolled": False,
+                    "can_enroll": True,
+                    "enrollment_date": None,
+                    "status": None
+                }
+            
+            enrollment = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                course=course
+            ).first()
+            
+            return {
+                "is_enrolled": enrollment is not None,
+                "can_enroll": enrollment is None,
+                "enrollment_date": enrollment.enrollment_date.isoformat() if enrollment else None,
+                "status": enrollment.status if enrollment else None
+            }
+            
+        except Exception as e:
+            print(f"Error getting enrollment status: {e}")
+            return {
+                "is_enrolled": False,
+                "can_enroll": True,
+                "enrollment_date": None,
+                "status": None
+            }

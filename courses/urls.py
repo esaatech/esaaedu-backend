@@ -53,6 +53,7 @@ urlpatterns = [
     # Student enrollment endpoints
     path('student/enrolled/', views.student_enrolled_courses, name='student_enrolled_courses'),
     path('student/recommendations/', views.student_course_recommendations, name='student_course_recommendations'),
+    path('student/dashboard/', views.StudentCourseDashboardView.as_view(), name='student_course_dashboard'),
     path('student/enroll/<uuid:course_id>/', views.student_enroll_course, name='student_enroll_course'),
     path('student/courses/<uuid:course_id>/lessons/', views.student_course_lessons, name='student_course_lessons'),
     path('student/lessons/<uuid:lesson_id>/cbv/', views.StudentLessonDetailView.as_view(), name='student_lesson_detail_cbv'),
