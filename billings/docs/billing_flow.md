@@ -131,9 +131,9 @@ This document describes the billing flow for Little Learners Tech platform using
 #### 2. Backend Processing
 - Django creates Course record in database
 - Backend automatically creates Stripe Product for the course
-- Backend creates two Stripe Prices:
-  - Monthly recurring price (subscription)
-  - One-time price (payment)
+- Backend determines billing strategy based on course duration:
+  - **≤ 4 weeks**: Only one-time price
+  - **> 4 weeks**: One-time price + monthly subscription price
 - Backend saves BillingProduct and BillingPrice records linked to Course
 
 #### 3. Course Activation

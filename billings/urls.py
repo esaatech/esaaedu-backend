@@ -1,6 +1,10 @@
 from django.urls import path
 from .views import CreateCheckoutSessionView, ListMySubscriptionsView, CancelSubscriptionView, StripeWebhookView
 
+
+app_name = 'billing'
+
+
 urlpatterns = [
     path('courses/<uuid:course_id>/checkout-session/', CreateCheckoutSessionView.as_view(), name='billing-checkout-session'),
     path('subscriptions/me/', ListMySubscriptionsView.as_view(), name='billing-subscriptions-me'),

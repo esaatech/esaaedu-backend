@@ -224,8 +224,24 @@ def teacher_courses(request):
             serializer = CourseCreateUpdateSerializer(data=request.data)
             if serializer.is_valid():
                 course = serializer.save(teacher=request.user)
+                
+                # Create Stripe product and prices
+                from .stripe_integration import create_stripe_product_for_course
+                stripe_result = create_stripe_product_for_course(course)
+                
+                if not stripe_result['success']:
+                    # If Stripe setup fails, delete the course and return error
+                    course.delete()
+                    return Response(
+                        {'error': 'Course creation failed - billing setup error', 'details': stripe_result['error']},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+                
                 response_serializer = CourseDetailSerializer(course)
-                return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+                response_data = response_serializer.data
+                response_data['billing_setup'] = stripe_result
+                
+                return Response(response_data, status=status.HTTP_201_CREATED)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response(
@@ -313,6 +329,16 @@ def teacher_course_detail(request, course_id):
             serializer = CourseCreateUpdateSerializer(course, data=request.data, partial=True)
             if serializer.is_valid():
                 course = serializer.save()
+                
+                # Update Stripe product if it exists
+                from .stripe_integration import update_stripe_product_for_course
+                try:
+                    stripe_result = update_stripe_product_for_course(course)
+                    if not stripe_result['success']:
+                        print(f"Stripe update failed for course {course.id}: {stripe_result['error']}")
+                except Exception as e:
+                    print(f"Stripe update error for course {course.id}: {str(e)}")
+                
                 response_serializer = CourseDetailSerializer(course)
                 return Response(response_serializer.data, status=status.HTTP_200_OK)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -325,6 +351,16 @@ def teacher_course_detail(request, course_id):
     elif request.method == 'DELETE':
         try:
             course_title = course.title
+            
+            # Deactivate Stripe product before deleting course
+            from .stripe_integration import deactivate_stripe_product_for_course
+            try:
+                stripe_result = deactivate_stripe_product_for_course(course)
+                if not stripe_result['success']:
+                    print(f"Stripe deactivation failed for course {course.id}: {stripe_result['error']}")
+            except Exception as e:
+                print(f"Stripe deactivation error for course {course.id}: {str(e)}")
+            
             course.delete()
             return Response(
                 {'message': f'Course "{course_title}" deleted successfully'},

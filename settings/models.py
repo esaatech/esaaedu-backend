@@ -1,8 +1,73 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.core.validators import MinValueValidator, MaxValueValidator
 import uuid
 
 User = get_user_model()
+
+
+class CourseSettings(models.Model):
+    """
+    Global course-related settings including pricing and billing configurations
+    Singleton model - only one instance should exist
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Billing Settings
+    monthly_price_markup_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=15.00,  # Default 15%
+        validators=[
+            MinValueValidator(0),
+            MaxValueValidator(100)
+        ],
+        help_text="Percentage markup for monthly payments compared to one-time payment"
+    )
+    
+    # Other Course Settings (for future expansion)
+    max_students_per_course = models.PositiveIntegerField(
+        default=30,
+        help_text="Default maximum students allowed per course"
+    )
+    
+    default_course_duration_weeks = models.PositiveIntegerField(
+        default=8,
+        help_text="Default course duration in weeks"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Course Settings"
+        verbose_name_plural = "Course Settings"
+    
+    def __str__(self):
+        return f"Course Settings (Updated: {self.updated_at})"
+    
+    @classmethod
+    def get_settings(cls):
+        """
+        Get the course settings instance, creating it if it doesn't exist
+        Returns the settings object
+        """
+        settings, created = cls.objects.get_or_create(
+            pk=cls.objects.first().pk if cls.objects.exists() else None,
+            defaults={
+                'monthly_price_markup_percentage': 15.00,
+                'max_students_per_course': 30,
+                'default_course_duration_weeks': 8,
+            }
+        )
+        return settings
+    
+    def save(self, *args, **kwargs):
+        """Ensure only one instance exists"""
+        if not self.pk and CourseSettings.objects.exists():
+            return CourseSettings.objects.first()
+        return super().save(*args, **kwargs)
 
 
 class UserDashboardSettings(models.Model):
