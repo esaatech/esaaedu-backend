@@ -5,15 +5,15 @@
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          │ 1. Get Secret Key     │                       │
-         │    sk_test_...        │                       │
+         │    (from Stripe)      │                       │
          ├──────────────────────►│                       │
          │                       │                       │
          │ 2. Get Publishable    │                       │
-         │    pk_test_...        │                       │
+         │    Key (from Stripe)  │                       │
          ├──────────────────────►│                       │
          │                       │                       │
          │ 3. Get Webhook Secret │                       │
-         │    whsec_...          │                       │
+         │    (from Stripe)      │                       │
          ├──────────────────────►│                       │
          │                       │                       │
          │ 4. Configure Keys     │                       │
@@ -40,7 +40,7 @@
          │    webhooks/stripe/   │                       │
          │                       │                       │
          │ 4. Get Webhook Secret │                       │
-         │    whsec_...          │                       │
+         │    (from Stripe CLI)  │                       │
          │                       │                       │
          │ 5. Configure .env     │                       │
          │    STRIPE_SECRET_KEY  │                       │
@@ -99,7 +99,7 @@
          │    failed             │                       │
          │                       │                       │
          │ 3. Get Webhook Secret │                       │
-         │    whsec_...          │                       │
+         │    (from Stripe)      │                       │
          │                       │                       │
          │ 4. Store in Secret    │                       │
          │    Manager            │                       │
