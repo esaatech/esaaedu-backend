@@ -3396,38 +3396,53 @@ class StudentCourseDashboardView(APIView):
     def get_course_available_classes_data(self, course):
         """
         Get available classes for a course (eliminates separate API call)
+        Uses the same logic as course_available_classes function
         """
         try:
-            from datetime import datetime, timedelta
+            from courses.models import Class, ClassSession
             
-            # Get classes that are still accepting enrollments
-            available_classes = course.classes.filter(
-                is_active=True,
-                start_date__gte=timezone.now().date()
-            ).select_related('teacher').order_by('start_date', 'start_time')
+            # Get active classes for this course that have available spots
+            # Use the same logic as the working course_available_classes function
+            classes = Class.objects.filter(
+                course=course,
+                is_active=True
+            ).select_related('course', 'teacher').prefetch_related('students', 'sessions').order_by('name')
             
-            classes_data = []
-            for class_obj in available_classes:
-                # Calculate spots remaining
-                spots_remaining = getattr(course, 'max_students', 8) - getattr(class_obj, 'current_enrollments', 0)
-                
-                class_data = {
-                    'id': str(class_obj.id),
-                    'schedule': f"{getattr(class_obj, 'day_of_week', 'TBA')} {class_obj.start_time.strftime('%I:%M %p') if class_obj.start_time else 'TBA'}",
-                    'teacher': class_obj.teacher.get_full_name() if class_obj.teacher else "TBA",
-                    'spots_remaining': max(0, spots_remaining),
-                    'max_students': getattr(course, 'max_students', 8),
-                    'start_date': class_obj.start_date.isoformat(),
-                    'end_date': class_obj.end_date.isoformat() if getattr(class_obj, 'end_date', None) else None,
-                    'timezone': 'EST',  # From settings
-                    'price': float(course.price) if course.price else 0
-                }
-                classes_data.append(class_data)
+            # Filter classes with available spots
+            available_classes = []
+            for cls in classes:
+                if cls.student_count < cls.max_capacity:
+                    # Get session information
+                    sessions_info = []
+                    for session in cls.sessions.filter(is_active=True).order_by('session_number'):
+                        sessions_info.append({
+                            'session_number': session.session_number,
+                            'day_of_week': session.day_of_week,
+                            'day_name': dict(ClassSession.DAY_CHOICES)[session.day_of_week],
+                            'start_time': session.start_time.strftime('%I:%M %p'),
+                            'end_time': session.end_time.strftime('%I:%M %p'),
+                            'formatted_schedule': session.formatted_schedule
+                        })
+                    
+                    available_classes.append({
+                        'id': cls.id,
+                        'name': cls.name,
+                        'description': cls.description,
+                        'max_capacity': cls.max_capacity,
+                        'student_count': cls.student_count,
+                        'course_id': cls.course.id,
+                        'course_title': cls.course.title,
+                        'sessions': sessions_info,
+                        'formatted_schedule': cls.formatted_schedule,
+                        'session_count': cls.session_count,
+                        'teacher_name': cls.teacher.get_full_name() or cls.teacher.email,
+                        'available_spots': cls.available_spots
+                    })
             
-            return classes_data
+            return available_classes
             
         except Exception as e:
-            print(f"Error getting classes for course {course.id}: {e}")
+            print(f"Error getting available classes for course {course.title}: {e}")
             return []
     
     def get_course_enrollment_status(self, course, user):

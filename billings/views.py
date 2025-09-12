@@ -288,3 +288,511 @@ class StripeWebhookView(APIView):
                     pass
         except Exception as e:
             print(f"Error handling payment failed: {e}")
+
+
+class CreatePaymentIntentView(APIView):
+    """
+    Create the correct Stripe payment object for the selected pricing plan.
+
+    - For pricing_type == 'one_time':
+      Creates a one-time PaymentIntent using the course's one-time price.
+
+    - For pricing_type == 'monthly':
+      Creates a Subscription (trial-aware when requested) using the course's
+      monthly price. The latest invoice's PaymentIntent client_secret is
+      returned for Stripe Elements confirmation.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, course_id: str):
+        print(f"🔍 CreatePaymentIntentView called with course_id: {course_id}")
+        print(f"🔍 Request data: {request.data}")
+        print(f"🔍 User: {request.user}")
+        
+        # Check if user already has active subscriptions for this course
+        try:
+            from .models import Subscription
+            existing_subs = Subscription.objects.filter(
+                customer_account__user=request.user,
+                billing_product__course_id=course_id,
+                stripe_status__in=['active', 'trialing', 'incomplete', 'incomplete_expired', 'past_due']
+            )
+            print(f"🔍 Found {existing_subs.count()} existing subscriptions for this user/course")
+            for sub in existing_subs:
+                print(f"  - Subscription {sub.stripe_subscription_id}: status={sub.stripe_status}, created={sub.created_at}")
+        except Exception as e:
+            print(f"⚠️ Error checking existing subscriptions: {e}")
+        
+        try:
+            stripe_client = get_stripe_client()
+            print(f"🔑 Stripe client configured with key: {stripe.api_key[:12]}...")
+            # Check if we're in test or live mode
+            is_test_mode = stripe.api_key.startswith('sk_test_')
+            print(f"🔑 Stripe mode: {'TEST' if is_test_mode else 'LIVE'}")
+            
+            # Get course
+            course = get_object_or_404(Course, id=course_id, status='published')
+            pricing_type = request.data.get('pricing_type', 'one_time')
+            
+            # Get billing data for the course
+            try:
+                billing_product = BillingProduct.objects.get(course=course)
+                # Get pricing options from billing prices
+                one_time_price = BillingPrice.objects.filter(
+                    product=billing_product, billing_period='one_time'
+                ).first()
+                monthly_price = BillingPrice.objects.filter(
+                    product=billing_product, billing_period='monthly'
+                ).first()
+                
+                pricing_options = {
+                    'one_time': {'amount': float(one_time_price.unit_amount) if one_time_price else float(course.price)},
+                    'monthly': {'amount': float(monthly_price.unit_amount) if monthly_price else float(course.price) * 1.15}
+                }
+                print(f"💰 Course pricing options: {pricing_options}")
+            except BillingProduct.DoesNotExist:
+                print(f"⚠️ No billing product found for course {course.id}, using base price")
+                pricing_options = {
+                    'one_time': {'amount': float(course.price)},
+                    'monthly': {'amount': float(course.price) * 1.15}  # 15% more for installments
+                }
+            
+            # Get or create customer
+            customer_account, created = CustomerAccount.objects.get_or_create(
+                user=request.user
+            )
+            
+            if not customer_account.stripe_customer_id:
+                # Create Stripe customer
+                stripe_customer = stripe.Customer.create(
+                    email=request.user.email,
+                    name=f"{request.user.first_name} {request.user.last_name}".strip() or request.user.email,
+                    metadata={
+                        'user_id': str(request.user.id),
+                        'course_id': str(course.id),
+                    }
+                )
+                customer_account.stripe_customer_id = stripe_customer.id
+                customer_account.save()
+            
+            # Calculate amount based on pricing type
+            if pricing_type == 'monthly':
+                amount = int(pricing_options['monthly']['amount'] * 100)
+                print(f"💳 Creating subscription for monthly payment: ${pricing_options['monthly']['amount']}")
+                
+                # Calculate total months for the course duration
+                import math
+                total_months = math.ceil(course.duration_weeks / 4)
+                print(f"📅 Course duration: {course.duration_weeks} weeks = {total_months} months")
+                
+                # For monthly payments, create a subscription instead of one-time payment
+                # First, create or get a price in Stripe
+                try:
+                    billing_product = BillingProduct.objects.get(course=course)
+                    monthly_price = BillingPrice.objects.get(
+                        product=billing_product, 
+                        billing_period='monthly'
+                    )
+                    stripe_price_id = monthly_price.stripe_price_id
+                except (BillingProduct.DoesNotExist, BillingPrice.DoesNotExist):
+                    # Create a price on the fly if it doesn't exist
+                    stripe_price = stripe.Price.create(
+                        unit_amount=amount,
+                        currency='usd',
+                        recurring={'interval': 'month'},
+                        product_data={
+                            'name': f"{course.title} - Monthly Subscription",
+                        },
+                        metadata={
+                            'course_id': str(course.id),
+                            'pricing_type': 'monthly'
+                        }
+                    )
+                    stripe_price_id = stripe_price.id
+                
+                # Create subscription
+                print(f"🚀 About to create Stripe subscription with price_id: {stripe_price_id}")
+                print(f"🚀 Customer: {customer_account.stripe_customer_id}")
+                print(f"🚀 Trial period: {14 if request.data.get('trial_period') else None} days")
+                
+                try:
+                    # Calculate when to cancel the subscription after all monthly payments
+                    import datetime
+                    from datetime import timezone
+                    
+                    trial_days = 14 if request.data.get('trial_period') else 0
+                    # Cancel after trial + (total_months * 30 days per month)
+                    cancel_at = datetime.datetime.now(timezone.utc) + datetime.timedelta(
+                        days=trial_days + (total_months * 30)
+                    )
+                    print(f"🗓️ Monthly subscription will cancel: {cancel_at.strftime('%Y-%m-%d %H:%M:%S UTC')} (after {total_months} payments)")
+                    
+                    subscription = stripe.Subscription.create(
+                    customer=customer_account.stripe_customer_id,
+                    items=[{'price': stripe_price_id}],
+                    # Add trial when requested so Stripe auto-manages conversion after trial
+                    trial_period_days=14 if request.data.get('trial_period') else None,
+                    cancel_at=int(cancel_at.timestamp()),  # Cancel after specified number of monthly payments
+                    payment_behavior='default_incomplete',
+                    payment_settings={'save_default_payment_method': 'on_subscription'},
+                    expand=['latest_invoice.payment_intent', 'pending_setup_intent'],
+                    metadata={
+                        'course_id': str(course.id),
+                        'course_title': course.title,
+                        'user_id': str(request.user.id),
+                        'user_email': request.user.email,
+                        'pricing_type': 'monthly',
+                        'trial_period': str(bool(request.data.get('trial_period'))).lower()
+                    }
+                    )
+                    print(f"✅ Stripe subscription created: {subscription.id}")
+                    print(f"✅ Subscription status: {subscription.status}")
+                    print(f"✅ Has latest_invoice: {bool(getattr(subscription, 'latest_invoice', None))}")
+                    print(f"✅ Has pending_setup_intent: {bool(getattr(subscription, 'pending_setup_intent', None))}")
+                    
+                    # Double-check by retrieving the subscription from Stripe
+                    try:
+                        verified_sub = stripe.Subscription.retrieve(subscription.id)
+                        print(f"🔍 Verified subscription exists in Stripe: {verified_sub.id} (status: {verified_sub.status})")
+                    except Exception as verify_error:
+                        print(f"❌ Failed to verify subscription in Stripe: {verify_error}")
+                
+                except stripe.error.StripeError as e:
+                    print(f"❌ Stripe error creating subscription: {e}")
+                    print(f"❌ Error type: {type(e).__name__}")
+                    print(f"❌ Error code: {getattr(e, 'code', 'N/A')}")
+                    raise e
+                except Exception as e:
+                    print(f"❌ Unexpected error creating subscription: {e}")
+                    print(f"❌ Error type: {type(e).__name__}")
+                    raise e
+                
+                # For trialing subscriptions, Stripe provides a pending_setup_intent for PM collection
+                intent_type = 'payment'
+                client_secret = None
+                payment_intent_id = None
+                setup_intent_id = None
+                if getattr(subscription, 'latest_invoice', None) and getattr(subscription.latest_invoice, 'payment_intent', None):
+                    payment_intent = subscription.latest_invoice.payment_intent
+                    client_secret = payment_intent.client_secret
+                    payment_intent_id = payment_intent.id
+                    print(f"💳 Using payment intent from latest_invoice: {payment_intent_id}")
+                elif getattr(subscription, 'pending_setup_intent', None):
+                    setup_intent = subscription.pending_setup_intent
+                    client_secret = setup_intent.client_secret
+                    setup_intent_id = setup_intent.id
+                    intent_type = 'setup'
+                    print(f"🔧 Using setup intent: {setup_intent_id}")
+                else:
+                    print(f"❌ No payment or setup intent available for subscription")
+                    raise Exception('No payment or setup intent available for subscription')
+                
+            else:
+                amount = int(pricing_options['one_time']['amount'] * 100)
+                print(f"💳 Creating one-time payment: ${pricing_options['one_time']['amount']}")
+                
+                if request.data.get('trial_period'):
+                    # For one-time payments with trial, create a subscription that will charge once and then cancel
+                    print(f"🔄 Creating one-time subscription with trial for: ${pricing_options['one_time']['amount']}")
+                    
+                    # For subscriptions, we need a recurring price, not a one-time price
+                    # Create a special recurring price for one-time trial subscriptions
+                    stripe_price = stripe.Price.create(
+                        unit_amount=amount,
+                        currency='usd',
+                        recurring={'interval': 'month'},  # Required for subscriptions, but will cancel after first payment
+                        product_data={
+                            'name': f"{course.title} - One-time Payment (Trial)",
+                        },
+                        metadata={
+                            'course_id': str(course.id),
+                            'pricing_type': 'one_time_trial'
+                        }
+                    )
+                    stripe_price_id = stripe_price.id
+                    print(f"✅ Created recurring price for one-time trial: {stripe_price_id}")
+                    
+                    # Create a subscription with trial that will cancel after first payment
+                    try:
+                        import datetime
+                        from datetime import timezone
+                        
+                        # Calculate when to cancel: trial end + 1 billing cycle (1 month)
+                        trial_end = datetime.datetime.now(timezone.utc) + datetime.timedelta(days=14)
+                        cancel_at = trial_end + datetime.timedelta(days=30)  # 1 month after trial ends
+                        print(f"🗓️ Trial ends: {trial_end.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+                        print(f"🗓️ Subscription will cancel: {cancel_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+                        
+                        subscription = stripe.Subscription.create(
+                            customer=customer_account.stripe_customer_id,
+                            items=[{'price': stripe_price_id}],
+                            trial_period_days=14,
+                            cancel_at=int(cancel_at.timestamp()),  # Cancel after first payment
+                            payment_behavior='default_incomplete',
+                            payment_settings={'save_default_payment_method': 'on_subscription'},
+                            expand=['latest_invoice.payment_intent', 'pending_setup_intent'],
+                            metadata={
+                                'course_id': str(course.id),
+                                'course_title': course.title,
+                                'user_id': str(request.user.id),
+                                'user_email': request.user.email,
+                                'pricing_type': 'one_time_trial',
+                                'trial_period': 'true'
+                            }
+                        )
+                        print(f"✅ One-time trial subscription created: {subscription.id}")
+                        print(f"✅ Subscription status: {subscription.status}")
+                        
+                        # Handle the intents like monthly subscriptions
+                        intent_type = 'payment'
+                        client_secret = None
+                        payment_intent_id = None
+                        setup_intent_id = None
+                        if getattr(subscription, 'latest_invoice', None) and getattr(subscription.latest_invoice, 'payment_intent', None):
+                            payment_intent = subscription.latest_invoice.payment_intent
+                            client_secret = payment_intent.client_secret
+                            payment_intent_id = payment_intent.id
+                            print(f"💳 Using payment intent from latest_invoice: {payment_intent_id}")
+                        elif getattr(subscription, 'pending_setup_intent', None):
+                            setup_intent = subscription.pending_setup_intent
+                            client_secret = setup_intent.client_secret
+                            setup_intent_id = setup_intent.id
+                            intent_type = 'setup'
+                            print(f"🔧 Using setup intent: {setup_intent_id}")
+                        else:
+                            print(f"❌ No payment or setup intent available for one-time subscription")
+                            raise Exception('No payment or setup intent available for subscription')
+                            
+                    except stripe.error.StripeError as e:
+                        print(f"❌ Stripe error creating one-time trial subscription: {e}")
+                        raise e
+                        
+                else:
+                    # For immediate one-time payments (no trial)
+                    payment_intent = stripe.PaymentIntent.create(
+                        amount=amount,
+                        currency='usd',
+                        customer=customer_account.stripe_customer_id,
+                        metadata={
+                            'course_id': str(course.id),
+                            'course_title': course.title,
+                            'user_id': str(request.user.id),
+                            'user_email': request.user.email,
+                            'pricing_type': 'one_time'
+                        },
+                        description=f"Enrollment in {course.title}",
+                    )
+                    intent_type = 'payment'
+                    client_secret = payment_intent.client_secret
+                    payment_intent_id = payment_intent.id
+                    setup_intent_id = None
+            
+            # Determine subscription_id for response
+            subscription_id = None
+            if pricing_type == 'monthly':
+                subscription_id = subscription.id
+            elif pricing_type == 'one_time' and request.data.get('trial_period') and 'subscription' in locals():
+                subscription_id = subscription.id
+            
+            response_data = {
+                'client_secret': client_secret,
+                'intent_type': intent_type,
+                'payment_intent_id': payment_intent_id,
+                'setup_intent_id': setup_intent_id,
+                'subscription_id': subscription_id,
+                'amount': amount,
+                'currency': 'usd',
+                'course_title': course.title,
+            }
+            
+            print(f"🎯 Final response data: {response_data}")
+            
+            return Response({
+                'client_secret': client_secret,
+                'intent_type': intent_type,  # 'payment' | 'setup'
+                'payment_intent_id': payment_intent_id,
+                'setup_intent_id': setup_intent_id,
+                'subscription_id': subscription_id,
+                'amount': amount,
+                'currency': 'usd',
+                'course_title': course.title,
+            }, status=status.HTTP_200_OK)
+            
+        except Course.DoesNotExist:
+            return Response(
+                {'error': 'Course not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            print(f"Error creating payment intent: {e}")
+            return Response(
+                {'error': 'Failed to create payment intent', 'details': str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class ConfirmEnrollmentView(APIView):
+    """
+    Confirm successful payment and create enrollment (handles both trial and paid)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, course_id: str):
+        print(f"🎓 ConfirmEnrollmentView called with course_id: {course_id}")
+        print(f"🎓 Request data: {request.data}")
+        
+        try:
+            # Get course and class
+            course = get_object_or_404(Course, id=course_id, status='published')
+            class_id = request.data.get('class_id')
+            payment_intent_id = request.data.get('payment_intent_id')
+            pricing_type = request.data.get('pricing_type', 'one_time')
+            is_trial = request.data.get('trial_period', False)
+            
+            if not class_id:
+                return Response(
+                    {'error': 'Class ID is required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get student profile
+            student_profile = getattr(request.user, 'student_profile', None)
+            if not student_profile:
+                return Response(
+                    {'error': 'Student profile not found. Please complete your profile setup.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the class
+            from courses.models import Class
+            selected_class = get_object_or_404(Class, id=class_id)
+            
+            # Check if already enrolled
+            from student.models import EnrolledCourse
+            existing_enrollment = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                course=course
+            ).first()
+            
+            if existing_enrollment:
+                if existing_enrollment.status in ['active', 'completed']:
+                    return Response(
+                        {'message': 'Already enrolled in this course'}, 
+                        status=status.HTTP_200_OK
+                    )
+                else:
+                    # Reactivate dropped/paused enrollment
+                    existing_enrollment.status = 'active'
+                    existing_enrollment.save()
+                    return Response({
+                        'message': 'Enrollment reactivated',
+                        'enrollment_id': str(existing_enrollment.id)
+                    }, status=status.HTTP_200_OK)
+            
+            # Calculate payment details based on trial vs paid
+            if is_trial:
+                print("💫 Creating TRIAL enrollment")
+                from datetime import timedelta
+                trial_end_date = timezone.now().date() + timedelta(days=14)
+                payment_status = 'free'
+                amount_paid = 0
+                payment_due_date = trial_end_date
+            else:
+                print("💳 Creating PAID enrollment")
+                # Paid enrollment - get actual pricing
+                try:
+                    billing_product = BillingProduct.objects.get(course=course)
+                    if pricing_type == 'monthly':
+                        monthly_price = BillingPrice.objects.filter(
+                            product=billing_product, billing_period='monthly'
+                        ).first()
+                        amount_paid = float(monthly_price.unit_amount) / 100 if monthly_price else float(course.price) * 1.15
+                    else:
+                        one_time_price = BillingPrice.objects.filter(
+                            product=billing_product, billing_period='one_time'
+                        ).first()
+                        amount_paid = float(one_time_price.unit_amount) / 100 if one_time_price else float(course.price)
+                except BillingProduct.DoesNotExist:
+                    amount_paid = float(course.price) * 1.15 if pricing_type == 'monthly' else float(course.price)
+                
+                payment_status = 'paid'
+                payment_due_date = None
+            
+            # Create enrollment with proper fields
+            enrollment = EnrolledCourse.objects.create(
+                student_profile=student_profile,
+                course=course,
+                status='active',
+                enrolled_by=request.user,
+                
+                # Payment information
+                payment_status=payment_status,
+                amount_paid=amount_paid,
+                payment_due_date=payment_due_date,
+                discount_applied=0,
+                
+                # Course initialization
+                total_lessons_count=course.total_lessons or 0,
+                total_assignments_assigned=getattr(course, 'total_assignments', 0),
+                
+                # Progress tracking initialization
+                progress_percentage=0,
+                completed_lessons_count=0,
+                total_assignments_completed=0,
+                
+                # Engagement defaults
+                total_study_time=timezone.timedelta(),
+                total_video_watch_time=timezone.timedelta(),
+                login_count=0,
+                
+                # Communication preferences
+                parent_notifications_enabled=True,
+                reminder_emails_enabled=True,
+            )
+            
+            # Add student to the selected class
+            try:
+                if selected_class.student_count < selected_class.max_capacity:
+                    selected_class.students.add(request.user)
+                    print(f"✅ Added student to class: {selected_class.name}")
+                else:
+                    print(f"⚠️ Class {selected_class.name} is full, student not added to class")
+            except Exception as e:
+                print(f"⚠️ Failed to add student to class: {e}")
+            
+            # Save subscription info if monthly payment (not for trials)
+            if not is_trial and pricing_type == 'monthly' and payment_intent_id:
+                try:
+                    from .models import Subscription
+                    Subscription.objects.create(
+                        customer_account=CustomerAccount.objects.get(user=request.user),
+                        course=course,
+                        stripe_subscription_id=payment_intent_id,
+                        status='active'
+                    )
+                    print("✅ Subscription record created")
+                except Exception as e:
+                    print(f"⚠️ Could not save subscription: {e}")
+            
+            print(f"✅ Enrollment created: {enrollment.id} (Trial: {is_trial})")
+            
+            return Response({
+                'message': f'{"Trial" if is_trial else "Paid"} enrollment successful',
+                'enrollment_id': str(enrollment.id),
+                'is_trial': is_trial,
+                'trial_end_date': payment_due_date.isoformat() if payment_due_date else None
+            }, status=status.HTTP_201_CREATED)
+            
+        except Course.DoesNotExist:
+            return Response(
+                {'error': 'Course not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            print(f"Error confirming enrollment: {e}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': 'Failed to create enrollment', 'details': str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
