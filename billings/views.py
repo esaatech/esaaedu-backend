@@ -796,3 +796,57 @@ class ConfirmEnrollmentView(APIView):
                 {'error': 'Failed to create enrollment', 'details': str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class CancelIncompleteSubscriptionView(APIView):
+    """
+    Cancel an incomplete Stripe subscription (e.g., when user abandons enrollment flow)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, course_id: str):
+        print(f"🗑️ Canceling incomplete subscription for course: {course_id}")
+        print(f"🗑️ Request data: {request.data}")
+        
+        try:
+            get_stripe_client()
+            
+            subscription_id = request.data.get('subscription_id')
+            if not subscription_id:
+                return Response({'error': 'subscription_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            print(f"🗑️ Attempting to cancel subscription: {subscription_id}")
+            
+            # Cancel the subscription in Stripe
+            try:
+                canceled_subscription = stripe.Subscription.cancel(subscription_id)
+                print(f"✅ Successfully canceled subscription: {canceled_subscription.id}")
+                print(f"✅ Subscription status: {canceled_subscription.status}")
+                
+                return Response({
+                    'message': 'Subscription canceled successfully',
+                    'subscription_id': canceled_subscription.id,
+                    'status': canceled_subscription.status
+                }, status=status.HTTP_200_OK)
+                
+            except stripe.error.InvalidRequestError as e:
+                print(f"⚠️ Subscription not found or already canceled: {e}")
+                # If subscription doesn't exist or is already canceled, that's fine
+                return Response({
+                    'message': 'Subscription was already canceled or does not exist',
+                    'subscription_id': subscription_id
+                }, status=status.HTTP_200_OK)
+                
+            except stripe.error.StripeError as e:
+                print(f"❌ Stripe error canceling subscription: {e}")
+                return Response({
+                    'error': 'Failed to cancel subscription in Stripe',
+                    'details': str(e)
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        except Exception as e:
+            print(f"❌ Error canceling subscription: {e}")
+            return Response({
+                'error': 'Failed to cancel subscription',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
