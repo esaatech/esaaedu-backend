@@ -1918,5 +1918,327 @@ class DashboardOverview(APIView):
             return []
     
 
+class AssessmentView(APIView):
+    """
+    Class-based view for handling different types of assessments:
+    - Quiz assessments
+    - Assignment assessments  
+    - Instructor assessments
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, assessment_type=None, assessment_id=None):
+        """
+        GET: Retrieve assessments based on type and ID
+        """
+        try:
+            if assessment_type == 'quiz':
+                return self._get_quiz_assessment(request, assessment_id)
+            elif assessment_type == 'assignment':
+                return self._get_assignment_assessment(request, assessment_id)
+            elif assessment_type == 'instructor':
+                return self._get_instructor_assessment(request, assessment_id)
+            else:
+                return Response(
+                    {'error': 'Invalid assessment type. Use: quiz, assignment, or instructor'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except Exception as e:
+            return Response(
+                {'error': f'Error retrieving assessment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, assessment_type=None):
+        """
+        POST: Create new assessment based on type
+        """
+        try:
+            if assessment_type == 'quiz':
+                return self._create_quiz_assessment(request)
+            elif assessment_type == 'assignment':
+                return self._create_assignment_assessment(request)
+            elif assessment_type == 'instructor':
+                return self._create_instructor_assessment(request)
+            else:
+                return Response(
+                    {'error': 'Invalid assessment type. Use: quiz, assignment, or instructor'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except Exception as e:
+            return Response(
+                {'error': f'Error creating assessment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, assessment_type=None, assessment_id=None):
+        """
+        PUT: Update existing assessment
+        """
+        try:
+            if assessment_type == 'quiz':
+                return self._update_quiz_assessment(request, assessment_id)
+            elif assessment_type == 'assignment':
+                return self._update_assignment_assessment(request, assessment_id)
+            elif assessment_type == 'instructor':
+                return self._update_instructor_assessment(request, assessment_id)
+            else:
+                return Response(
+                    {'error': 'Invalid assessment type. Use: quiz, assignment, or instructor'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except Exception as e:
+            return Response(
+                {'error': f'Error updating assessment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def delete(self, request, assessment_type=None, assessment_id=None):
+        """
+        DELETE: Remove assessment
+        """
+        try:
+            if assessment_type == 'quiz':
+                return self._delete_quiz_assessment(request, assessment_id)
+            elif assessment_type == 'assignment':
+                return self._delete_assignment_assessment(request, assessment_id)
+            elif assessment_type == 'instructor':
+                return self._delete_instructor_assessment(request, assessment_id)
+            else:
+                return Response(
+                    {'error': 'Invalid assessment type. Use: quiz, assignment, or instructor'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except Exception as e:
+            return Response(
+                {'error': f'Error deleting assessment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    # Quiz Assessment Methods
+    def _get_quiz_assessment(self, request, assessment_id=None):
+        """Get quiz assessment(s)"""
+        if assessment_id:
+            # Get specific quiz assessment
+            try:
+                from courses.models import QuizAttempt
+                quiz_attempt = get_object_or_404(QuizAttempt, id=assessment_id)
+                
+                # Check permissions
+                if request.user.role == 'student' and quiz_attempt.student != request.user:
+                    return Response(
+                        {'error': 'Permission denied'}, 
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                
+                # Get related assessments
+                assessments = LessonAssessment.objects.filter(
+                    quiz_attempt=quiz_attempt
+                ).order_by('-created_at')
+                
+                serializer = QuizQuestionFeedbackDetailSerializer(assessments, many=True)
+                return Response(serializer.data)
+                
+            except Exception as e:
+                return Response(
+                    {'error': f'Quiz assessment not found: {str(e)}'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        else:
+            # Get all quiz assessments for user
+            if request.user.role == 'student':
+                enrollments = EnrolledCourse.objects.filter(
+                    student_profile__user=request.user
+                )
+                assessments = LessonAssessment.objects.filter(
+                    enrollment__in=enrollments,
+                    quiz_attempt__isnull=False
+                ).order_by('-created_at')
+            else:
+                # Teacher/Admin can see all assessments they created
+                assessments = LessonAssessment.objects.filter(
+                    teacher=request.user,
+                    quiz_attempt__isnull=False
+                ).order_by('-created_at')
+            
+            # Pagination
+            paginator = StudentPagination()
+            page = paginator.paginate_queryset(assessments, request)
+            if page is not None:
+                serializer = QuizQuestionFeedbackDetailSerializer(page, many=True)
+                return paginator.get_paginated_response(serializer.data)
+            
+            serializer = QuizQuestionFeedbackDetailSerializer(assessments, many=True)
+            return Response(serializer.data)
+    
+    def _create_quiz_assessment(self, request):
+        """Create new quiz assessment"""
+        data = request.data.copy()
+        data['teacher'] = request.user.id
+        
+        # Validate required fields
+        required_fields = ['enrollment', 'lesson', 'quiz_attempt', 'title', 'content', 'assessment_type']
+        for field in required_fields:
+            if field not in data:
+                return Response(
+                    {'error': f'Missing required field: {field}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        # Check if assessment already exists
+        existing = LessonAssessment.objects.filter(
+            enrollment_id=data['enrollment'],
+            lesson_id=data['lesson'],
+            teacher=request.user,
+            quiz_attempt_id=data['quiz_attempt']
+        ).first()
+        
+        if existing:
+            return Response(
+                {'error': 'Assessment already exists for this quiz attempt'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = QuizQuestionFeedbackCreateUpdateSerializer(data=data)
+        if serializer.is_valid():
+            assessment = serializer.save()
+            return Response(
+                QuizQuestionFeedbackDetailSerializer(assessment).data,
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def _update_quiz_assessment(self, request, assessment_id):
+        """Update existing quiz assessment"""
+        assessment = get_object_or_404(LessonAssessment, id=assessment_id)
+        
+        # Check permissions
+        if assessment.teacher != request.user and request.user.role not in ['admin', 'superuser']:
+            return Response(
+                {'error': 'Permission denied'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = QuizQuestionFeedbackCreateUpdateSerializer(assessment, data=request.data, partial=True)
+        if serializer.is_valid():
+            assessment = serializer.save()
+            return Response(QuizQuestionFeedbackDetailSerializer(assessment).data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def _delete_quiz_assessment(self, request, assessment_id):
+        """Delete quiz assessment"""
+        assessment = get_object_or_404(LessonAssessment, id=assessment_id)
+        
+        # Check permissions
+        if assessment.teacher != request.user and request.user.role not in ['admin', 'superuser']:
+            return Response(
+                {'error': 'Permission denied'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        assessment.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    
+    # Assignment Assessment Methods
+    def _get_assignment_assessment(self, request, assessment_id=None):
+        """Get assignment assessment(s)"""
+        if assessment_id:
+            # Get specific assignment assessment
+            assessment = get_object_or_404(LessonAssessment, id=assessment_id)
+            
+            # Check permissions
+            if request.user.role == 'student' and assessment.enrollment.student_profile.user != request.user:
+                return Response(
+                    {'error': 'Permission denied'}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            serializer = QuizQuestionFeedbackDetailSerializer(assessment)
+            return Response(serializer.data)
+        else:
+            # Get all assignment assessments for user
+            if request.user.role == 'student':
+                enrollments = EnrolledCourse.objects.filter(
+                    student_profile__user=request.user
+                )
+                assessments = LessonAssessment.objects.filter(
+                    enrollment__in=enrollments,
+                    assessment_type__in=['strength', 'weakness', 'improvement', 'general', 'achievement', 'challenge'],
+                    quiz_attempt__isnull=True  # Assignment assessments don't have quiz attempts
+                ).order_by('-created_at')
+            else:
+                # Teacher/Admin can see all assessments they created
+                assessments = LessonAssessment.objects.filter(
+                    teacher=request.user,
+                    quiz_attempt__isnull=True
+                ).order_by('-created_at')
+            
+            # Pagination
+            paginator = StudentPagination()
+            page = paginator.paginate_queryset(assessments, request)
+            if page is not None:
+                serializer = QuizQuestionFeedbackDetailSerializer(page, many=True)
+                return paginator.get_paginated_response(serializer.data)
+            
+            serializer = QuizQuestionFeedbackDetailSerializer(assessments, many=True)
+            return Response(serializer.data)
+    
+    def _create_assignment_assessment(self, request):
+        """Create new assignment assessment"""
+        data = request.data.copy()
+        data['teacher'] = request.user.id
+        
+        # Validate required fields
+        required_fields = ['enrollment', 'lesson', 'title', 'content', 'assessment_type']
+        for field in required_fields:
+            if field not in data:
+                return Response(
+                    {'error': f'Missing required field: {field}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        # Ensure it's not linked to a quiz attempt
+        data['quiz_attempt'] = None
+        
+        serializer = QuizQuestionFeedbackCreateUpdateSerializer(data=data)
+        if serializer.is_valid():
+            assessment = serializer.save()
+            return Response(
+                QuizQuestionFeedbackDetailSerializer(assessment).data,
+                status=status.HTTP_201_CREATED
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def _update_assignment_assessment(self, request, assessment_id):
+        """Update existing assignment assessment"""
+        assessment = get_object_or_404(LessonAssessment, id=assessment_id)
+        
+        # Check permissions
+        if assessment.teacher != request.user and request.user.role not in ['admin', 'superuser']:
+            return Response(
+                {'error': 'Permission denied'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = QuizQuestionFeedbackCreateUpdateSerializer(assessment, data=request.data, partial=True)
+        if serializer.is_valid():
+            assessment = serializer.save()
+            return Response(QuizQuestionFeedbackDetailSerializer(assessment).data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def _delete_assignment_assessment(self, request, assessment_id):
+        """Delete assignment assessment"""
+        assessment = get_object_or_404(LessonAssessment, id=assessment_id)
+        
+        # Check permissions
+        if assessment.teacher != request.user and request.user.role not in ['admin', 'superuser']:
+            return Response(
+                {'error': 'Permission denied'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        assessment.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     
     
