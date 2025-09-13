@@ -8,6 +8,7 @@ from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.http import HttpResponse
+from django.db import transaction
 import os
 import stripe
 import json
@@ -152,29 +153,44 @@ class StripeWebhookView(APIView):
             except stripe.error.SignatureVerificationError as e:
                 return HttpResponse(f"Invalid signature: {e}", status=400)
             
-            # Log webhook event
-            WebhookEvent.objects.create(
-                stripe_event_id=event['id'],
-                event_type=event['type'],
-                processed=False,
-                data=event['data']
-            )
+            # Check if we've already processed this event (idempotency)
+            event_id = event['id']
+            if WebhookEvent.objects.filter(stripe_event_id=event_id).exists():
+                print(f"📋 Event {event_id} already processed, skipping")
+                return HttpResponse("Event already processed", status=200)
             
-            # Handle the event
-            if event['type'] == 'checkout.session.completed':
-                self._handle_checkout_completed(event['data']['object'])
-            elif event['type'] == 'customer.subscription.created':
-                self._handle_subscription_created(event['data']['object'])
-            elif event['type'] == 'customer.subscription.updated':
-                self._handle_subscription_updated(event['data']['object'])
-            elif event['type'] == 'customer.subscription.deleted':
-                self._handle_subscription_deleted(event['data']['object'])
-            elif event['type'] == 'invoice.payment_succeeded':
-                self._handle_payment_succeeded(event['data']['object'])
-            elif event['type'] == 'invoice.payment_failed':
-                self._handle_payment_failed(event['data']['object'])
+            print(f"🎣 Processing webhook event: {event['type']} ({event_id})")
             
-            return HttpResponse("Webhook processed successfully", status=200)
+            # Handle the event based on type
+            try:
+                if event['type'] == 'customer.subscription.updated':
+                    self._handle_subscription_updated(event['data']['object'])
+                elif event['type'] == 'customer.subscription.deleted':
+                    self._handle_subscription_deleted(event['data']['object'])
+                elif event['type'] == 'invoice.payment_succeeded':
+                    self._handle_payment_succeeded(event['data']['object'])
+                elif event['type'] == 'invoice.payment_failed':
+                    self._handle_payment_failed(event['data']['object'])
+                elif event['type'] == 'customer.subscription.trial_will_end':
+                    self._handle_trial_ending(event['data']['object'])
+                else:
+                    print(f"ℹ️ Unhandled event type: {event['type']}")
+                
+                # Log successful processing
+                WebhookEvent.objects.create(
+                    stripe_event_id=event_id,
+                    type=event['type'],
+                    payload=event['data']
+                )
+                
+                print(f"✅ Successfully processed webhook: {event['type']}")
+                return HttpResponse("Webhook processed successfully", status=200)
+                
+            except Exception as handler_error:
+                print(f"❌ Error processing webhook {event['type']}: {handler_error}")
+                import traceback
+                traceback.print_exc()
+                raise handler_error
             
         except Exception as e:
             return HttpResponse(f"Webhook error: {str(e)}", status=500)
@@ -231,23 +247,51 @@ class StripeWebhookView(APIView):
         """Handle subscription updates"""
         try:
             sub = Subscription.objects.get(stripe_subscription_id=subscription['id'])
+            old_status = sub.status
             sub.status = subscription['status']
-            sub.current_period_start = timezone.datetime.fromtimestamp(
-                subscription['current_period_start'], tz=timezone.utc
-            )
-            sub.current_period_end = timezone.datetime.fromtimestamp(
-                subscription['current_period_end'], tz=timezone.utc
-            )
+            
+            # Handle period dates safely (like we did in enrollment)
+            from datetime import datetime, timedelta
+            
+            if subscription.get('current_period_start'):
+                sub.current_period_start = datetime.fromtimestamp(
+                    subscription['current_period_start'], tz=timezone.utc
+                )
+            elif subscription.get('trial_start'):
+                sub.current_period_start = datetime.fromtimestamp(
+                    subscription['trial_start'], tz=timezone.utc
+                )
+            
+            if subscription.get('current_period_end'):
+                sub.current_period_end = datetime.fromtimestamp(
+                    subscription['current_period_end'], tz=timezone.utc
+                )
+            elif subscription.get('trial_end'):
+                sub.current_period_end = datetime.fromtimestamp(
+                    subscription['trial_end'], tz=timezone.utc
+                )
+            
             sub.cancel_at = None
             if subscription.get('cancel_at'):
-                sub.cancel_at = timezone.datetime.fromtimestamp(
+                sub.cancel_at = datetime.fromtimestamp(
                     subscription['cancel_at'], tz=timezone.utc
                 )
+                
+            if subscription.get('canceled_at'):
+                sub.canceled_at = datetime.fromtimestamp(
+                    subscription['canceled_at'], tz=timezone.utc
+                )
+            
             sub.save()
+            
+            print(f"✅ Updated subscription {subscription['id']}: {old_status} → {sub.status}")
+            
         except Subscription.DoesNotExist:
-            pass
+            print(f"⚠️ Subscription {subscription['id']} not found for update")
         except Exception as e:
-            print(f"Error handling subscription updated: {e}")
+            print(f"❌ Error handling subscription updated: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _handle_subscription_deleted(self, subscription):
         """Handle subscription cancellation"""
@@ -284,10 +328,23 @@ class StripeWebhookView(APIView):
                     sub = Subscription.objects.get(stripe_subscription_id=subscription_id)
                     sub.status = 'past_due'
                     sub.save()
+                    print(f"✅ Updated subscription {subscription_id} to past_due")
                 except Subscription.DoesNotExist:
-                    pass
+                    print(f"⚠️ Subscription {subscription_id} not found for failed payment")
         except Exception as e:
-            print(f"Error handling payment failed: {e}")
+            print(f"❌ Error handling payment failed: {e}")
+    
+    def _handle_trial_ending(self, subscription):
+        """Handle trial ending notification"""
+        try:
+            sub = Subscription.objects.get(stripe_subscription_id=subscription['id'])
+            print(f"⏰ Trial ending soon for subscription {subscription['id']}")
+            print(f"📧 TODO: Send trial ending email to user {sub.user.email}")
+            # Here you could send an email notification to the user
+        except Subscription.DoesNotExist:
+            print(f"⚠️ Subscription {subscription['id']} not found for trial ending")
+        except Exception as e:
+            print(f"❌ Error handling trial ending: {e}")
 
 
 class CreatePaymentIntentView(APIView):
@@ -313,13 +370,13 @@ class CreatePaymentIntentView(APIView):
         try:
             from .models import Subscription
             existing_subs = Subscription.objects.filter(
-                customer_account__user=request.user,
-                billing_product__course_id=course_id,
-                stripe_status__in=['active', 'trialing', 'incomplete', 'incomplete_expired', 'past_due']
+                user=request.user,
+                course_id=course_id,
+                status__in=['active', 'trialing', 'incomplete', 'incomplete_expired', 'past_due']
             )
             print(f"🔍 Found {existing_subs.count()} existing subscriptions for this user/course")
             for sub in existing_subs:
-                print(f"  - Subscription {sub.stripe_subscription_id}: status={sub.stripe_status}, created={sub.created_at}")
+                print(f"  - Subscription {sub.stripe_subscription_id}: status={sub.status}, created={sub.created_at}")
         except Exception as e:
             print(f"⚠️ Error checking existing subscriptions: {e}")
         
@@ -718,61 +775,126 @@ class ConfirmEnrollmentView(APIView):
                 payment_status = 'paid'
                 payment_due_date = None
             
-            # Create enrollment with proper fields
-            enrollment = EnrolledCourse.objects.create(
-                student_profile=student_profile,
-                course=course,
-                status='active',
-                enrolled_by=request.user,
+            # Create enrollment and subscription atomically
+            with transaction.atomic():
+                # Create enrollment with proper fields
+                enrollment = EnrolledCourse.objects.create(
+                    student_profile=student_profile,
+                    course=course,
+                    status='active',
+                    enrolled_by=request.user,
+                    
+                    # Payment information
+                    payment_status=payment_status,
+                    amount_paid=amount_paid,
+                    payment_due_date=payment_due_date,
+                    discount_applied=0,
+                    
+                    # Course initialization
+                    total_lessons_count=course.total_lessons or 0,
+                    total_assignments_assigned=getattr(course, 'total_assignments', 0),
+                    
+                    # Progress tracking initialization
+                    progress_percentage=0,
+                    completed_lessons_count=0,
+                    total_assignments_completed=0,
+                    
+                    # Engagement defaults
+                    total_study_time=timezone.timedelta(),
+                    total_video_watch_time=timezone.timedelta(),
+                    login_count=0,
+                    
+                    # Communication preferences
+                    parent_notifications_enabled=True,
+                    reminder_emails_enabled=True,
+                )
                 
-                # Payment information
-                payment_status=payment_status,
-                amount_paid=amount_paid,
-                payment_due_date=payment_due_date,
-                discount_applied=0,
-                
-                # Course initialization
-                total_lessons_count=course.total_lessons or 0,
-                total_assignments_assigned=getattr(course, 'total_assignments', 0),
-                
-                # Progress tracking initialization
-                progress_percentage=0,
-                completed_lessons_count=0,
-                total_assignments_completed=0,
-                
-                # Engagement defaults
-                total_study_time=timezone.timedelta(),
-                total_video_watch_time=timezone.timedelta(),
-                login_count=0,
-                
-                # Communication preferences
-                parent_notifications_enabled=True,
-                reminder_emails_enabled=True,
-            )
-            
-            # Add student to the selected class
-            try:
-                if selected_class.student_count < selected_class.max_capacity:
-                    selected_class.students.add(request.user)
-                    print(f"✅ Added student to class: {selected_class.name}")
-                else:
-                    print(f"⚠️ Class {selected_class.name} is full, student not added to class")
-            except Exception as e:
-                print(f"⚠️ Failed to add student to class: {e}")
-            
-            # Save subscription info if monthly payment (not for trials)
-            if not is_trial and pricing_type == 'monthly' and payment_intent_id:
+                # Add student to the selected class
                 try:
-                    from .models import Subscription
-                    Subscription.objects.create(
-                        customer_account=CustomerAccount.objects.get(user=request.user),
-                        course=course,
-                        stripe_subscription_id=payment_intent_id,
-                        status='active'
-                    )
-                    print("✅ Subscription record created")
+                    if selected_class.student_count < selected_class.max_capacity:
+                        selected_class.students.add(request.user)
+                        print(f"✅ Added student to class: {selected_class.name}")
+                    else:
+                        print(f"⚠️ Class {selected_class.name} is full, student not added to class")
                 except Exception as e:
-                    print(f"⚠️ Could not save subscription: {e}")
+                    print(f"⚠️ Failed to add student to class: {e}")
+                
+                # Create subscription record for both trial and paid subscriptions
+                subscription_id = request.data.get('subscription_id')
+                if subscription_id:
+                    print(f"🔄 Creating local subscription record for: {subscription_id}")
+                    try:
+                        # Get the Stripe subscription details to populate our local record
+                        stripe_subscription = stripe.Subscription.retrieve(subscription_id)
+                        
+                        print(f"🔍 Stripe subscription data: {stripe_subscription}")
+                        
+                        # Calculate period dates (handle trial vs active subscriptions)
+                        from datetime import datetime
+                        
+                        # For trial subscriptions, current_period_start/end might not exist
+                        # Use trial_start/trial_end instead
+                        if stripe_subscription.get('current_period_start'):
+                            current_period_start = datetime.fromtimestamp(
+                                stripe_subscription['current_period_start'], tz=timezone.utc
+                            )
+                        elif stripe_subscription.get('trial_start'):
+                            current_period_start = datetime.fromtimestamp(
+                                stripe_subscription['trial_start'], tz=timezone.utc
+                            )
+                        else:
+                            # Fallback to creation time
+                            current_period_start = datetime.fromtimestamp(
+                                stripe_subscription['created'], tz=timezone.utc
+                            )
+                        
+                        if stripe_subscription.get('current_period_end'):
+                            current_period_end = datetime.fromtimestamp(
+                                stripe_subscription['current_period_end'], tz=timezone.utc
+                            )
+                        elif stripe_subscription.get('trial_end'):
+                            current_period_end = datetime.fromtimestamp(
+                                stripe_subscription['trial_end'], tz=timezone.utc
+                            )
+                        else:
+                            # Fallback: 14 days from start for trials
+                            from datetime import timedelta
+                            current_period_end = current_period_start + timedelta(days=14)
+                        
+                        # Get the price ID from the subscription
+                        stripe_price_id = stripe_subscription['items']['data'][0]['price']['id']
+                        
+                        # Handle cancel_at field safely
+                        cancel_at = None
+                        if stripe_subscription.get('cancel_at'):
+                            cancel_at = datetime.fromtimestamp(
+                                stripe_subscription['cancel_at'], tz=timezone.utc
+                            )
+                        
+                        # Create local subscription record
+                        subscription_record = Subscription.objects.create(
+                            user=request.user,
+                            course=course,
+                            stripe_subscription_id=subscription_id,
+                            stripe_price_id=stripe_price_id,
+                            status=stripe_subscription['status'],
+                            current_period_start=current_period_start,
+                            current_period_end=current_period_end,
+                            cancel_at=cancel_at,
+                        )
+                        
+                        print(f"✅ Subscription record created: {subscription_record.id}")
+                        print(f"✅ Status: {subscription_record.status}")
+                        print(f"✅ Period: {current_period_start} to {current_period_end}")
+                        
+                    except Exception as e:
+                        print(f"⚠️ Could not save subscription: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        # Re-raise to trigger transaction rollback
+                        raise e
+                else:
+                    print("ℹ️ No subscription_id provided - this might be a one-time payment without trial")
             
             print(f"✅ Enrollment created: {enrollment.id} (Trial: {is_trial})")
             
