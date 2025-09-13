@@ -362,9 +362,9 @@ class CreatePaymentIntentView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, course_id: str):
-        print(f"🔍 CreatePaymentIntentView called with course_id: {course_id}")
-        print(f"🔍 Request data: {request.data}")
-        print(f"🔍 User: {request.user}")
+        #print(f"🔍 CreatePaymentIntentView called with course_id: {course_id}")
+        #print(f"🔍 Request data: {request.data}")
+        #print(f"🔍 User: {request.user}")
         
         # Check if user already has active subscriptions for this course
         try:
@@ -374,7 +374,7 @@ class CreatePaymentIntentView(APIView):
                 course_id=course_id,
                 status__in=['active', 'trialing', 'incomplete', 'incomplete_expired', 'past_due']
             )
-            print(f"🔍 Found {existing_subs.count()} existing subscriptions for this user/course")
+            #print(f"🔍 Found {existing_subs.count()} existing subscriptions for this user/course")
             for sub in existing_subs:
                 print(f"  - Subscription {sub.stripe_subscription_id}: status={sub.status}, created={sub.created_at}")
         except Exception as e:
@@ -382,10 +382,10 @@ class CreatePaymentIntentView(APIView):
         
         try:
             stripe_client = get_stripe_client()
-            print(f"🔑 Stripe client configured with key: {stripe.api_key[:12]}...")
+            #print(f"🔑 Stripe client configured with key: {stripe.api_key[:12]}...")
             # Check if we're in test or live mode
             is_test_mode = stripe.api_key.startswith('sk_test_')
-            print(f"🔑 Stripe mode: {'TEST' if is_test_mode else 'LIVE'}")
+            #print(f"🔑 Stripe mode: {'TEST' if is_test_mode else 'LIVE'}")
             
             # Get course
             course = get_object_or_404(Course, id=course_id, status='published')
@@ -406,7 +406,7 @@ class CreatePaymentIntentView(APIView):
                     'one_time': {'amount': float(one_time_price.unit_amount) if one_time_price else float(course.price)},
                     'monthly': {'amount': float(monthly_price.unit_amount) if monthly_price else float(course.price) * 1.15}
                 }
-                print(f"💰 Course pricing options: {pricing_options}")
+                #print(f"💰 Course pricing options: {pricing_options}")
             except BillingProduct.DoesNotExist:
                 print(f"⚠️ No billing product found for course {course.id}, using base price")
                 pricing_options = {
@@ -435,7 +435,7 @@ class CreatePaymentIntentView(APIView):
             # Calculate amount based on pricing type
             if pricing_type == 'monthly':
                 amount = int(pricing_options['monthly']['amount'] * 100)
-                print(f"💳 Creating subscription for monthly payment: ${pricing_options['monthly']['amount']}")
+                #print(f"💳 Creating subscription for monthly payment: ${pricing_options['monthly']['amount']}")
                 
                 # Calculate total months for the course duration
                 import math
@@ -468,9 +468,9 @@ class CreatePaymentIntentView(APIView):
                     stripe_price_id = stripe_price.id
                 
                 # Create subscription
-                print(f"🚀 About to create Stripe subscription with price_id: {stripe_price_id}")
-                print(f"🚀 Customer: {customer_account.stripe_customer_id}")
-                print(f"🚀 Trial period: {14 if request.data.get('trial_period') else None} days")
+                #print(f"🚀 About to create Stripe subscription with price_id: {stripe_price_id}")
+                #print(f"🚀 Customer: {customer_account.stripe_customer_id}")
+                #print(f"🚀 Trial period: {14 if request.data.get('trial_period') else None} days")
                 
                 try:
                     # Calculate when to cancel the subscription after all monthly payments
@@ -502,15 +502,15 @@ class CreatePaymentIntentView(APIView):
                         'trial_period': str(bool(request.data.get('trial_period'))).lower()
                     }
                     )
-                    print(f"✅ Stripe subscription created: {subscription.id}")
-                    print(f"✅ Subscription status: {subscription.status}")
-                    print(f"✅ Has latest_invoice: {bool(getattr(subscription, 'latest_invoice', None))}")
-                    print(f"✅ Has pending_setup_intent: {bool(getattr(subscription, 'pending_setup_intent', None))}")
+                    #print(f"✅ Stripe subscription created: {subscription.id}")
+                    #print(f"✅ Subscription status: {subscription.status}")
+                    #print(f"✅ Has latest_invoice: {bool(getattr(subscription, 'latest_invoice', None))}")
+                    #print(f"✅ Has pending_setup_intent: {bool(getattr(subscription, 'pending_setup_intent', None))}")
                     
                     # Double-check by retrieving the subscription from Stripe
                     try:
                         verified_sub = stripe.Subscription.retrieve(subscription.id)
-                        print(f"🔍 Verified subscription exists in Stripe: {verified_sub.id} (status: {verified_sub.status})")
+                        #print(f"🔍 Verified subscription exists in Stripe: {verified_sub.id} (status: {verified_sub.status})")
                     except Exception as verify_error:
                         print(f"❌ Failed to verify subscription in Stripe: {verify_error}")
                 
@@ -577,8 +577,8 @@ class CreatePaymentIntentView(APIView):
                         # Calculate when to cancel: trial end + 1 billing cycle (1 month)
                         trial_end = datetime.datetime.now(timezone.utc) + datetime.timedelta(days=14)
                         cancel_at = trial_end + datetime.timedelta(days=30)  # 1 month after trial ends
-                        print(f"🗓️ Trial ends: {trial_end.strftime('%Y-%m-%d %H:%M:%S UTC')}")
-                        print(f"🗓️ Subscription will cancel: {cancel_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+                        #print(f"🗓️ Trial ends: {trial_end.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+                        #print(f"🗓️ Subscription will cancel: {cancel_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
                         
                         subscription = stripe.Subscription.create(
                             customer=customer_account.stripe_customer_id,

@@ -9,6 +9,8 @@ class CourseSettingsAdmin(admin.ModelAdmin):
         'monthly_price_markup_percentage',
         'max_students_per_course',
         'default_course_duration_weeks',
+        'enable_trial_period',
+        'trial_period_days',
         'updated_at'
     )
     
@@ -22,6 +24,10 @@ class CourseSettingsAdmin(admin.ModelAdmin):
         ('Course Defaults', {
             'fields': ('max_students_per_course', 'default_course_duration_weeks'),
             'description': 'Default values for new courses'
+        }),
+        ('Trial Period Settings', {
+            'fields': ('enable_trial_period', 'trial_period_days'),
+            'description': 'Configure trial period for all courses'
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),

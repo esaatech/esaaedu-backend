@@ -25,7 +25,18 @@ class CourseSettings(models.Model):
         help_text="Percentage markup for monthly payments compared to one-time payment"
     )
     
-    # Other Course Settings (for future expansion)
+    # Trial Period Settings
+    enable_trial_period = models.BooleanField(
+        default=True,
+        help_text="Enable trial period for courses"
+    )
+    
+    trial_period_days = models.PositiveIntegerField(
+        default=14,
+        help_text="Trial period duration in days"
+    )
+    
+    # Other Course Settings
     max_students_per_course = models.PositiveIntegerField(
         default=30,
         help_text="Default maximum students allowed per course"
@@ -59,6 +70,8 @@ class CourseSettings(models.Model):
                 'monthly_price_markup_percentage': 15.00,
                 'max_students_per_course': 30,
                 'default_course_duration_weeks': 8,
+                'enable_trial_period': True,
+                'trial_period_days': 14,
             }
         )
         return settings
