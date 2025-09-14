@@ -13,7 +13,7 @@ import os
 import stripe
 import json
 
-from .models import BillingProduct, BillingPrice, CustomerAccount, Subscription, WebhookEvent
+from .models import BillingProduct, BillingPrice, CustomerAccount, Subscription, Payment, WebhookEvent
 from courses.models import Course
 from settings.models import CourseSettings
 
@@ -34,7 +34,6 @@ def get_trial_period_settings():
             'days': settings.trial_period_days
         }
     except Exception as e:
-        print(f"⚠️ Error getting trial period settings: {e}")
         # Fallback to default values
         return {
             'enabled': True,
@@ -75,22 +74,18 @@ class CreateCheckoutSessionView(APIView):
             if pricing_type == 'monthly':
                 # Get trial period settings
                 trial_settings = get_trial_period_settings()
+                trial_days = trial_settings['days'] if trial_settings['enabled'] else None
                 
-                # Subscription with configurable trial period, card collected
-                session_data = {
-                    'mode': 'subscription',
-                    'customer': customer.stripe_customer_id,
-                    'line_items': [{"price": price.stripe_price_id, "quantity": 1}],
-                    'allow_promotion_codes': True,
-                    'success_url': request.data.get('success_url') or 'https://example.com/success',
-                    'cancel_url': request.data.get('cancel_url') or 'https://example.com/cancel',
-                }
-                
-                # Add trial period if enabled
-                if trial_settings['enabled']:
-                    session_data['subscription_data'] = {"trial_period_days": trial_settings['days']}
-                
-                session = stripe.checkout.Session.create(**session_data)
+                # Subscription with trial period, card collected
+                session = stripe.checkout.Session.create(
+                    mode='subscription',
+                    customer=customer.stripe_customer_id,
+                    line_items=[{"price": price.stripe_price_id, "quantity": 1}],
+                    subscription_data={"trial_period_days": trial_days},
+                    allow_promotion_codes=True,
+                    success_url=request.data.get('success_url') or 'https://example.com/success',
+                    cancel_url=request.data.get('cancel_url') or 'https://example.com/cancel',
+                )
             else:
                 # One-time payment
                 session = stripe.checkout.Session.create(
@@ -182,7 +177,10 @@ class StripeWebhookView(APIView):
             # Check if we've already processed this event (idempotency)
             event_id = event['id']
             if WebhookEvent.objects.filter(stripe_event_id=event_id).exists():
+                print(f"📋 Event {event_id} already processed, skipping")
                 return HttpResponse("Event already processed", status=200)
+            
+            print(f"🎣 Processing webhook event: {event['type']} ({event_id})")
             
             # Handle the event based on type
             try:
@@ -197,7 +195,7 @@ class StripeWebhookView(APIView):
                 elif event['type'] == 'customer.subscription.trial_will_end':
                     self._handle_trial_ending(event['data']['object'])
                 else:
-                    pass
+                    print(f"ℹ️ Unhandled event type: {event['type']}")
                 
                 # Log successful processing
                 WebhookEvent.objects.create(
@@ -206,6 +204,7 @@ class StripeWebhookView(APIView):
                     payload=event['data']
                 )
                 
+                print(f"✅ Successfully processed webhook: {event['type']}")
                 return HttpResponse("Webhook processed successfully", status=200)
                 
             except Exception as handler_error:
@@ -304,13 +303,46 @@ class StripeWebhookView(APIView):
                     subscription['canceled_at'], tz=timezone.utc
                 )
             
+            # Update new billing fields
+            # Next invoice date and amount
+            if subscription.get('current_period_end'):
+                sub.next_invoice_date = datetime.fromtimestamp(
+                    subscription['current_period_end'], tz=timezone.utc
+                )
+                # Get amount from subscription items
+                if subscription.get('items', {}).get('data', []):
+                    item = subscription['items']['data'][0]
+                    sub.next_invoice_amount = item.get('price', {}).get('unit_amount', 0) / 100
+            
+            # Trial end date
+            if subscription.get('trial_end'):
+                sub.trial_end = datetime.fromtimestamp(
+                    subscription['trial_end'], tz=timezone.utc
+                )
+            
+            # Billing interval
+            if subscription.get('items', {}).get('data', []):
+                price_data = subscription['items']['data'][0]['price']
+                if price_data.get('recurring'):
+                    sub.billing_interval = price_data['recurring'].get('interval', 'monthly')
+                else:
+                    sub.billing_interval = 'one_time'
+            
+            # Current subscription amount
+            if subscription.get('items', {}).get('data', []):
+                item = subscription['items']['data'][0]
+                sub.amount = item.get('price', {}).get('unit_amount', 0) / 100
+            
             sub.save()
             
+            print(f"✅ Updated subscription {subscription['id']}: {old_status} → {sub.status}")
             
         except Subscription.DoesNotExist:
             print(f"⚠️ Subscription {subscription['id']} not found for update")
         except Exception as e:
-            pass
+            print(f"❌ Error handling subscription updated: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _handle_subscription_deleted(self, subscription):
         """Handle subscription cancellation"""
@@ -321,7 +353,7 @@ class StripeWebhookView(APIView):
         except Subscription.DoesNotExist:
             pass
         except Exception as e:
-            pass
+            print(f"Error handling subscription deleted: {e}")
     
     def _handle_payment_succeeded(self, invoice):
         """Handle successful payment"""
@@ -332,11 +364,23 @@ class StripeWebhookView(APIView):
                 try:
                     sub = Subscription.objects.get(stripe_subscription_id=subscription_id)
                     sub.status = 'active'
+                    
+                    # Update next invoice date and amount from the invoice
+                    if invoice.get('period_end'):
+                        from datetime import datetime
+                        sub.next_invoice_date = datetime.fromtimestamp(
+                            invoice['period_end'], tz=timezone.utc
+                        )
+                    
+                    if invoice.get('amount_paid'):
+                        sub.next_invoice_amount = invoice['amount_paid'] / 100
+                    
                     sub.save()
+                    print(f"✅ Updated subscription {subscription_id} to active with billing details")
                 except Subscription.DoesNotExist:
                     pass
         except Exception as e:
-            pass
+            print(f"Error handling payment succeeded: {e}")
     
     def _handle_payment_failed(self, invoice):
         """Handle failed payment"""
@@ -347,21 +391,23 @@ class StripeWebhookView(APIView):
                     sub = Subscription.objects.get(stripe_subscription_id=subscription_id)
                     sub.status = 'past_due'
                     sub.save()
-                    pass
+                    print(f"✅ Updated subscription {subscription_id} to past_due")
                 except Subscription.DoesNotExist:
-                    pass
+                    print(f"⚠️ Subscription {subscription_id} not found for failed payment")
         except Exception as e:
-            pass
+            print(f"❌ Error handling payment failed: {e}")
     
     def _handle_trial_ending(self, subscription):
         """Handle trial ending notification"""
         try:
             sub = Subscription.objects.get(stripe_subscription_id=subscription['id'])
+            print(f"⏰ Trial ending soon for subscription {subscription['id']}")
+            print(f"📧 TODO: Send trial ending email to user {sub.user.email}")
             # Here you could send an email notification to the user
         except Subscription.DoesNotExist:
-            pass
+            print(f"⚠️ Subscription {subscription['id']} not found for trial ending")
         except Exception as e:
-            pass
+            print(f"❌ Error handling trial ending: {e}")
 
 
 class CreatePaymentIntentView(APIView):
@@ -379,6 +425,10 @@ class CreatePaymentIntentView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, course_id: str):
+        print(f"🔍 CreatePaymentIntentView called with course_id: {course_id}")
+        print(f"🔍 Request data: {request.data}")
+        print(f"🔍 User: {request.user}")
+        
         # Check if user already has active subscriptions for this course
         try:
             from .models import Subscription
@@ -387,11 +437,18 @@ class CreatePaymentIntentView(APIView):
                 course_id=course_id,
                 status__in=['active', 'trialing', 'incomplete', 'incomplete_expired', 'past_due']
             )
+            print(f"🔍 Found {existing_subs.count()} existing subscriptions for this user/course")
+            for sub in existing_subs:
+                print(f"  - Subscription {sub.stripe_subscription_id}: status={sub.status}, created={sub.created_at}")
         except Exception as e:
-            pass
+            print(f"⚠️ Error checking existing subscriptions: {e}")
         
         try:
             stripe_client = get_stripe_client()
+            print(f"🔑 Stripe client configured with key: {stripe.api_key[:12]}...")
+            # Check if we're in test or live mode
+            is_test_mode = stripe.api_key.startswith('sk_test_')
+            print(f"🔑 Stripe mode: {'TEST' if is_test_mode else 'LIVE'}")
             
             # Get course
             course = get_object_or_404(Course, id=course_id, status='published')
@@ -412,8 +469,9 @@ class CreatePaymentIntentView(APIView):
                     'one_time': {'amount': float(one_time_price.unit_amount) if one_time_price else float(course.price)},
                     'monthly': {'amount': float(monthly_price.unit_amount) if monthly_price else float(course.price) * 1.15}
                 }
+                print(f"💰 Course pricing options: {pricing_options}")
             except BillingProduct.DoesNotExist:
-                pass
+                print(f"⚠️ No billing product found for course {course.id}, using base price")
                 pricing_options = {
                     'one_time': {'amount': float(course.price)},
                     'monthly': {'amount': float(course.price) * 1.15}  # 15% more for installments
@@ -440,19 +498,25 @@ class CreatePaymentIntentView(APIView):
             # Calculate amount based on pricing type
             if pricing_type == 'monthly':
                 amount = int(pricing_options['monthly']['amount'] * 100)
+                print(f"💳 Creating subscription for monthly payment: ${pricing_options['monthly']['amount']}")
+                
                 # Calculate total months for the course duration
                 import math
                 total_months = math.ceil(course.duration_weeks / 4)
+                print(f"📅 Course duration: {course.duration_weeks} weeks = {total_months} months")
                 
                 # For monthly payments, create a subscription instead of one-time payment
                 # First, create or get a price in Stripe
                 try:
                     billing_product = BillingProduct.objects.get(course=course)
-                    monthly_price = BillingPrice.objects.get(
+                    monthly_price = BillingPrice.objects.filter(
                         product=billing_product, 
                         billing_period='monthly'
-                    )
-                    stripe_price_id = monthly_price.stripe_price_id
+                    ).first()
+                    if monthly_price:
+                        stripe_price_id = monthly_price.stripe_price_id
+                    else:
+                        raise BillingPrice.DoesNotExist
                 except (BillingProduct.DoesNotExist, BillingPrice.DoesNotExist):
                     # Create a price on the fly if it doesn't exist
                     stripe_price = stripe.Price.create(
@@ -470,25 +534,28 @@ class CreatePaymentIntentView(APIView):
                     stripe_price_id = stripe_price.id
                 
                 # Create subscription
+                print(f"🚀 About to create Stripe subscription with price_id: {stripe_price_id}")
+                print(f"🚀 Customer: {customer_account.stripe_customer_id}")
+                # Get trial period settings
+                trial_settings = get_trial_period_settings()
+                trial_days = trial_settings['days'] if (request.data.get('trial_period') and trial_settings['enabled']) else 0
+                print(f"🚀 Trial period: {trial_days} days")
                 
                 try:
                     # Calculate when to cancel the subscription after all monthly payments
                     import datetime
                     from datetime import timezone
-                    
-                    # Get trial period settings
-                    trial_settings = get_trial_period_settings()
-                    trial_days = trial_settings['days'] if (request.data.get('trial_period') and trial_settings['enabled']) else 0
                     # Cancel after trial + (total_months * 30 days per month)
                     cancel_at = datetime.datetime.now(timezone.utc) + datetime.timedelta(
                         days=trial_days + (total_months * 30)
                     )
+                    print(f"🗓️ Monthly subscription will cancel: {cancel_at.strftime('%Y-%m-%d %H:%M:%S UTC')} (after {total_months} payments)")
                     
                     subscription = stripe.Subscription.create(
                     customer=customer_account.stripe_customer_id,
                     items=[{'price': stripe_price_id}],
                     # Add trial when requested so Stripe auto-manages conversion after trial
-                    trial_period_days=trial_days if trial_days > 0 else None,
+                    trial_period_days=trial_days if request.data.get('trial_period') else None,
                     cancel_at=int(cancel_at.timestamp()),  # Cancel after specified number of monthly payments
                     payment_behavior='default_incomplete',
                     payment_settings={'save_default_payment_method': 'on_subscription'},
@@ -502,11 +569,17 @@ class CreatePaymentIntentView(APIView):
                         'trial_period': str(bool(request.data.get('trial_period'))).lower()
                     }
                     )
+                    print(f"✅ Stripe subscription created: {subscription.id}")
+                    print(f"✅ Subscription status: {subscription.status}")
+                    print(f"✅ Has latest_invoice: {bool(getattr(subscription, 'latest_invoice', None))}")
+                    print(f"✅ Has pending_setup_intent: {bool(getattr(subscription, 'pending_setup_intent', None))}")
+                    
                     # Double-check by retrieving the subscription from Stripe
                     try:
                         verified_sub = stripe.Subscription.retrieve(subscription.id)
+                        print(f"🔍 Verified subscription exists in Stripe: {verified_sub.id} (status: {verified_sub.status})")
                     except Exception as verify_error:
-                        pass
+                        print(f"❌ Failed to verify subscription in Stripe: {verify_error}")
                 
                 except stripe.error.StripeError as e:
                     print(f"❌ Stripe error creating subscription: {e}")
@@ -527,19 +600,24 @@ class CreatePaymentIntentView(APIView):
                     payment_intent = subscription.latest_invoice.payment_intent
                     client_secret = payment_intent.client_secret
                     payment_intent_id = payment_intent.id
+                    print(f"💳 Using payment intent from latest_invoice: {payment_intent_id}")
                 elif getattr(subscription, 'pending_setup_intent', None):
                     setup_intent = subscription.pending_setup_intent
                     client_secret = setup_intent.client_secret
                     setup_intent_id = setup_intent.id
                     intent_type = 'setup'
+                    print(f"🔧 Using setup intent: {setup_intent_id}")
                 else:
+                    print(f"❌ No payment or setup intent available for subscription")
                     raise Exception('No payment or setup intent available for subscription')
                 
             else:
                 amount = int(pricing_options['one_time']['amount'] * 100)
+                print(f"💳 Creating one-time payment: ${pricing_options['one_time']['amount']}")
                 
                 if request.data.get('trial_period'):
                     # For one-time payments with trial, create a subscription that will charge once and then cancel
+                    print(f"🔄 Creating one-time subscription with trial for: ${pricing_options['one_time']['amount']}")
                     
                     # For subscriptions, we need a recurring price, not a one-time price
                     # Create a special recurring price for one-time trial subscriptions
@@ -556,6 +634,7 @@ class CreatePaymentIntentView(APIView):
                         }
                     )
                     stripe_price_id = stripe_price.id
+                    print(f"✅ Created recurring price for one-time trial: {stripe_price_id}")
                     
                     # Create a subscription with trial that will cancel after first payment
                     try:
@@ -569,6 +648,9 @@ class CreatePaymentIntentView(APIView):
                         # Calculate when to cancel: trial end + 1 billing cycle (1 month)
                         trial_end = datetime.datetime.now(timezone.utc) + datetime.timedelta(days=trial_days)
                         cancel_at = trial_end + datetime.timedelta(days=30)  # 1 month after trial ends
+                        print(f"🗓️ Trial ends: {trial_end.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+                        print(f"🗓️ Subscription will cancel: {cancel_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+                        
                         subscription = stripe.Subscription.create(
                             customer=customer_account.stripe_customer_id,
                             items=[{'price': stripe_price_id}],
@@ -586,6 +668,8 @@ class CreatePaymentIntentView(APIView):
                                 'trial_period': 'true'
                             }
                         )
+                        print(f"✅ One-time trial subscription created: {subscription.id}")
+                        print(f"✅ Subscription status: {subscription.status}")
                         
                         # Handle the intents like monthly subscriptions
                         intent_type = 'payment'
@@ -596,12 +680,15 @@ class CreatePaymentIntentView(APIView):
                             payment_intent = subscription.latest_invoice.payment_intent
                             client_secret = payment_intent.client_secret
                             payment_intent_id = payment_intent.id
+                            print(f"💳 Using payment intent from latest_invoice: {payment_intent_id}")
                         elif getattr(subscription, 'pending_setup_intent', None):
                             setup_intent = subscription.pending_setup_intent
                             client_secret = setup_intent.client_secret
                             setup_intent_id = setup_intent.id
                             intent_type = 'setup'
+                            print(f"🔧 Using setup intent: {setup_intent_id}")
                         else:
+                            print(f"❌ No payment or setup intent available for one-time subscription")
                             raise Exception('No payment or setup intent available for subscription')
                             
                     except stripe.error.StripeError as e:
@@ -646,6 +733,8 @@ class CreatePaymentIntentView(APIView):
                 'course_title': course.title,
             }
             
+            print(f"🎯 Final response data: {response_data}")
+            
             return Response({
                 'client_secret': client_secret,
                 'intent_type': intent_type,  # 'payment' | 'setup'
@@ -677,6 +766,8 @@ class ConfirmEnrollmentView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, course_id: str):
+        print(f"🎓 ConfirmEnrollmentView called with course_id: {course_id}")
+        print(f"🎓 Request data: {request.data}")
         
         try:
             # Get course and class
@@ -728,8 +819,8 @@ class ConfirmEnrollmentView(APIView):
             
             # Calculate payment details based on trial vs paid
             if is_trial:
+                print("💫 Creating TRIAL enrollment")
                 from datetime import timedelta
-                # Get trial period settings
                 trial_settings = get_trial_period_settings()
                 trial_days = trial_settings['days'] if trial_settings['enabled'] else 14
                 trial_end_date = timezone.now().date() + timedelta(days=trial_days)
@@ -737,6 +828,7 @@ class ConfirmEnrollmentView(APIView):
                 amount_paid = 0
                 payment_due_date = trial_end_date
             else:
+                print("💳 Creating PAID enrollment")
                 # Paid enrollment - get actual pricing
                 try:
                     billing_product = BillingProduct.objects.get(course=course)
@@ -794,15 +886,21 @@ class ConfirmEnrollmentView(APIView):
                 try:
                     if selected_class.student_count < selected_class.max_capacity:
                         selected_class.students.add(request.user)
+                        print(f"✅ Added student to class: {selected_class.name}")
+                    else:
+                        print(f"⚠️ Class {selected_class.name} is full, student not added to class")
                 except Exception as e:
-                    pass
+                    print(f"⚠️ Failed to add student to class: {e}")
                 
                 # Create subscription record for both trial and paid subscriptions
                 subscription_id = request.data.get('subscription_id')
                 if subscription_id:
+                    print(f"🔄 Creating local subscription record for: {subscription_id}")
                     try:
                         # Get the Stripe subscription details to populate our local record
                         stripe_subscription = stripe.Subscription.retrieve(subscription_id)
+                        
+                        print(f"🔍 Stripe subscription data: {stripe_subscription}")
                         
                         # Calculate period dates (handle trial vs active subscriptions)
                         from datetime import datetime
@@ -832,7 +930,7 @@ class ConfirmEnrollmentView(APIView):
                                 stripe_subscription['trial_end'], tz=timezone.utc
                             )
                         else:
-                            # Fallback: Use trial period from settings
+                            # Fallback: Use trial period settings for trials
                             from datetime import timedelta
                             trial_settings = get_trial_period_settings()
                             trial_days = trial_settings['days'] if trial_settings['enabled'] else 14
@@ -848,6 +946,40 @@ class ConfirmEnrollmentView(APIView):
                                 stripe_subscription['cancel_at'], tz=timezone.utc
                             )
                         
+                        # Get billing interval from the price
+                        billing_interval = 'one_time'  # Default
+                        if stripe_subscription.get('items', {}).get('data', []):
+                            price_data = stripe_subscription['items']['data'][0]['price']
+                            if price_data.get('recurring'):
+                                billing_interval = price_data['recurring'].get('interval', 'monthly')
+                            else:
+                                billing_interval = 'one_time'
+                        
+                        # Calculate next invoice date and amount
+                        next_invoice_date = None
+                        next_invoice_amount = None
+                        if stripe_subscription.get('current_period_end'):
+                            next_invoice_date = datetime.fromtimestamp(
+                                stripe_subscription['current_period_end'], tz=timezone.utc
+                            )
+                            # Get the amount from the subscription items
+                            if stripe_subscription.get('items', {}).get('data', []):
+                                item = stripe_subscription['items']['data'][0]
+                                next_invoice_amount = item.get('price', {}).get('unit_amount', 0) / 100
+                        
+                        # Get trial end date
+                        trial_end = None
+                        if stripe_subscription.get('trial_end'):
+                            trial_end = datetime.fromtimestamp(
+                                stripe_subscription['trial_end'], tz=timezone.utc
+                            )
+                        
+                        # Get current subscription amount
+                        subscription_amount = None
+                        if stripe_subscription.get('items', {}).get('data', []):
+                            item = stripe_subscription['items']['data'][0]
+                            subscription_amount = item.get('price', {}).get('unit_amount', 0) / 100
+                        
                         # Create local subscription record
                         subscription_record = Subscription.objects.create(
                             user=request.user,
@@ -858,7 +990,16 @@ class ConfirmEnrollmentView(APIView):
                             current_period_start=current_period_start,
                             current_period_end=current_period_end,
                             cancel_at=cancel_at,
+                            next_invoice_date=next_invoice_date,
+                            next_invoice_amount=next_invoice_amount,
+                            trial_end=trial_end,
+                            billing_interval=billing_interval,
+                            amount=subscription_amount,
                         )
+                        
+                        print(f"✅ Subscription record created: {subscription_record.id}")
+                        print(f"✅ Status: {subscription_record.status}")
+                        print(f"✅ Period: {current_period_start} to {current_period_end}")
                         
                     except Exception as e:
                         print(f"⚠️ Could not save subscription: {e}")
@@ -866,6 +1007,10 @@ class ConfirmEnrollmentView(APIView):
                         traceback.print_exc()
                         # Re-raise to trigger transaction rollback
                         raise e
+                else:
+                    print("ℹ️ No subscription_id provided - this might be a one-time payment without trial")
+            
+            print(f"✅ Enrollment created: {enrollment.id} (Trial: {is_trial})")
             
             return Response({
                 'message': f'{"Trial" if is_trial else "Paid"} enrollment successful',
@@ -896,6 +1041,9 @@ class CancelIncompleteSubscriptionView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, course_id: str):
+        print(f"🗑️ Canceling incomplete subscription for course: {course_id}")
+        print(f"🗑️ Request data: {request.data}")
+        
         try:
             get_stripe_client()
             
@@ -903,9 +1051,13 @@ class CancelIncompleteSubscriptionView(APIView):
             if not subscription_id:
                 return Response({'error': 'subscription_id is required'}, status=status.HTTP_400_BAD_REQUEST)
             
+            print(f"🗑️ Attempting to cancel subscription: {subscription_id}")
+            
             # Cancel the subscription in Stripe
             try:
                 canceled_subscription = stripe.Subscription.cancel(subscription_id)
+                print(f"✅ Successfully canceled subscription: {canceled_subscription.id}")
+                print(f"✅ Subscription status: {canceled_subscription.status}")
                 
                 return Response({
                     'message': 'Subscription canceled successfully',
@@ -934,3 +1086,67 @@ class CancelIncompleteSubscriptionView(APIView):
                 'error': 'Failed to cancel subscription',
                 'details': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class BillingDashboardView(APIView):
+    """
+    Get billing dashboard data for a user (subscriptions and payments)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            # Get user's subscriptions
+            subscriptions = Subscription.objects.filter(user=request.user).select_related('course')
+            
+            # Get user's payments
+            payments = Payment.objects.filter(user=request.user).select_related('course')
+            
+            # Format subscriptions data
+            subscriptions_data = []
+            for sub in subscriptions:
+                subscriptions_data.append({
+                    'id': sub.id,
+                    'course_title': sub.course.title,
+                    'course_id': str(sub.course.id),
+                    'status': sub.status,
+                    'billing_interval': sub.billing_interval,
+                    'amount': float(sub.amount) if sub.amount else 0,
+                    'next_invoice_date': sub.next_invoice_date.isoformat() if sub.next_invoice_date else None,
+                    'next_invoice_amount': float(sub.next_invoice_amount) if sub.next_invoice_amount else 0,
+                    'trial_end': sub.trial_end.isoformat() if sub.trial_end else None,
+                    'current_period_start': sub.current_period_start.isoformat() if sub.current_period_start else None,
+                    'current_period_end': sub.current_period_end.isoformat() if sub.current_period_end else None,
+                    'cancel_at': sub.cancel_at.isoformat() if sub.cancel_at else None,
+                    'created_at': sub.created_at.isoformat(),
+                })
+            
+            # Format payments data
+            payments_data = []
+            for payment in payments:
+                payments_data.append({
+                    'id': payment.id,
+                    'course_title': payment.course.title if payment.course else 'Unknown Course',
+                    'course_id': str(payment.course.id) if payment.course else None,
+                    'amount': float(payment.amount),
+                    'currency': payment.currency,
+                    'status': payment.status,
+                    'paid_at': payment.paid_at.isoformat() if payment.paid_at else None,
+                    'created_at': payment.created_at.isoformat(),
+                })
+            
+            return Response({
+                'subscriptions': subscriptions_data,
+                'payments': payments_data,
+                'total_subscriptions': len(subscriptions_data),
+                'total_payments': len(payments_data),
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error fetching billing dashboard: {e}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': 'Failed to fetch billing data', 'details': str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
