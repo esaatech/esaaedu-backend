@@ -457,12 +457,12 @@ class CreatePaymentIntentView(APIView):
             # Get billing data for the course
             try:
                 billing_product = BillingProduct.objects.get(course=course)
-                # Get pricing options from billing prices
+                # Get pricing options from billing prices (active only)
                 one_time_price = BillingPrice.objects.filter(
-                    product=billing_product, billing_period='one_time'
+                    product=billing_product, billing_period='one_time', is_active=True
                 ).first()
                 monthly_price = BillingPrice.objects.filter(
-                    product=billing_product, billing_period='monthly'
+                    product=billing_product, billing_period='monthly', is_active=True
                 ).first()
                 
                 pricing_options = {
@@ -511,7 +511,8 @@ class CreatePaymentIntentView(APIView):
                     billing_product = BillingProduct.objects.get(course=course)
                     monthly_price = BillingPrice.objects.filter(
                         product=billing_product, 
-                        billing_period='monthly'
+                        billing_period='monthly',
+                        is_active=True
                     ).first()
                     if monthly_price:
                         stripe_price_id = monthly_price.stripe_price_id
@@ -834,12 +835,12 @@ class ConfirmEnrollmentView(APIView):
                     billing_product = BillingProduct.objects.get(course=course)
                     if pricing_type == 'monthly':
                         monthly_price = BillingPrice.objects.filter(
-                            product=billing_product, billing_period='monthly'
+                            product=billing_product, billing_period='monthly', is_active=True
                         ).first()
                         amount_paid = float(monthly_price.unit_amount) / 100 if monthly_price else float(course.price) * 1.15
                     else:
                         one_time_price = BillingPrice.objects.filter(
-                            product=billing_product, billing_period='one_time'
+                            product=billing_product, billing_period='one_time', is_active=True
                         ).first()
                         amount_paid = float(one_time_price.unit_amount) / 100 if one_time_price else float(course.price)
                 except BillingProduct.DoesNotExist:
