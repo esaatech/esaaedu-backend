@@ -494,6 +494,44 @@ class StripeWebhookView(APIView):
             subscriber.status = new_status
             subscriber.save()
             
+            # CRITICAL: Ensure enrollment is created when subscription becomes active/trialing
+            if new_status in ['active', 'trialing'] and old_status in ['incomplete', 'incomplete_expired']:
+                print(f"🎓 Webhook: Ensuring enrollment is created for subscription {subscription['id']}")
+                try:
+                    # Get metadata from Stripe subscription
+                    metadata = subscription.get('metadata', {})
+                    course_id = metadata.get('course_id')
+                    class_id = metadata.get('class_id')
+                    pricing_type = metadata.get('pricing_type', 'one_time')
+                    
+                    if course_id and class_id:
+                        from courses.models import Course
+                        course = Course.objects.get(id=course_id)
+                        user = subscriber.user
+                        is_trial = new_status == 'trialing'
+                        
+                        # Call complete_enrollment_process to ensure enrollment exists
+                        enrollment = complete_enrollment_process(
+                            subscription_id=subscription['id'],
+                            user=user,
+                            course=course,
+                            class_id=class_id,
+                            pricing_type=pricing_type,
+                            is_trial=is_trial
+                        )
+                        
+                        if enrollment:
+                            print(f"✅ Webhook: Enrollment ensured for subscription {subscription['id']}")
+                        else:
+                            print(f"⚠️ Webhook: Failed to ensure enrollment for subscription {subscription['id']}")
+                    else:
+                        print(f"⚠️ Webhook: Missing metadata for subscription {subscription['id']}: course_id={course_id}, class_id={class_id}")
+                        
+                except Exception as e:
+                    print(f"❌ Webhook: Error ensuring enrollment: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
             # If subscription becomes active (trial ended), update subscription type
             if new_status == 'active' and old_status == 'trialing':
                 print(f"🔄 Trial ended, updating subscription type from trial to actual pricing type")
