@@ -34,7 +34,7 @@ SECRET_KEY = config('SECRET_KEY', default="django-insecure-*%%)uc!v428r3q#r_dbt$
 DEBUG = config('DEBUG', default=True, cast=bool)
 
 # ALLOWED_HOSTS configuration for Cloud Run
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=lambda v: [s.strip() for s in v.split(',')])
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,8e3840a22bf0.ngrok-free.app', cast=lambda v: [s.strip() for s in v.split(',')])
 
 # Add Cloud Run specific hosts if running on Cloud Run
 if config('K_SERVICE', default=None):  # Cloud Run environment variable
