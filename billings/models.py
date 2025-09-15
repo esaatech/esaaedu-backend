@@ -109,6 +109,82 @@ class Subscription(models.Model):
             models.Index(fields=['status']),
         ]
 
+    def save(self, *args, **kwargs):
+        """Override save to track status changes"""
+        import traceback
+        import sys
+        
+        # Get the current status before save
+        old_status = None
+        if self.pk:
+            try:
+                old_instance = Subscription.objects.get(pk=self.pk)
+                old_status = old_instance.status
+            except Subscription.DoesNotExist:
+                pass
+        
+        # Print debug info
+        print(f"🔍 SUBSCRIPTION SAVE CALLED:")
+        print(f"   ID: {self.pk}")
+        print(f"   Status: {old_status} → {self.status}")
+        print(f"   Stripe ID: {self.stripe_subscription_id}")
+        print(f"   User: {self.user.email if self.user else 'None'}")
+        print(f"   Course: {self.course.title if self.course else 'None'}")
+        
+        # Check if this is an update (not initial creation)
+        if self.pk and old_status is not None:
+            print(f"   🚨 UPDATE DETECTED! Status changing from {old_status} to {self.status}")
+            if old_status != self.status:
+                print(f"   🚨 STATUS CHANGE: {old_status} → {self.status}")
+        
+        # Print call stack to see who called this
+        print(f"   Call stack:")
+        for i, frame in enumerate(traceback.extract_stack()[:-1]):  # Exclude this function
+            print(f"     {i+1}. {frame.filename}:{frame.lineno} in {frame.name}() - {frame.line}")
+        
+        # Call the parent save method
+        super().save(*args, **kwargs)
+        
+        print(f"   ✅ SAVE COMPLETED")
+        
+        # After save, check if status changed
+        if self.pk and old_status is not None and old_status != self.status:
+            print(f"   🔍 POST-SAVE VERIFICATION: Status is now {self.status}")
+            # Query the database to see what's actually stored
+            try:
+                db_record = Subscription.objects.get(pk=self.pk)
+                print(f"   🔍 DATABASE RECORD: Status = {db_record.status}")
+                if db_record.status != self.status:
+                    print(f"   🚨 MISMATCH! Model says {self.status}, DB says {db_record.status}")
+            except Exception as e:
+                print(f"   ⚠️ Could not verify database record: {e}")
+
+    def delete(self, *args, **kwargs):
+        """Override delete to track when subscriptions are deleted"""
+        print(f"🗑️ SUBSCRIPTION DELETE CALLED:")
+        print(f"   ID: {self.pk}")
+        print(f"   Status: {self.status}")
+        print(f"   Stripe ID: {self.stripe_subscription_id}")
+        super().delete(*args, **kwargs)
+        print(f"   ✅ DELETE COMPLETED")
+
+    def refresh_from_db(self, using=None, fields=None):
+        """Override refresh_from_db to track when subscriptions are refreshed"""
+        print(f"🔄 SUBSCRIPTION REFRESH CALLED:")
+        print(f"   ID: {self.pk}")
+        print(f"   Current status: {self.status}")
+        super().refresh_from_db(using=using, fields=fields)
+        print(f"   Status after refresh: {self.status}")
+        print(f"   ✅ REFRESH COMPLETED")
+
+    def clean(self):
+        """Override clean to track validation"""
+        print(f"🧹 SUBSCRIPTION CLEAN CALLED:")
+        print(f"   ID: {self.pk}")
+        print(f"   Status: {self.status}")
+        super().clean()
+        print(f"   ✅ CLEAN COMPLETED")
+
     def __str__(self) -> str:
         return f"Sub {self.user_id} -> {self.course_id} [{self.status}]"
 
@@ -143,6 +219,80 @@ class Payment(models.Model):
 
     def __str__(self) -> str:
         return f"Payment {self.amount} {self.currency} ({self.status})"
+
+
+class Subscribers(models.Model):
+    """Main subscription tracking table - replaces Subscription model."""
+    STATUS_ACTIVE = 'active'
+    STATUS_TRIALING = 'trialing'
+    STATUS_PAST_DUE = 'past_due'
+    STATUS_CANCELED = 'canceled'
+    STATUS_INCOMPLETE = 'incomplete'
+    STATUS_INCOMPLETE_EXPIRED = 'incomplete_expired'
+    STATUS_CHOICES = [
+        (STATUS_ACTIVE, 'Active'),
+        (STATUS_TRIALING, 'Trialing'),
+        (STATUS_PAST_DUE, 'Past due'),
+        (STATUS_CANCELED, 'Canceled'),
+        (STATUS_INCOMPLETE, 'Incomplete'),
+        (STATUS_INCOMPLETE_EXPIRED, 'Incomplete expired'),
+    ]
+
+    SUBSCRIPTION_TYPE_MONTHLY = 'monthly'
+    SUBSCRIPTION_TYPE_ONE_TIME = 'one_time'
+    SUBSCRIPTION_TYPE_TRIAL = 'trial'
+    SUBSCRIPTION_TYPE_CHOICES = [
+        (SUBSCRIPTION_TYPE_MONTHLY, 'Monthly'),
+        (SUBSCRIPTION_TYPE_ONE_TIME, 'One Time'),
+        (SUBSCRIPTION_TYPE_TRIAL, 'Trial'),
+    ]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='subscribers')
+    course = models.ForeignKey('courses.Course', on_delete=models.CASCADE, related_name='subscribers')
+    stripe_subscription_id = models.CharField(max_length=255, unique=True)
+    stripe_price_id = models.CharField(max_length=255)
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES)
+    subscription_type = models.CharField(max_length=20, choices=SUBSCRIPTION_TYPE_CHOICES, default=SUBSCRIPTION_TYPE_MONTHLY)
+    current_period_start = models.DateTimeField(null=True, blank=True)
+    current_period_end = models.DateTimeField(null=True, blank=True)
+    cancel_at = models.DateTimeField(null=True, blank=True)
+    canceled_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    next_invoice_date = models.DateTimeField(null=True, blank=True)
+    next_invoice_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    trial_end = models.DateTimeField(null=True, blank=True)
+    billing_interval = models.CharField(max_length=20, null=True, blank=True)
+    amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        db_table = 'billing_subscribers'
+        unique_together = [('user', 'course')]
+        indexes = [
+            models.Index(fields=['user', 'course']),
+            models.Index(fields=['status']),
+        ]
+
+    def save(self, *args, **kwargs):
+        """Override save to track status changes"""
+        # Get the current status before save
+        old_status = None
+        if self.pk:
+            try:
+                old_instance = Subscribers.objects.get(pk=self.pk)
+                old_status = old_instance.status
+            except Subscribers.DoesNotExist:
+                pass
+        
+        # Only log actual status changes
+        if self.pk and old_status is not None and old_status != self.status:
+            print(f"🔄 SUBSCRIBER STATUS CHANGE: {old_status} → {self.status} (ID: {self.pk})")
+        
+        # Call the parent save method
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"Subscriber {self.user_id} -> {self.course_id} [{self.status}]"
 
 
 class WebhookEvent(models.Model):

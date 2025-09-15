@@ -70,6 +70,7 @@ INSTALLED_APPS = [
     "teacher",
     "billings",
     "settings",
+    
 ]
 
 MIDDLEWARE = [

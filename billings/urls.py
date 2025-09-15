@@ -1,5 +1,7 @@
 from django.urls import path
-from .views import CreateCheckoutSessionView, ListMySubscriptionsView, CancelSubscriptionView, StripeWebhookView, CreatePaymentIntentView, ConfirmEnrollmentView, CancelIncompleteSubscriptionView, BillingDashboardView
+from .views import CreateCheckoutSessionView, ListMySubscriptionsView, CancelSubscriptionView
+from .views  import StripeWebhookView
+from .views import CreatePaymentIntentView, ConfirmEnrollmentView, CancelIncompleteSubscriptionView, BillingDashboardView
 
 
 app_name = 'billing'
