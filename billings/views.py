@@ -82,6 +82,12 @@ def complete_enrollment_process(subscription_id, user, course, class_id, pricing
             print(f"⚠️ Subscription {subscription_id} not found in local database")
             return None
         
+        # Get student profile first
+        student_profile = getattr(user, 'student_profile', None)
+        if not student_profile:
+            print(f"❌ Student profile not found for user {user.id}")
+            return None
+        
         # Check if enrollment already exists first (regardless of subscription status)
         existing_enrollment = EnrolledCourse.objects.filter(
             student_profile=student_profile,
@@ -94,12 +100,6 @@ def complete_enrollment_process(subscription_id, user, course, class_id, pricing
             subscription.status = 'active' if not is_trial else 'trialing'
             subscription.save()
             return existing_enrollment
-        
-        # Get student profile
-        student_profile = getattr(user, 'student_profile', None)
-        if not student_profile:
-            print(f"❌ Student profile not found for user {user.id}")
-            return None
         
         # Get the selected class
         try:
@@ -873,6 +873,8 @@ class CreatePaymentIntentView(APIView):
                     print(f"✅ Stripe subscription created: {subscription.id}")
                     print(f"✅ Subscription status: {subscription.status}")
                     print(f"🔍 Metadata sent to Stripe: {subscription.metadata}")
+                    print(f"🔍 DEBUG: class_id from request: {request.data.get('class_id')}")
+                    print(f"🔍 DEBUG: class_id in metadata: {subscription.metadata.get('class_id')}")
                     print(f"✅ Has latest_invoice: {bool(getattr(subscription, 'latest_invoice', None))}")
                     print(f"✅ Has pending_setup_intent: {bool(getattr(subscription, 'pending_setup_intent', None))}")
                     
