@@ -601,7 +601,52 @@ class StripeWebhookView(APIView):
                     subscriber.status = 'trialing'  # Update to trialing when payment succeeds
                     # Keep subscription_type as 'trial' - only update to monthly/one_time after trial ends
                     subscriber.save()
+                    print(f"🔄 SUBSCRIBER STATUS CHANGE: {old_status} → trialing (ID: {subscriber.id})")
                     print(f"✅ Updated subscriber {subscriber.id}: {old_status} → trialing (type remains: {subscriber.subscription_type})")
+                    
+                    # CRITICAL: Ensure enrollment is created when payment succeeds
+                    print(f"🎓 Webhook: Ensuring enrollment is created for subscription {subscription_id}")
+                    try:
+                        # Get the subscription from Stripe to get metadata
+                        stripe_subscription = stripe.Subscription.retrieve(subscription_id)
+                        metadata = stripe_subscription.get('metadata', {})
+                        course_id = metadata.get('course_id')
+                        class_id = metadata.get('class_id')
+                        pricing_type = metadata.get('pricing_type', 'one_time')
+                        
+                        print(f"🔍 Webhook: Metadata extraction for subscription {subscription_id}:")
+                        print(f"   - Full metadata: {metadata}")
+                        print(f"   - course_id: {course_id}")
+                        print(f"   - class_id: {class_id}")
+                        print(f"   - pricing_type: {pricing_type}")
+                        
+                        if course_id and class_id:
+                            from courses.models import Course
+                            course = Course.objects.get(id=course_id)
+                            user = subscriber.user
+                            is_trial = True  # Payment succeeded means trial started
+                            
+                            # Call complete_enrollment_process to ensure enrollment exists
+                            enrollment = complete_enrollment_process(
+                                subscription_id=subscription_id,
+                                user=user,
+                                course=course,
+                                class_id=class_id,
+                                pricing_type=pricing_type,
+                                is_trial=is_trial
+                            )
+                            
+                            if enrollment:
+                                print(f"✅ Webhook: Enrollment ensured for subscription {subscription_id}")
+                            else:
+                                print(f"⚠️ Webhook: Failed to ensure enrollment for subscription {subscription_id}")
+                        else:
+                            print(f"⚠️ Webhook: Missing metadata for subscription {subscription_id}: course_id={course_id}, class_id={class_id}")
+                            
+                    except Exception as e:
+                        print(f"❌ Webhook: Error ensuring enrollment: {e}")
+                        import traceback
+                        traceback.print_exc()
                     
                 except Subscribers.DoesNotExist:
                     print(f"⚠️ Subscriber {subscription_id} not found for payment succeeded")
