@@ -13,7 +13,7 @@ import os
 import stripe
 import json
 
-from .models import BillingProduct, BillingPrice, CustomerAccount, Subscription, Payment, WebhookEvent, Subscribers
+from .models import BillingProduct, BillingPrice, CustomerAccount, Payment, WebhookEvent, Subscribers
 from courses.models import Course
 from settings.models import CourseSettings
 
@@ -267,18 +267,67 @@ class ListMySubscriptionsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        subs = Subscription.objects.filter(user=request.user).values(
+        # Get only active and trialing subscriptions
+        subs = Subscribers.objects.filter(
+            user=request.user,
+            status__in=['active', 'trialing']
+        ).values(
             'id', 'course_id', 'stripe_subscription_id', 'stripe_price_id', 'status',
-            'current_period_start', 'current_period_end', 'cancel_at'
+            'subscription_type', 'current_period_start', 'current_period_end', 'cancel_at',
+            'next_invoice_date', 'next_invoice_amount', 'trial_end', 'billing_interval', 'amount'
         )
-        # Convert datetimes to ISO
+        # Convert datetimes to ISO and add display information
         data = []
         for s in subs:
+            # Calculate display information
+            is_trial = s['status'] == 'trialing'
+            is_monthly = s['subscription_type'] == 'monthly'
+            is_one_time = s['subscription_type'] == 'one_time'
+            
+            # Determine payment description - focus on next invoice, not payment type
+            if is_trial:
+                # For trials, show when trial ends and what happens next
+                if s['next_invoice_date'] and s['next_invoice_amount']:
+                    payment_description = f"Next invoice: ${float(s['next_invoice_amount']):.2f} on {s['next_invoice_date'].strftime('%b %d, %Y')}"
+                else:
+                    trial_end = s['trial_end'].strftime('%b %d, %Y') if s['trial_end'] else 'N/A'
+                    payment_description = f"Trial ends {trial_end}"
+            elif is_monthly:
+                # For monthly, show next invoice
+                if s['next_invoice_date'] and s['next_invoice_amount']:
+                    payment_description = f"Next invoice: ${float(s['next_invoice_amount']):.2f} on {s['next_invoice_date'].strftime('%b %d, %Y')}"
+                else:
+                    amount = float(s['amount']) if s['amount'] else 0
+                    payment_description = f"Monthly installments of ${amount:.2f}" if amount > 0 else "Monthly installments"
+            else:  # one_time
+                # For one-time, show the total amount
+                amount = float(s['amount']) if s['amount'] else 0
+                payment_description = f"Total amount: ${amount:.2f}" if amount > 0 else "One-time payment"
+            
+            # Next invoice information
+            next_invoice_info = None
+            if s['next_invoice_date'] and s['next_invoice_amount']:
+                next_invoice_info = {
+                    'date': s['next_invoice_date'].strftime('%b %d, %Y'),
+                    'amount': float(s['next_invoice_amount']),
+                    'formatted': f"${float(s['next_invoice_amount']):.2f} on {s['next_invoice_date'].strftime('%b %d, %Y')}"
+                }
+            
             data.append({
                 **s,
                 'current_period_start': s['current_period_start'].isoformat() if s['current_period_start'] else None,
                 'current_period_end': s['current_period_end'].isoformat() if s['current_period_end'] else None,
                 'cancel_at': s['cancel_at'].isoformat() if s['cancel_at'] else None,
+                'next_invoice_date': s['next_invoice_date'].isoformat() if s['next_invoice_date'] else None,
+                'trial_end': s['trial_end'].isoformat() if s['trial_end'] else None,
+                'amount': float(s['amount']) if s['amount'] else 0,
+                'next_invoice_amount': float(s['next_invoice_amount']) if s['next_invoice_amount'] else 0,
+                'payment_description': payment_description,
+                'is_trial': is_trial,
+                'is_monthly': is_monthly,
+                'is_one_time': is_one_time,
+                'next_invoice_info': next_invoice_info,
+                'trial_end_formatted': s['trial_end'].strftime('%b %d, %Y') if s['trial_end'] else None,
             })
         return Response(data)
 
@@ -289,7 +338,7 @@ class CancelSubscriptionView(APIView):
     def post(self, request, subscription_id: str):
         try:
             get_stripe_client()
-            sub = get_object_or_404(Subscription, id=subscription_id, user=request.user)
+            sub = get_object_or_404(Subscribers, id=subscription_id, user=request.user)
             # Set cancel at period end in Stripe
             updated = stripe.Subscription.modify(sub.stripe_subscription_id, cancel_at_period_end=True)
             # Mirror locally
@@ -489,10 +538,11 @@ class StripeWebhookView(APIView):
     def _handle_subscription_deleted(self, subscription):
         """Handle subscription cancellation"""
         try:
-            sub = Subscription.objects.get(stripe_subscription_id=subscription['id'])
+            sub = Subscribers.objects.get(stripe_subscription_id=subscription['id'])
             sub.status = 'canceled'
+            sub.canceled_at = timezone.now()
             sub.save()
-        except Subscription.DoesNotExist:
+        except Subscribers.DoesNotExist:
             pass
         except Exception as e:
             print(f"Error handling subscription deleted: {e}")
@@ -553,24 +603,24 @@ class StripeWebhookView(APIView):
             subscription_id = invoice.get('subscription')
             if subscription_id:
                 try:
-                    sub = Subscription.objects.get(stripe_subscription_id=subscription_id)
+                    sub = Subscribers.objects.get(stripe_subscription_id=subscription_id)
                     sub.status = 'past_due'
                     sub.save()
-                    print(f"✅ Updated subscription {subscription_id} to past_due")
-                except Subscription.DoesNotExist:
-                    print(f"⚠️ Subscription {subscription_id} not found for failed payment")
+                    print(f"✅ Updated subscriber {subscription_id} to past_due")
+                except Subscribers.DoesNotExist:
+                    print(f"⚠️ Subscriber {subscription_id} not found for failed payment")
         except Exception as e:
             print(f"❌ Error handling payment failed: {e}")
     
     def _handle_trial_ending(self, subscription):
         """Handle trial ending notification"""
         try:
-            sub = Subscription.objects.get(stripe_subscription_id=subscription['id'])
+            sub = Subscribers.objects.get(stripe_subscription_id=subscription['id'])
             print(f"⏰ Trial ending soon for subscription {subscription['id']}")
             print(f"📧 TODO: Send trial ending email to user {sub.user.email}")
             # Here you could send an email notification to the user
-        except Subscription.DoesNotExist:
-            print(f"⚠️ Subscription {subscription['id']} not found for trial ending")
+        except Subscribers.DoesNotExist:
+            print(f"⚠️ Subscriber {subscription['id']} not found for trial ending")
         except Exception as e:
             print(f"❌ Error handling trial ending: {e}")
 
@@ -596,17 +646,16 @@ class CreatePaymentIntentView(APIView):
         
         # Check if user already has active subscriptions for this course
         try:
-            from .models import Subscription
-            existing_subs = Subscription.objects.filter(
+            existing_subs = Subscribers.objects.filter(
                 user=request.user,
                 course_id=course_id,
                 status__in=['active', 'trialing', 'incomplete', 'incomplete_expired', 'past_due']
             )
-            print(f"🔍 Found {existing_subs.count()} existing subscriptions for this user/course")
+            print(f"🔍 Found {existing_subs.count()} existing subscribers for this user/course")
             for sub in existing_subs:
-                print(f"  - Subscription {sub.stripe_subscription_id}: status={sub.status}, created={sub.created_at}")
+                print(f"  - Subscriber {sub.stripe_subscription_id}: status={sub.status}, created={sub.created_at}")
         except Exception as e:
-            print(f"⚠️ Error checking existing subscriptions: {e}")
+            print(f"⚠️ Error checking existing subscribers: {e}")
         
         try:
             stripe_client = get_stripe_client()
@@ -1562,8 +1611,11 @@ class BillingDashboardView(APIView):
 
     def get(self, request):
         try:
-            # Get user's subscriptions
-            subscriptions = Subscription.objects.filter(user=request.user).select_related('course')
+            # Get user's active and trialing subscriptions only
+            subscriptions = Subscribers.objects.filter(
+                user=request.user,
+                status__in=['active', 'trialing']
+            ).select_related('course')
             
             # Get user's payments
             payments = Payment.objects.filter(user=request.user).select_related('course')
@@ -1571,23 +1623,62 @@ class BillingDashboardView(APIView):
             # Format subscriptions data
             subscriptions_data = []
             for sub in subscriptions:
-                print(f"🔍 BillingDashboard: Subscription {sub.id} status: {sub.status}")
-                print(f"🔍 BillingDashboard: Subscription {sub.id} stripe_id: {sub.stripe_subscription_id}")
-                print(f"🔍 BillingDashboard: Subscription {sub.id} created_at: {sub.created_at}")
+                print(f"🔍 BillingDashboard: Subscriber {sub.id} status: {sub.status}")
+                print(f"🔍 BillingDashboard: Subscriber {sub.id} stripe_id: {sub.stripe_subscription_id}")
+                print(f"🔍 BillingDashboard: Subscriber {sub.id} created_at: {sub.created_at}")
+                # Calculate display information
+                is_trial = sub.status == 'trialing'
+                is_monthly = sub.subscription_type == 'monthly'
+                is_one_time = sub.subscription_type == 'one_time'
+                
+                # Determine payment description - focus on next invoice, not payment type
+                if is_trial:
+                    # For trials, show when trial ends and what happens next
+                    if sub.next_invoice_date and sub.next_invoice_amount:
+                        payment_description = f"Next invoice: ${float(sub.next_invoice_amount):.2f} on {sub.next_invoice_date.strftime('%b %d, %Y')}"
+                    else:
+                        payment_description = f"Trial ends {sub.trial_end.strftime('%b %d, %Y') if sub.trial_end else 'N/A'}"
+                elif is_monthly:
+                    # For monthly, show next invoice
+                    if sub.next_invoice_date and sub.next_invoice_amount:
+                        payment_description = f"Next invoice: ${float(sub.next_invoice_amount):.2f} on {sub.next_invoice_date.strftime('%b %d, %Y')}"
+                    else:
+                        payment_description = f"Monthly installments of ${float(sub.amount):.2f}" if sub.amount else "Monthly installments"
+                else:  # one_time
+                    # For one-time, show the total amount
+                    payment_description = f"Total amount: ${float(sub.amount):.2f}" if sub.amount else "One-time payment"
+                
+                # Next invoice information
+                next_invoice_info = None
+                if sub.next_invoice_date and sub.next_invoice_amount:
+                    next_invoice_info = {
+                        'date': sub.next_invoice_date.strftime('%b %d, %Y'),
+                        'amount': float(sub.next_invoice_amount),
+                        'formatted': f"${float(sub.next_invoice_amount):.2f} on {sub.next_invoice_date.strftime('%b %d, %Y')}"
+                    }
+                
                 subscriptions_data.append({
                     'id': sub.id,
                     'course_title': sub.course.title,
                     'course_id': str(sub.course.id),
                     'status': sub.status,
+                    'subscription_type': sub.subscription_type,
                     'billing_interval': sub.billing_interval,
                     'amount': float(sub.amount) if sub.amount else 0,
+                    'payment_description': payment_description,
+                    'is_trial': is_trial,
+                    'is_monthly': is_monthly,
+                    'is_one_time': is_one_time,
                     'next_invoice_date': sub.next_invoice_date.isoformat() if sub.next_invoice_date else None,
                     'next_invoice_amount': float(sub.next_invoice_amount) if sub.next_invoice_amount else 0,
+                    'next_invoice_info': next_invoice_info,
                     'trial_end': sub.trial_end.isoformat() if sub.trial_end else None,
+                    'trial_end_formatted': sub.trial_end.strftime('%b %d, %Y') if sub.trial_end else None,
                     'current_period_start': sub.current_period_start.isoformat() if sub.current_period_start else None,
                     'current_period_end': sub.current_period_end.isoformat() if sub.current_period_end else None,
                     'cancel_at': sub.cancel_at.isoformat() if sub.cancel_at else None,
                     'created_at': sub.created_at.isoformat(),
+                    'updated_at': sub.updated_at.isoformat(),
                 })
             
             # Format payments data

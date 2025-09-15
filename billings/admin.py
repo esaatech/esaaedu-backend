@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import BillingProduct, BillingPrice, CustomerAccount, Subscription, Payment, WebhookEvent, Subscribers
+from .models import BillingProduct, BillingPrice, CustomerAccount, Payment, WebhookEvent, Subscribers
 
 
 @admin.register(BillingProduct)
@@ -21,11 +21,6 @@ class CustomerAccountAdmin(admin.ModelAdmin):
     search_fields = ("user__email", "stripe_customer_id")
 
 
-@admin.register(Subscription)
-class SubscriptionAdmin(admin.ModelAdmin):
-    list_display = ("user", "course", "status", "current_period_end", "cancel_at")
-    list_filter = ("status",)
-    search_fields = ("user__email", "course__title", "stripe_subscription_id")
 
 
 @admin.register(Payment)
