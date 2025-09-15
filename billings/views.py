@@ -82,10 +82,18 @@ def complete_enrollment_process(subscription_id, user, course, class_id, pricing
             print(f"⚠️ Subscription {subscription_id} not found in local database")
             return None
         
-        # Check if already processed (our distributed lock)
-        if subscription.status not in ['incomplete', 'incomplete_expired']:
-            print(f"✅ Already processed: {subscription.status}")
-            return subscription
+        # Check if enrollment already exists first (regardless of subscription status)
+        existing_enrollment = EnrolledCourse.objects.filter(
+            student_profile=student_profile,
+            course=course
+        ).first()
+        
+        if existing_enrollment and existing_enrollment.status in ['active', 'completed']:
+            print(f"✅ Enrollment already exists and is active: {existing_enrollment.id}")
+            # Update subscription status to match
+            subscription.status = 'active' if not is_trial else 'trialing'
+            subscription.save()
+            return existing_enrollment
         
         # Get student profile
         student_profile = getattr(user, 'student_profile', None)
@@ -100,28 +108,15 @@ def complete_enrollment_process(subscription_id, user, course, class_id, pricing
             print(f"❌ Class {class_id} not found")
             return None
         
-        # Check if enrollment already exists
-        existing_enrollment = EnrolledCourse.objects.filter(
-            student_profile=student_profile,
-            course=course
-        ).first()
-        
-        if existing_enrollment:
-            if existing_enrollment.status in ['active', 'completed']:
-                print(f"✅ Enrollment already exists and is active: {existing_enrollment.id}")
-                # Update subscription status
-                subscription.status = 'active' if not is_trial else 'incomplete'
-                subscription.save()
-                return existing_enrollment
-            else:
-                # Reactivate dropped/paused enrollment
-                existing_enrollment.status = 'active'
-                existing_enrollment.save()
-                print(f"✅ Reactivated existing enrollment: {existing_enrollment.id}")
-                # Update subscription status
-                subscription.status = 'active' if not is_trial else 'incomplete'
-                subscription.save()
-                return existing_enrollment
+        # If enrollment exists but is inactive, reactivate it
+        if existing_enrollment and existing_enrollment.status not in ['active', 'completed']:
+            existing_enrollment.status = 'active'
+            existing_enrollment.save()
+            print(f"✅ Reactivated existing enrollment: {existing_enrollment.id}")
+            # Update subscription status
+            subscription.status = 'active' if not is_trial else 'trialing'
+            subscription.save()
+            return existing_enrollment
         
         # Calculate payment details based on trial vs paid
         if is_trial:
@@ -504,6 +499,12 @@ class StripeWebhookView(APIView):
                     class_id = metadata.get('class_id')
                     pricing_type = metadata.get('pricing_type', 'one_time')
                     
+                    print(f"🔍 Webhook: Metadata extraction for subscription {subscription['id']}:")
+                    print(f"   - Full metadata: {metadata}")
+                    print(f"   - course_id: {course_id}")
+                    print(f"   - class_id: {class_id}")
+                    print(f"   - pricing_type: {pricing_type}")
+                    
                     if course_id and class_id:
                         from courses.models import Course
                         course = Course.objects.get(id=course_id)
@@ -826,6 +827,7 @@ class CreatePaymentIntentView(APIView):
                     )
                     print(f"✅ Stripe subscription created: {subscription.id}")
                     print(f"✅ Subscription status: {subscription.status}")
+                    print(f"🔍 Metadata sent to Stripe: {subscription.metadata}")
                     print(f"✅ Has latest_invoice: {bool(getattr(subscription, 'latest_invoice', None))}")
                     print(f"✅ Has pending_setup_intent: {bool(getattr(subscription, 'pending_setup_intent', None))}")
                     
@@ -1046,6 +1048,7 @@ class CreatePaymentIntentView(APIView):
                         )
                         print(f"✅ One-time trial subscription created: {subscription.id}")
                         print(f"✅ Subscription status: {subscription.status}")
+                        print(f"🔍 Metadata sent to Stripe: {subscription.metadata}")
                         print(f"⏰ Stripe subscription created at: {timezone.now()}")
                         
                         # Create local subscription record immediately with incomplete status
