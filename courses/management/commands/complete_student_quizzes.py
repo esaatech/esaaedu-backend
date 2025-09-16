@@ -1,7 +1,8 @@
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from courses.models import Course, Lesson, Quiz, Question, QuizAttempt, CourseEnrollment
+from courses.models import Course, Lesson, Quiz, Question, QuizAttempt
+from student.models import EnrolledCourse
 import json
 import random
 
@@ -73,13 +74,15 @@ class Command(BaseCommand):
 
         # Check if student is enrolled in the course
         try:
-            enrollment = CourseEnrollment.objects.get(
-                student=student,
+            # Get student profile first
+            student_profile = student.student_profile
+            enrollment = EnrolledCourse.objects.get(
+                student_profile=student_profile,
                 course=course,
                 status='active'
             )
             self.stdout.write(f'Student is enrolled in {course.title}')
-        except CourseEnrollment.DoesNotExist:
+        except (EnrolledCourse.DoesNotExist, AttributeError):
             self.stdout.write(
                 self.style.WARNING(f'Student {email} is not enrolled in {course.title}')
             )

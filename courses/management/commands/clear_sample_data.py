@@ -1,6 +1,7 @@
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
-from courses.models import Course, Lesson, Quiz, Question, CourseEnrollment, LessonProgress, QuizAttempt
+from courses.models import Course, Lesson, Quiz, Question, QuizAttempt
+from student.models import EnrolledCourse
 
 User = get_user_model()
 
@@ -19,14 +20,9 @@ class Command(BaseCommand):
         QuizAttempt.objects.all().delete()
         deleted_counts['Quiz Attempts'] = count
         
-        # Delete lesson progress
-        count = LessonProgress.objects.all().count()
-        LessonProgress.objects.all().delete()
-        deleted_counts['Lesson Progress'] = count
-        
         # Delete course enrollments
-        count = CourseEnrollment.objects.all().count()
-        CourseEnrollment.objects.all().delete()
+        count = EnrolledCourse.objects.all().count()
+        EnrolledCourse.objects.all().delete()
         deleted_counts['Course Enrollments'] = count
         
         # Delete questions

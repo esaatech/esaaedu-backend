@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import BillingProduct, BillingPrice, CustomerAccount, Subscription, Payment, WebhookEvent
+from .models import BillingProduct, BillingPrice, CustomerAccount, Payment, WebhookEvent, Subscribers
 
 
 @admin.register(BillingProduct)
@@ -21,11 +21,6 @@ class CustomerAccountAdmin(admin.ModelAdmin):
     search_fields = ("user__email", "stripe_customer_id")
 
 
-@admin.register(Subscription)
-class SubscriptionAdmin(admin.ModelAdmin):
-    list_display = ("user", "course", "status", "current_period_end", "cancel_at")
-    list_filter = ("status",)
-    search_fields = ("user__email", "course__title", "stripe_subscription_id")
 
 
 @admin.register(Payment)
@@ -33,6 +28,14 @@ class PaymentAdmin(admin.ModelAdmin):
     list_display = ("user", "course", "amount", "currency", "status", "paid_at")
     list_filter = ("status", "currency")
     search_fields = ("user__email", "stripe_payment_intent_id", "stripe_invoice_id")
+
+
+@admin.register(Subscribers)
+class SubscribersAdmin(admin.ModelAdmin):
+    list_display = ("user", "course", "status", "subscription_type", "current_period_end", "next_invoice_date", "amount")
+    list_filter = ("status", "subscription_type", "created_at")
+    search_fields = ("user__email", "course__title", "stripe_subscription_id")
+    readonly_fields = ("stripe_subscription_id", "created_at", "updated_at")
 
 
 @admin.register(WebhookEvent)

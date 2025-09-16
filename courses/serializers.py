@@ -383,14 +383,6 @@ class EnrolledStudentSerializer(serializers.ModelSerializer):
         return f"{profile.child_first_name} {profile.child_last_name}".strip() or obj.student_profile.user.get_full_name()
 
 
-class CourseEnrollmentStatsSerializer(serializers.Serializer):
-    """Serializer for course enrollment statistics"""
-    total_enrolled = serializers.IntegerField()
-    active_students = serializers.IntegerField()
-    completed_students = serializers.IntegerField()
-    pending_payment = serializers.IntegerField()
-    paid_students = serializers.IntegerField()
-    average_progress = serializers.DecimalField(max_digits=5, decimal_places=2)
 
 
 class CourseListSerializer(serializers.ModelSerializer):
@@ -498,7 +490,7 @@ class CourseDetailSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if request and 'stats' in request.query_params.get('include', ''):
             stats = getattr(obj, 'enrollment_stats', {})
-            return CourseEnrollmentStatsSerializer(stats).data if stats else None
+            return stats if stats else None
         return None
 
 

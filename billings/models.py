@@ -67,45 +67,6 @@ class CustomerAccount(models.Model):
         return f"Customer {self.user_id}"
 
 
-class Subscription(models.Model):
-    """Per-course subscription mirror from Stripe."""
-    STATUS_ACTIVE = 'active'
-    STATUS_TRIALING = 'trialing'
-    STATUS_PAST_DUE = 'past_due'
-    STATUS_CANCELED = 'canceled'
-    STATUS_INCOMPLETE = 'incomplete'
-    STATUS_INCOMPLETE_EXPIRED = 'incomplete_expired'
-    STATUS_CHOICES = [
-        (STATUS_ACTIVE, 'Active'),
-        (STATUS_TRIALING, 'Trialing'),
-        (STATUS_PAST_DUE, 'Past due'),
-        (STATUS_CANCELED, 'Canceled'),
-        (STATUS_INCOMPLETE, 'Incomplete'),
-        (STATUS_INCOMPLETE_EXPIRED, 'Incomplete expired'),
-    ]
-
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='subscriptions')
-    course = models.ForeignKey('courses.Course', on_delete=models.CASCADE, related_name='subscriptions')
-    stripe_subscription_id = models.CharField(max_length=255, unique=True)
-    stripe_price_id = models.CharField(max_length=255)
-    status = models.CharField(max_length=32, choices=STATUS_CHOICES)
-    current_period_start = models.DateTimeField(null=True, blank=True)
-    current_period_end = models.DateTimeField(null=True, blank=True)
-    cancel_at = models.DateTimeField(null=True, blank=True)
-    canceled_at = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = 'billing_subscriptions'
-        unique_together = [('user', 'course')]
-        indexes = [
-            models.Index(fields=['user', 'course']),
-            models.Index(fields=['status']),
-        ]
-
-    def __str__(self) -> str:
-        return f"Sub {self.user_id} -> {self.course_id} [{self.status}]"
 
 
 class Payment(models.Model):
@@ -138,6 +99,80 @@ class Payment(models.Model):
 
     def __str__(self) -> str:
         return f"Payment {self.amount} {self.currency} ({self.status})"
+
+
+class Subscribers(models.Model):
+    """Main subscription tracking table - replaces Subscription model."""
+    STATUS_ACTIVE = 'active'
+    STATUS_TRIALING = 'trialing'
+    STATUS_PAST_DUE = 'past_due'
+    STATUS_CANCELED = 'canceled'
+    STATUS_INCOMPLETE = 'incomplete'
+    STATUS_INCOMPLETE_EXPIRED = 'incomplete_expired'
+    STATUS_CHOICES = [
+        (STATUS_ACTIVE, 'Active'),
+        (STATUS_TRIALING, 'Trialing'),
+        (STATUS_PAST_DUE, 'Past due'),
+        (STATUS_CANCELED, 'Canceled'),
+        (STATUS_INCOMPLETE, 'Incomplete'),
+        (STATUS_INCOMPLETE_EXPIRED, 'Incomplete expired'),
+    ]
+
+    SUBSCRIPTION_TYPE_MONTHLY = 'monthly'
+    SUBSCRIPTION_TYPE_ONE_TIME = 'one_time'
+    SUBSCRIPTION_TYPE_TRIAL = 'trial'
+    SUBSCRIPTION_TYPE_CHOICES = [
+        (SUBSCRIPTION_TYPE_MONTHLY, 'Monthly'),
+        (SUBSCRIPTION_TYPE_ONE_TIME, 'One Time'),
+        (SUBSCRIPTION_TYPE_TRIAL, 'Trial'),
+    ]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='subscribers')
+    course = models.ForeignKey('courses.Course', on_delete=models.CASCADE, related_name='subscribers')
+    stripe_subscription_id = models.CharField(max_length=255, unique=True)
+    stripe_price_id = models.CharField(max_length=255)
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES)
+    subscription_type = models.CharField(max_length=20, choices=SUBSCRIPTION_TYPE_CHOICES, default=SUBSCRIPTION_TYPE_MONTHLY)
+    current_period_start = models.DateTimeField(null=True, blank=True)
+    current_period_end = models.DateTimeField(null=True, blank=True)
+    cancel_at = models.DateTimeField(null=True, blank=True)
+    canceled_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    next_invoice_date = models.DateTimeField(null=True, blank=True)
+    next_invoice_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    trial_end = models.DateTimeField(null=True, blank=True)
+    billing_interval = models.CharField(max_length=20, null=True, blank=True)
+    amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
+    class Meta:
+        db_table = 'billing_subscribers'
+        unique_together = [('user', 'course')]
+        indexes = [
+            models.Index(fields=['user', 'course']),
+            models.Index(fields=['status']),
+        ]
+
+    def save(self, *args, **kwargs):
+        """Override save to track status changes"""
+        # Get the current status before save
+        old_status = None
+        if self.pk:
+            try:
+                old_instance = Subscribers.objects.get(pk=self.pk)
+                old_status = old_instance.status
+            except Subscribers.DoesNotExist:
+                pass
+        
+        # Only log actual status changes
+        if self.pk and old_status is not None and old_status != self.status:
+            print(f"🔄 SUBSCRIBER STATUS CHANGE: {old_status} → {self.status} (ID: {self.pk})")
+        
+        # Call the parent save method
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"Subscriber {self.user_id} -> {self.course_id} [{self.status}]"
 
 
 class WebhookEvent(models.Model):
