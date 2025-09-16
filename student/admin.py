@@ -1,7 +1,8 @@
 from django.contrib import admin
 from .models import (
     EnrolledCourse, StudentAttendance, StudentGrade, StudentBehavior, 
-    StudentNote, StudentCommunication, StudentLessonProgress
+    StudentNote, StudentCommunication, StudentLessonProgress,
+    LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback
 )
 
 
@@ -305,3 +306,165 @@ class StudentLessonProgressAdmin(admin.ModelAdmin):
             progress.save()
         self.message_user(request, f'Progress reset for {queryset.count()} lessons.')
     reset_progress.short_description = "Reset progress for selected lessons"
+
+
+@admin.register(LessonAssessment)
+class LessonAssessmentAdmin(admin.ModelAdmin):
+    list_display = [
+        'enrollment', 'lesson', 'teacher', 'assessment_type', 'title', 
+        'created_at', 'has_quiz_attempt'
+    ]
+    list_filter = [
+        'assessment_type', 'created_at', 'teacher', 'enrollment__course'
+    ]
+    search_fields = [
+        'title', 'content', 'enrollment__student_profile__user__first_name',
+        'enrollment__student_profile__user__last_name', 'lesson__title',
+        'teacher__first_name', 'teacher__last_name'
+    ]
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    date_hierarchy = 'created_at'
+    
+    fieldsets = (
+        ('Assessment Details', {
+            'fields': ('enrollment', 'lesson', 'teacher', 'assessment_type', 'title', 'content')
+        }),
+        ('Quiz Link', {
+            'fields': ('quiz_attempt',),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def has_quiz_attempt(self, obj):
+        return obj.quiz_attempt is not None
+    has_quiz_attempt.boolean = True
+    has_quiz_attempt.short_description = 'Has Quiz Attempt'
+
+
+@admin.register(TeacherAssessment)
+class TeacherAssessmentAdmin(admin.ModelAdmin):
+    list_display = [
+        'enrollment', 'teacher', 'academic_performance', 'participation_level',
+        'created_at', 'has_detailed_feedback'
+    ]
+    list_filter = [
+        'academic_performance', 'participation_level', 'created_at', 'teacher',
+        'enrollment__course'
+    ]
+    search_fields = [
+        'enrollment__student_profile__user__first_name',
+        'enrollment__student_profile__user__last_name',
+        'teacher__first_name', 'teacher__last_name',
+        'strengths', 'weaknesses', 'recommendations'
+    ]
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    date_hierarchy = 'created_at'
+    
+    fieldsets = (
+        ('Assessment Overview', {
+            'fields': ('enrollment', 'teacher', 'academic_performance', 'participation_level')
+        }),
+        ('Detailed Feedback', {
+            'fields': ('strengths', 'weaknesses', 'recommendations', 'general_comments'),
+            'classes': ('wide',)
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def has_detailed_feedback(self, obj):
+        return bool(obj.strengths or obj.weaknesses or obj.recommendations)
+    has_detailed_feedback.boolean = True
+    has_detailed_feedback.short_description = 'Has Detailed Feedback'
+
+
+@admin.register(QuizQuestionFeedback)
+class QuizQuestionFeedbackAdmin(admin.ModelAdmin):
+    list_display = [
+        'quiz_attempt', 'question', 'teacher', 'is_correct', 'points_earned',
+        'points_possible', 'created_at'
+    ]
+    list_filter = [
+        'is_correct', 'created_at', 'teacher', 'quiz_attempt__quiz__lesson__course'
+    ]
+    search_fields = [
+        'feedback_text', 'quiz_attempt__student__first_name',
+        'quiz_attempt__student__last_name', 'teacher__first_name', 'teacher__last_name',
+        'question_text_snapshot'
+    ]
+    readonly_fields = [
+        'id', 'created_at', 'updated_at', 'question_text_snapshot',
+        'student_answer_snapshot', 'correct_answer_snapshot'
+    ]
+    date_hierarchy = 'created_at'
+    
+    fieldsets = (
+        ('Feedback Details', {
+            'fields': ('quiz_attempt', 'question', 'teacher', 'feedback_text')
+        }),
+        ('Scoring', {
+            'fields': ('points_earned', 'points_possible', 'is_correct')
+        }),
+        ('Snapshots', {
+            'fields': (
+                'question_text_snapshot', 'student_answer_snapshot', 
+                'correct_answer_snapshot'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(QuizAttemptFeedback)
+class QuizAttemptFeedbackAdmin(admin.ModelAdmin):
+    list_display = [
+        'quiz_attempt', 'teacher', 'overall_rating', 'created_at',
+        'has_detailed_feedback'
+    ]
+    list_filter = [
+        'overall_rating', 'created_at', 'teacher', 
+        'quiz_attempt__quiz__lesson__course'
+    ]
+    search_fields = [
+        'feedback_text', 'quiz_attempt__student__first_name',
+        'quiz_attempt__student__last_name', 'teacher__first_name', 'teacher__last_name',
+        'strengths_highlighted', 'areas_for_improvement'
+    ]
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    date_hierarchy = 'created_at'
+    
+    fieldsets = (
+        ('Feedback Overview', {
+            'fields': ('quiz_attempt', 'teacher', 'feedback_text', 'overall_rating')
+        }),
+        ('Detailed Assessment', {
+            'fields': (
+                'strengths_highlighted', 'areas_for_improvement', 
+                'study_recommendations'
+            ),
+            'classes': ('wide',)
+        }),
+        ('Private Notes', {
+            'fields': ('private_notes',),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def has_detailed_feedback(self, obj):
+        return obj.has_detailed_feedback
+    has_detailed_feedback.boolean = True
+    has_detailed_feedback.short_description = 'Has Detailed Feedback'
