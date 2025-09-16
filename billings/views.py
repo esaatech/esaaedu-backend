@@ -95,11 +95,11 @@ def complete_enrollment_process(subscription_id, user, course, class_id, pricing
         ).first()
         
         if existing_enrollment and existing_enrollment.status in ['active', 'completed']:
-            print(f"✅ Enrollment already exists and is active: {existing_enrollment.id}")
+                print(f"✅ Enrollment already exists and is active: {existing_enrollment.id}")
             # Update subscription status to match
-            subscription.status = 'active' if not is_trial else 'trialing'
-            subscription.save()
-            return existing_enrollment
+                subscription.status = 'active' if not is_trial else 'trialing'
+                subscription.save()
+                return existing_enrollment
         
         # Get the selected class
         try:
@@ -110,13 +110,13 @@ def complete_enrollment_process(subscription_id, user, course, class_id, pricing
         
         # If enrollment exists but is inactive, reactivate it
         if existing_enrollment and existing_enrollment.status not in ['active', 'completed']:
-            existing_enrollment.status = 'active'
-            existing_enrollment.save()
-            print(f"✅ Reactivated existing enrollment: {existing_enrollment.id}")
-            # Update subscription status
-            subscription.status = 'active' if not is_trial else 'trialing'
-            subscription.save()
-            return existing_enrollment
+                existing_enrollment.status = 'active'
+                existing_enrollment.save()
+                print(f"✅ Reactivated existing enrollment: {existing_enrollment.id}")
+                # Update subscription status
+                subscription.status = 'active' if not is_trial else 'trialing'
+                subscription.save()
+                return existing_enrollment
         
         # Calculate payment details based on trial vs paid
         if is_trial:
@@ -402,6 +402,10 @@ class StripeWebhookView(APIView):
                     self._handle_trial_ending(event['data']['object'])
                 elif event['type'] == 'setup_intent.succeeded':
                     self._handle_setup_intent_succeeded(event['data']['object'])
+                elif event['type'] == 'payment_intent.canceled':
+                    self._handle_payment_intent_canceled(event['data']['object'])
+                elif event['type'] == 'setup_intent.canceled':
+                    self._handle_setup_intent_canceled(event['data']['object'])
                     
                 else:
                     print(f"ℹ️ Unhandled event type: {event['type']}")
@@ -452,7 +456,7 @@ class StripeWebhookView(APIView):
                         course = billing_price.product.course
                         
                         # Create subscription record
-                        Subscription.objects.create(
+                        Subscribers.objects.create(
                             user=customer.user,
                             course=course,
                             stripe_subscription_id=subscription_id,
@@ -474,7 +478,7 @@ class StripeWebhookView(APIView):
 
 
     def _handle_setup_intent_succeeded(self, invoice):
-        """Handle setup intent succeeded"""
+        """Fired once the user entered card details and Stripe successfully attached it to the customer/subscription"""
         print(f"🔍 ...........................Webhook: Setup intent {invoice['id']} succeeded.......................................")
         try:
             # Update subscription status if needed
@@ -534,13 +538,86 @@ class StripeWebhookView(APIView):
                         import traceback
                         traceback.print_exc()
                     
+                    # NEW: Create payment record when setup succeeds (after enrollment)
+                    try:
+                        setup_intent_id = invoice.get('id')
+                        print(f"🔍 DEBUG: About to create payment record")
+                        print(f"🔍 DEBUG: setup_intent_id from invoice = {setup_intent_id}")
+                        print(f"🔍 DEBUG: subscription_id = {subscription_id}")
+                        self._create_payment_record_from_setup(subscription_id, setup_intent_id)
+                    except Exception as e:
+                        print(f"❌ Error creating payment record: {e}")
+                        import traceback
+                        traceback.print_exc()
+                    
                 except Subscribers.DoesNotExist:
                     print(f"⚠️ Subscriber {subscription_id} not found for payment succeeded")
+            else:
+                print(f"❌ ..............................Subscriber {subscription_id} not found for payment succeeded")
         except Exception as e:
-            print(f"❌ Error handling payment succeeded: {e}")
+            print(f"❌ Error handling setup intent succeeded: {e}")
             import traceback
             traceback.print_exc()
 
+    def _create_payment_record_from_setup(self, subscription_id, setup_intent_id):
+        """Create payment record when setup intent succeeds"""
+        print(f"🔍 DEBUG: _create_payment_record_from_setup called")
+        print(f"🔍 DEBUG: subscription_id = {subscription_id}")
+        print(f"🔍 DEBUG: setup_intent_id = {setup_intent_id}")
+        
+        try:
+            # Get subscriber to access user and course info
+            print(f"🔍 DEBUG: Looking for subscriber with subscription_id = {subscription_id}")
+            subscriber = Subscribers.objects.get(stripe_subscription_id=subscription_id)
+            print(f"🔍 DEBUG: Found subscriber {subscriber.id} - User: {subscriber.user.email}, Course: {subscriber.course.title}")
+            
+            # Check if payment already exists
+            print(f"🔍 DEBUG: Checking for existing payment with setup_intent_id = {setup_intent_id}")
+            existing_payment = Payment.objects.filter(
+                user=subscriber.user,
+                course=subscriber.course,
+                stripe_payment_intent_id=setup_intent_id
+            ).first()
+            
+            if existing_payment:
+                print(f"✅ Payment record already exists for setup intent {setup_intent_id} (ID: {existing_payment.id})")
+                return
+            
+            print(f"🔍 DEBUG: No existing payment found, creating new payment record")
+            print(f"🔍 DEBUG: Payment data - user_id: {subscriber.user.id}, course_id: {subscriber.course.id}")
+            
+            # Create payment record with setup complete status
+            payment = Payment.objects.create(
+                user=subscriber.user,
+                course=subscriber.course,
+                stripe_payment_intent_id=setup_intent_id,
+                stripe_invoice_id='',  # Will be updated when invoice is generated
+                amount=0.00,  # Will be updated when payment is charged
+                currency='usd',
+                status='requires_confirmation',  # Setup complete, waiting for charge
+                paid_at=None  # Will be set when payment succeeds
+            )
+            
+            print(f"✅ Created payment record {payment.id} for setup intent {setup_intent_id}")
+            print(f"   - User: {subscriber.user.email}")
+            print(f"   - Course: {subscriber.course.title}")
+            print(f"   - Status: {payment.status}")
+            print(f"   - Stripe Payment Intent ID: {payment.stripe_payment_intent_id}")
+            
+        except Subscribers.DoesNotExist:
+            print(f"❌ Subscriber not found for subscription {subscription_id}")
+            print(f"🔍 DEBUG: Available subscribers:")
+            for sub in Subscribers.objects.all()[:5]:  # Show first 5 for debugging
+                print(f"   - {sub.stripe_subscription_id} (User: {sub.user.email})")
+        except Exception as e:
+            print(f"❌ Error creating payment record: {e}")
+            print(f"🔍 DEBUG: Exception type: {type(e).__name__}")
+            import traceback
+            traceback.print_exc()
+
+
+
+    
     def _handle_subscription_created(self, subscription):
         """Handle subscription creation"""
         # This is handled in checkout_completed for our use case
@@ -550,7 +627,7 @@ class StripeWebhookView(APIView):
     def _handle_subscription_updated(self, subscription):
         """Handle subscription updates"""
         print(f"🔍 Webhook: Subscription {subscription['id']} update received")
-        print("............................................_handle_subscription_updated.......................................")
+        print("........................................................................................................................_handle_subscription_updated.......................................")
         try:
             subscriber = Subscribers.objects.get(stripe_subscription_id=subscription['id'])
             old_status = subscriber.status
@@ -620,32 +697,7 @@ class StripeWebhookView(APIView):
             import traceback
             traceback.print_exc()
         
-        # COMMENTED OUT FOR TESTING - WEBHOOK LOGIC DISABLED
-        # try:
-        #     sub = Subscription.objects.get(stripe_subscription_id=subscription['id'])
-        #     old_status = sub.status
-        #     
-        #     print(f"🔍 Webhook: Subscription {subscription['id']} status change: {old_status} → {subscription['status']} at {timezone.now()}")
-        #     
-        #     # Only update status for certain transitions, not for initial creation
-        #     # Skip updating status for incomplete → trialing (trial subscriptions)
-        #     # Skip updating status for incomplete → active (paid subscriptions)
-        #     # Only update for other status changes (cancellations, etc.)
-        #     if (old_status in ['incomplete', 'incomplete_expired'] and 
-        #         subscription['status'] in ['active', 'trialing']):
-        #         print(f"⏸️ Webhook: Skipping status update for incomplete → {subscription['status']} transition (payment not completed yet)")
-        #     else:
-        #         sub.status = subscription['status']
-        #         print(f"✅ Webhook: Updated status to {subscription['status']}")
-        #     
-        #     # ... rest of webhook logic commented out
-        #     
-        # except Subscription.DoesNotExist:
-        #     print(f"⚠️ Subscription {subscription['id']} not found for update - webhook fired before local record created")
-        # except Exception as e:
-        #     print(f"❌ Error handling subscription updated: {e}")
-        #     import traceback
-        #     traceback.print_exc()
+        
     
     def _handle_subscription_deleted(self, subscription):
         """Handle subscription cancellation"""
@@ -660,37 +712,9 @@ class StripeWebhookView(APIView):
             print(f"Error handling subscription deleted: {e}")
     
     def _handle_payment_succeeded(self, invoice):
-        """Handle successful payment"""
-        print(f"🔍 Webhook: Payment succeeded for invoice {invoice.get('id')}")
-        
+        """Handle successful payment - updates existing payment record"""
+        pass
        
-        """ 
-        # COMMENTED OUT FOR TESTING - WEBHOOK LOGIC DISABLED
-        # try:
-        #     # Update subscription status if needed
-        #     subscription_id = invoice.get('subscription')
-        #     if subscription_id:
-        #         try:
-        #             sub = Subscription.objects.get(stripe_subscription_id=subscription_id)
-        #             sub.status = 'active'
-                    
-                    # Update next invoice date and amount from the invoice
-                    if invoice.get('period_end'):
-                        from datetime import datetime
-                        sub.next_invoice_date = datetime.fromtimestamp(
-                            invoice['period_end'], tz=timezone.utc
-                        )
-                    
-                    if invoice.get('amount_paid'):
-                        sub.next_invoice_amount = invoice['amount_paid'] / 100
-                    
-                    sub.save()
-                    print(f"✅ Updated subscription {subscription_id} to active with billing details")
-                except Subscription.DoesNotExist:
-                    pass
-        except Exception as e:
-            print(f"Error handling payment succeeded: {e}")
-       """
     def _handle_payment_failed(self, invoice):
         """Handle failed payment"""
         try:
@@ -717,6 +741,36 @@ class StripeWebhookView(APIView):
             print(f"⚠️ Subscriber {subscription['id']} not found for trial ending")
         except Exception as e:
             print(f"❌ Error handling trial ending: {e}")
+    
+    def _handle_payment_intent_canceled(self, payment_intent):
+        """Handle when user cancels payment intent without entering card details"""
+        try:
+            payment_intent_id = payment_intent['id']
+            print(f"🚫 Payment intent canceled: {payment_intent_id}")
+            
+            # Debug: Find any payment records associated with this payment intent
+            payments_to_delete = Payment.objects.filter(stripe_payment_intent_id=payment_intent_id)
+            print(f"🔍 Found {payments_to_delete.count()} payment records for canceled payment intent")
+                
+        except Exception as e:
+            print(f"❌ Error handling payment intent canceled: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _handle_setup_intent_canceled(self, setup_intent):
+        """Handle when user cancels setup intent for subscription"""
+        try:
+            setup_intent_id = setup_intent['id']
+            print(f"🚫 Setup intent canceled: {setup_intent_id}")
+            
+            # Debug: Find any payment records associated with this setup intent
+            payments_to_delete = Payment.objects.filter(stripe_payment_intent_id=setup_intent_id)
+            print(f"🔍 Found {payments_to_delete.count()} payment records for canceled setup intent")
+                
+        except Exception as e:
+            print(f"❌ Error handling setup intent canceled: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 class CreatePaymentIntentView(APIView):
@@ -958,10 +1012,10 @@ class CreatePaymentIntentView(APIView):
                                 subscription['current_period_end'], tz=timezone.utc
                             )
                         
-                        # Get the amount from the subscription items
-                        if subscription.get('items', {}).get('data', []):
-                            item = subscription['items']['data'][0]
-                            next_invoice_amount = item.get('price', {}).get('unit_amount', 0) / 100
+                            # Get the amount from the subscription items
+                            if subscription.get('items', {}).get('data', []):
+                                item = subscription['items']['data'][0]
+                                next_invoice_amount = item.get('price', {}).get('unit_amount', 0) / 100
                         
                         # Next invoice data calculated
                         
@@ -1262,7 +1316,7 @@ class CreatePaymentIntentView(APIView):
                         print(f"❌ Unexpected error creating one-time trial subscription: {e}")
                         print(f"❌ Error type: {type(e).__name__}")
                         raise e
-                
+                        
                 else:
                     # For immediate one-time payments (no trial)
                     payment_intent = stripe.PaymentIntent.create(
