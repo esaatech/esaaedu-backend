@@ -400,6 +400,9 @@ class StripeWebhookView(APIView):
                     self._handle_payment_failed(event['data']['object'])
                 elif event['type'] == 'customer.subscription.trial_will_end':
                     self._handle_trial_ending(event['data']['object'])
+                elif event['type'] == 'setup_intent.succeeded':
+                    self._handle_setup_intent_succeeded(event['data']['object'])
+                    
                 else:
                     print(f"ℹ️ Unhandled event type: {event['type']}")
                 
@@ -468,6 +471,76 @@ class StripeWebhookView(APIView):
         except Exception as e:
             print(f"Error handling checkout completed: {e}")
     
+
+
+    def _handle_setup_intent_succeeded(self, invoice):
+        """Handle setup intent succeeded"""
+        print(f"🔍 ...........................Webhook: Setup intent {invoice['id']} succeeded.......................................")
+        try:
+            # Update subscription status if needed
+            subscription_id = invoice.get('subscription')
+            if subscription_id:
+                try:
+                    # Update Subscribers table
+                    subscriber = Subscribers.objects.get(stripe_subscription_id=subscription_id)
+                    old_status = subscriber.status
+                    subscriber.status = 'trialing'  # Update to trialing when payment succeeds
+                    # Keep subscription_type as 'trial' - only update to monthly/one_time after trial ends
+                    subscriber.save()
+                    print(f"🔄 SUBSCRIBER STATUS CHANGE: {old_status} → trialing (ID: {subscriber.id})")
+                    print(f"✅ Updated subscriber {subscriber.id}: {old_status} → trialing (type remains: {subscriber.subscription_type})")
+                    
+                    # CRITICAL: Ensure enrollment is created when payment succeeds
+                    print(f"🎓 Webhook: Ensuring enrollment is created for subscription {subscription_id}")
+                    try:
+                        # Get the subscription from Stripe to get metadata
+                        stripe_subscription = stripe.Subscription.retrieve(subscription_id)
+                        metadata = stripe_subscription.get('metadata', {})
+                        course_id = metadata.get('course_id')
+                        class_id = metadata.get('class_id')
+                        pricing_type = metadata.get('pricing_type', 'one_time')
+                        
+                        print(f"🔍 Webhook: Metadata extraction for subscription {subscription_id}:")
+                        print(f"   - Full metadata: {metadata}")
+                        print(f"   - course_id: {course_id}")
+                        print(f"   - class_id: {class_id}")
+                        print(f"   - pricing_type: {pricing_type}")
+                        
+                        if course_id and class_id:
+                            from courses.models import Course
+                            course = Course.objects.get(id=course_id)
+                            user = subscriber.user
+                            is_trial = True  # Payment succeeded means trial started
+                            
+                            # Call complete_enrollment_process to ensure enrollment exists
+                            enrollment = complete_enrollment_process(
+                                subscription_id=subscription_id,
+                                user=user,
+                                course=course,
+                                class_id=class_id,
+                                pricing_type=pricing_type,
+                                is_trial=is_trial
+                            )
+                            
+                            if enrollment:
+                                print(f"✅ Webhook: Enrollment ensured for subscription {subscription_id}")
+                            else:
+                                print(f"⚠️ Webhook: Failed to ensure enrollment for subscription {subscription_id}")
+                        else:
+                            print(f"⚠️ Webhook: Missing metadata for subscription {subscription_id}: course_id={course_id}, class_id={class_id}")
+                            
+                    except Exception as e:
+                        print(f"❌ Webhook: Error ensuring enrollment: {e}")
+                        import traceback
+                        traceback.print_exc()
+                    
+                except Subscribers.DoesNotExist:
+                    print(f"⚠️ Subscriber {subscription_id} not found for payment succeeded")
+        except Exception as e:
+            print(f"❌ Error handling payment succeeded: {e}")
+            import traceback
+            traceback.print_exc()
+
     def _handle_subscription_created(self, subscription):
         """Handle subscription creation"""
         # This is handled in checkout_completed for our use case
@@ -590,70 +663,7 @@ class StripeWebhookView(APIView):
         """Handle successful payment"""
         print(f"🔍 Webhook: Payment succeeded for invoice {invoice.get('id')}")
         
-        try:
-            # Update subscription status if needed
-            subscription_id = invoice.get('subscription')
-            if subscription_id:
-                try:
-                    # Update Subscribers table
-                    subscriber = Subscribers.objects.get(stripe_subscription_id=subscription_id)
-                    old_status = subscriber.status
-                    subscriber.status = 'trialing'  # Update to trialing when payment succeeds
-                    # Keep subscription_type as 'trial' - only update to monthly/one_time after trial ends
-                    subscriber.save()
-                    print(f"🔄 SUBSCRIBER STATUS CHANGE: {old_status} → trialing (ID: {subscriber.id})")
-                    print(f"✅ Updated subscriber {subscriber.id}: {old_status} → trialing (type remains: {subscriber.subscription_type})")
-                    
-                    # CRITICAL: Ensure enrollment is created when payment succeeds
-                    print(f"🎓 Webhook: Ensuring enrollment is created for subscription {subscription_id}")
-                    try:
-                        # Get the subscription from Stripe to get metadata
-                        stripe_subscription = stripe.Subscription.retrieve(subscription_id)
-                        metadata = stripe_subscription.get('metadata', {})
-                        course_id = metadata.get('course_id')
-                        class_id = metadata.get('class_id')
-                        pricing_type = metadata.get('pricing_type', 'one_time')
-                        
-                        print(f"🔍 Webhook: Metadata extraction for subscription {subscription_id}:")
-                        print(f"   - Full metadata: {metadata}")
-                        print(f"   - course_id: {course_id}")
-                        print(f"   - class_id: {class_id}")
-                        print(f"   - pricing_type: {pricing_type}")
-                        
-                        if course_id and class_id:
-                            from courses.models import Course
-                            course = Course.objects.get(id=course_id)
-                            user = subscriber.user
-                            is_trial = True  # Payment succeeded means trial started
-                            
-                            # Call complete_enrollment_process to ensure enrollment exists
-                            enrollment = complete_enrollment_process(
-                                subscription_id=subscription_id,
-                                user=user,
-                                course=course,
-                                class_id=class_id,
-                                pricing_type=pricing_type,
-                                is_trial=is_trial
-                            )
-                            
-                            if enrollment:
-                                print(f"✅ Webhook: Enrollment ensured for subscription {subscription_id}")
-                            else:
-                                print(f"⚠️ Webhook: Failed to ensure enrollment for subscription {subscription_id}")
-                        else:
-                            print(f"⚠️ Webhook: Missing metadata for subscription {subscription_id}: course_id={course_id}, class_id={class_id}")
-                            
-                    except Exception as e:
-                        print(f"❌ Webhook: Error ensuring enrollment: {e}")
-                        import traceback
-                        traceback.print_exc()
-                    
-                except Subscribers.DoesNotExist:
-                    print(f"⚠️ Subscriber {subscription_id} not found for payment succeeded")
-        except Exception as e:
-            print(f"❌ Error handling payment succeeded: {e}")
-            import traceback
-            traceback.print_exc()
+       
         """ 
         # COMMENTED OUT FOR TESTING - WEBHOOK LOGIC DISABLED
         # try:
@@ -833,8 +843,8 @@ class CreatePaymentIntentView(APIView):
                     stripe_price_id = stripe_price.id
                 
                 # Create subscription
-                print(f"🚀 About to create Stripe subscription with price_id: {stripe_price_id}")
-                print(f"🚀 Customer: {customer_account.stripe_customer_id}")
+                #print(f"🚀 About to create Stripe subscription with price_id: {stripe_price_id}")
+                #print(f"🚀 Customer: {customer_account.stripe_customer_id}")
                 # Get trial period settings
                 trial_settings = get_trial_period_settings()
                 trial_days = trial_settings['days'] if (request.data.get('trial_period') and trial_settings['enabled']) else 0
@@ -870,16 +880,16 @@ class CreatePaymentIntentView(APIView):
                         'student_profile_id': str(getattr(request.user, 'student_profile', {}).id if hasattr(request.user, 'student_profile') and request.user.student_profile else '')
                     }
                     )
-                    print(f"✅ Stripe subscription created: {subscription.id}")
-                    print(f"✅ Subscription status: {subscription.status}")
-                    print(f"🔍 Metadata sent to Stripe: {subscription.metadata}")
-                    print(f"🔍 DEBUG: class_id from request: {request.data.get('class_id')}")
-                    print(f"🔍 DEBUG: class_id in metadata: {subscription.metadata.get('class_id')}")
-                    print(f"✅ Has latest_invoice: {bool(getattr(subscription, 'latest_invoice', None))}")
-                    print(f"✅ Has pending_setup_intent: {bool(getattr(subscription, 'pending_setup_intent', None))}")
+                    #print(f"✅ Stripe subscription created: {subscription.id}")
+                   # print(f"✅ Subscription status: {subscription.status}")
+                   # print(f"🔍 Metadata sent to Stripe: {subscription.metadata}")
+                   # print(f"🔍 DEBUG: class_id from request: {request.data.get('class_id')}")
+                   # print(f"🔍 DEBUG: class_id in metadata: {subscription.metadata.get('class_id')}")
+                   # print(f"✅ Has latest_invoice: {bool(getattr(subscription, 'latest_invoice', None))}")
+                   # print(f"✅ Has pending_setup_intent: {bool(getattr(subscription, 'pending_setup_intent', None))}")
                     
                     # Create local subscription record immediately with incomplete status
-                    print(f"🔄 Creating local subscription record for: {subscription.id}")
+                    #print(f"🔄 Creating local subscription record for: {subscription.id}")
                     try:
                         # Get the price ID from the subscription
                         stripe_price_id = subscription['items']['data'][0]['price']['id']
