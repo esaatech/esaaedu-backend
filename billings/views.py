@@ -477,12 +477,37 @@ class StripeWebhookView(APIView):
     
 
 
-    def _handle_setup_intent_succeeded(self, invoice):
+    def _handle_setup_intent_succeeded(self, setup_intent):
         """Fired once the user entered card details and Stripe successfully attached it to the customer/subscription"""
-        print(f"🔍 ...........................Webhook: Setup intent {invoice['id']} succeeded.......................................")
+        print(f"🔍 ...........................Webhook: Setup intent {setup_intent['id']} succeeded.......................................")
+        print(f"🔍 DEBUG: Setup intent data: {setup_intent}")
         try:
-            # Update subscription status if needed
-            subscription_id = invoice.get('subscription')
+            # Get subscription ID from setup intent
+            # Setup intents don't have subscription field, so we need to find it via customer
+            customer_id = setup_intent.get('customer')
+            print(f"🔍 DEBUG: customer_id from setup_intent = {customer_id}")
+            
+            # Find the most recent subscription for this customer
+            subscription_id = None
+            if customer_id:
+                try:
+                    # Get customer account to find user
+                    customer_account = CustomerAccount.objects.get(stripe_customer_id=customer_id)
+                    # Find the most recent incomplete subscription for this user
+                    recent_subscriber = Subscribers.objects.filter(
+                        user=customer_account.user,
+                        status='incomplete'
+                    ).order_by('-created_at').first()
+                    
+                    if recent_subscriber:
+                        subscription_id = recent_subscriber.stripe_subscription_id
+                        print(f"🔍 DEBUG: Found recent subscription {subscription_id} for customer {customer_id}")
+                    else:
+                        print(f"⚠️ No incomplete subscription found for customer {customer_id}")
+                except CustomerAccount.DoesNotExist:
+                    print(f"⚠️ Customer account not found for {customer_id}")
+            
+            print(f"🔍 DEBUG: subscription_id = {subscription_id}")
             if subscription_id:
                 try:
                     # Update Subscribers table
@@ -540,9 +565,9 @@ class StripeWebhookView(APIView):
                     
                     # NEW: Create payment record when setup succeeds (after enrollment)
                     try:
-                        setup_intent_id = invoice.get('id')
+                        setup_intent_id = setup_intent.get('id')
                         print(f"🔍 DEBUG: About to create payment record")
-                        print(f"🔍 DEBUG: setup_intent_id from invoice = {setup_intent_id}")
+                        print(f"🔍 DEBUG: setup_intent_id from setup_intent = {setup_intent_id}")
                         print(f"🔍 DEBUG: subscription_id = {subscription_id}")
                         self._create_payment_record_from_setup(subscription_id, setup_intent_id)
                     except Exception as e:
@@ -586,16 +611,54 @@ class StripeWebhookView(APIView):
             print(f"🔍 DEBUG: No existing payment found, creating new payment record")
             print(f"🔍 DEBUG: Payment data - user_id: {subscriber.user.id}, course_id: {subscriber.course.id}")
             
-            # Create payment record with setup complete status
+            # Get invoice details from Stripe subscription
+            stripe_invoice_id = ''
+            amount = 0.00
+            currency = 'usd'
+            status = 'requires_confirmation'
+            paid_at = None
+            
+            try:
+                # Get the subscription from Stripe to find the latest invoice
+                stripe_subscription = stripe.Subscription.retrieve(subscription_id)
+                latest_invoice_id = stripe_subscription.get('latest_invoice')
+                
+                if latest_invoice_id:
+                    # Get the invoice details
+                    stripe_invoice = stripe.Invoice.retrieve(latest_invoice_id)
+                    stripe_invoice_id = stripe_invoice.get('id', '')
+                    amount = stripe_invoice.get('amount_paid', 0) / 100  # Convert from cents
+                    currency = stripe_invoice.get('currency', 'usd')
+                    
+                    # If invoice is paid, update status
+                    if stripe_invoice.get('status') == 'paid':
+                        status = 'succeeded'
+                        # Convert Unix timestamp to datetime string
+                        paid_at_timestamp = stripe_invoice.get('status_transitions', {}).get('paid_at')
+                        if paid_at_timestamp:
+                            from datetime import datetime
+                            paid_at = datetime.fromtimestamp(paid_at_timestamp)
+                        else:
+                            paid_at = None
+                    
+                    print(f"🔍 DEBUG: Found invoice {stripe_invoice_id} - Amount: {amount} {currency}, Status: {stripe_invoice.get('status')}")
+                else:
+                    print(f"🔍 DEBUG: No invoice found for subscription {subscription_id}")
+                    
+            except Exception as e:
+                print(f"⚠️ Error fetching invoice details: {e}")
+                # Continue with default values
+            
+            # Create payment record with invoice details
             payment = Payment.objects.create(
                 user=subscriber.user,
                 course=subscriber.course,
                 stripe_payment_intent_id=setup_intent_id,
-                stripe_invoice_id='',  # Will be updated when invoice is generated
-                amount=0.00,  # Will be updated when payment is charged
-                currency='usd',
-                status='requires_confirmation',  # Setup complete, waiting for charge
-                paid_at=None  # Will be set when payment succeeds
+                stripe_invoice_id=stripe_invoice_id,
+                amount=amount,
+                currency=currency,
+                status=status,
+                paid_at=paid_at
             )
             
             print(f"✅ Created payment record {payment.id} for setup intent {setup_intent_id}")
