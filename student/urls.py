@@ -24,6 +24,15 @@ urlpatterns = [
     # Dashboard Overview
     path('dashboard-overview/', views.DashboardOverview.as_view(), name='dashboard_overview'),
     
+    # Dashboard Assessment endpoints - SPECIFIC PATTERNS FIRST
+    path('dashboard-assessments/quiz/<uuid:quiz_attempt_id>/', views.QuizDetailView.as_view(), name='quiz_detail'),
+    
+    # Dashboard Assessment overview - GENERAL PATTERN LAST  
+    path('dashboard-assessments/', views.DashboardAssessmentView.as_view(), name='dashboard_assessments'),
+    
+    # Assessment View - Single endpoint for all assessment data
+    path('assessments/', views.AssessmentView.as_view(), name='assessments'),
+    
     # Feedback System
     path('feedback/question/<uuid:quiz_attempt_id>/<uuid:question_id>/', views.quiz_question_feedback, name='quiz_question_feedback'),
     path('feedback/attempt/<uuid:quiz_attempt_id>/', views.quiz_attempt_feedback, name='quiz_attempt_feedback'),

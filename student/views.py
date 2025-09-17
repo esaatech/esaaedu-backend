@@ -4,10 +4,14 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 from django.db import models
+from django.db.models import Q, Count, Avg
+from datetime import datetime, timedelta
 
 from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback
+from courses.models import Quiz, QuizAttempt, Question
 from courses.models import Class, ClassEvent, Course, Lesson
 from settings.models import UserDashboardSettings
 from .serializers import (
@@ -1920,109 +1924,186 @@ class DashboardOverview(APIView):
 
 class AssessmentView(APIView):
     """
-    Class-based view for handling different types of assessments:
-    - Quiz assessments
-    - Assignment assessments  
-    - Instructor assessments
+    Class-based view for handling comprehensive assessment data:
+    - Single GET endpoint that fetches all assessment types
+    - Each responsibility defined as a separate method
+    - Similar structure to DashboardOverview
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
     
-    def get(self, request, assessment_type=None, assessment_id=None):
+    def get(self, request):
         """
-        GET: Retrieve assessments based on type and ID
+        GET: Retrieve comprehensive assessment data
+        Single endpoint that returns all assessment data
         """
         try:
-            if assessment_type == 'quiz':
-                return self._get_quiz_assessment(request, assessment_id)
-            elif assessment_type == 'assignment':
-                return self._get_assignment_assessment(request, assessment_id)
-            elif assessment_type == 'instructor':
-                return self._get_instructor_assessment(request, assessment_id)
-            else:
-                return Response(
-                    {'error': 'Invalid assessment type. Use: quiz, assignment, or instructor'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            # Get all enrollments
+            enrollments = EnrolledCourse.objects.all().select_related('course', 'student_profile')
+            
+            # Build comprehensive assessment data using separate methods
+            assessment_data = {
+                'dashboard': self._get_assessment_dashboard_data(enrollments),
+                'quiz_assessments': self._get_quiz_assessments_data(enrollments),
+                'assignment_assessments': self._get_assignment_assessments_data(enrollments),
+                'instructor_assessments': self._get_instructor_assessments_data(enrollments),
+                'summary': self._get_assessment_summary_data(enrollments)
+            }
+            
+            return Response(assessment_data)
+            
         except Exception as e:
             return Response(
-                {'error': f'Error retrieving assessment: {str(e)}'},
+                {'error': f'Error retrieving assessments: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    def post(self, request, assessment_type=None):
-        """
-        POST: Create new assessment based on type
-        """
-        try:
-            if assessment_type == 'quiz':
-                return self._create_quiz_assessment(request)
-            elif assessment_type == 'assignment':
-                return self._create_assignment_assessment(request)
-            elif assessment_type == 'instructor':
-                return self._create_instructor_assessment(request)
-            else:
-                return Response(
-                    {'error': 'Invalid assessment type. Use: quiz, assignment, or instructor'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        except Exception as e:
-            return Response(
-                {'error': f'Error creating assessment: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+    def _get_assessment_dashboard_data(self, enrollments):
+        """Get dashboard counts and statistics"""
+        from courses.models import QuizAttempt
+        
+        # Quiz assessment counts
+        quiz_attempts = QuizAttempt.objects.filter(enrollment__in=enrollments)
+        quiz_count = quiz_attempts.count()
+        quiz_passed = quiz_attempts.filter(passed=True).count()
+        quiz_avg_score = quiz_attempts.aggregate(
+            avg_score=models.Avg('score')
+        )['avg_score'] or 0
+        
+        # Assignment assessment counts
+        assignment_count = LessonAssessment.objects.filter(
+            enrollment__in=enrollments,
+            quiz_attempt__isnull=True
+        ).count()
+        
+        # Instructor assessment counts
+        instructor_count = TeacherAssessment.objects.filter(
+            enrollment__in=enrollments
+        ).count()
+        
+        # Recent activity (last 7 days)
+        from django.utils import timezone
+        from datetime import timedelta
+        week_ago = timezone.now() - timedelta(days=7)
+        
+        recent_quiz = quiz_attempts.filter(completed_at__gte=week_ago).count()
+        recent_assignment = LessonAssessment.objects.filter(
+            enrollment__in=enrollments,
+            quiz_attempt__isnull=True,
+            created_at__gte=week_ago
+        ).count()
+        recent_instructor = TeacherAssessment.objects.filter(
+            enrollment__in=enrollments,
+            created_at__gte=week_ago
+        ).count()
+        
+        return {
+            'quiz_assessments': {
+                'total': quiz_count,
+                'passed': quiz_passed,
+                'failed': quiz_count - quiz_passed,
+                'average_score': round(float(quiz_avg_score), 2),
+                'recent_week': recent_quiz
+            },
+            'assignment_assessments': {
+                'total': assignment_count,
+                'recent_week': recent_assignment
+            },
+            'instructor_assessments': {
+                'total': instructor_count,
+                'recent_week': recent_instructor
+            },
+            'overview': {
+                'total_assessments': quiz_count + assignment_count + instructor_count,
+                'total_courses': enrollments.count(),
+                'recent_activity': recent_quiz + recent_assignment + recent_instructor
+            }
+        }
     
-    def put(self, request, assessment_type=None, assessment_id=None):
-        """
-        PUT: Update existing assessment
-        """
-        try:
-            if assessment_type == 'quiz':
-                return self._update_quiz_assessment(request, assessment_id)
-            elif assessment_type == 'assignment':
-                return self._update_assignment_assessment(request, assessment_id)
-            elif assessment_type == 'instructor':
-                return self._update_instructor_assessment(request, assessment_id)
-            else:
-                return Response(
-                    {'error': 'Invalid assessment type. Use: quiz, assignment, or instructor'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        except Exception as e:
-            return Response(
-                {'error': f'Error updating assessment: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+    def _get_quiz_assessments_data(self, enrollments):
+        """Get quiz assessments data"""
+        from courses.models import QuizAttempt
+        
+        quiz_attempts = QuizAttempt.objects.filter(
+            enrollment__in=enrollments
+        ).select_related('quiz', 'quiz__lesson', 'student').order_by('-started_at')
+        
+        return [self._build_quiz_summary(attempt) for attempt in quiz_attempts]
     
-    def delete(self, request, assessment_type=None, assessment_id=None):
-        """
-        DELETE: Remove assessment
-        """
-        try:
-            if assessment_type == 'quiz':
-                return self._delete_quiz_assessment(request, assessment_id)
-            elif assessment_type == 'assignment':
-                return self._delete_assignment_assessment(request, assessment_id)
-            elif assessment_type == 'instructor':
-                return self._delete_instructor_assessment(request, assessment_id)
-            else:
-                return Response(
-                    {'error': 'Invalid assessment type. Use: quiz, assignment, or instructor'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        except Exception as e:
-            return Response(
-                {'error': f'Error deleting assessment: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+    def _get_assignment_assessments_data(self, enrollments):
+        """Get assignment assessments data"""
+        assessments = LessonAssessment.objects.filter(
+            enrollment__in=enrollments,
+            quiz_attempt__isnull=True
+        ).select_related('enrollment', 'lesson', 'teacher').order_by('-created_at')
+        
+        return [{
+            'id': str(assessment.id),
+            'title': assessment.title,
+            'content': assessment.content[:100] + '...' if len(assessment.content) > 100 else assessment.content,
+            'assessment_type': assessment.assessment_type,
+            'lesson_title': assessment.lesson.title,
+            'course_title': assessment.enrollment.course.title,
+            'teacher_name': assessment.teacher.get_full_name(),
+            'created_at': assessment.created_at.isoformat()
+        } for assessment in assessments]
     
+    def _get_instructor_assessments_data(self, enrollments):
+        """Get instructor assessments data"""
+        assessments = TeacherAssessment.objects.filter(
+            enrollment__in=enrollments
+        ).select_related('enrollment', 'teacher').order_by('-created_at')
+        
+        return [{
+            'id': str(assessment.id),
+            'academic_performance': assessment.academic_performance,
+            'participation_level': assessment.participation_level,
+            'strengths': assessment.strengths[:100] + '...' if len(assessment.strengths) > 100 else assessment.strengths,
+            'weaknesses': assessment.weaknesses[:100] + '...' if len(assessment.weaknesses) > 100 else assessment.weaknesses,
+            'course_title': assessment.enrollment.course.title,
+            'teacher_name': assessment.teacher.get_full_name(),
+            'created_at': assessment.created_at.isoformat()
+        } for assessment in assessments]
+    
+    def _get_assessment_summary_data(self, enrollments):
+        """Get assessment summary data"""
+        from courses.models import QuizAttempt
+        
+        quiz_count = QuizAttempt.objects.filter(enrollment__in=enrollments).count()
+        assignment_count = LessonAssessment.objects.filter(
+            enrollment__in=enrollments,
+            quiz_attempt__isnull=True
+        ).count()
+        instructor_count = TeacherAssessment.objects.filter(
+            enrollment__in=enrollments
+        ).count()
+        
+        return {
+            'total_assessments': quiz_count + assignment_count + instructor_count,
+            'quiz_count': quiz_count,
+            'assignment_count': assignment_count,
+            'instructor_count': instructor_count
+        }
+    
+
     # Quiz Assessment Methods
     def _get_quiz_assessment(self, request, assessment_id=None):
-        """Get quiz assessment(s)"""
+        """Get comprehensive quiz assessment data for UI display"""
         if assessment_id:
-            # Get specific quiz assessment
+            # Get specific quiz attempt with all related data
             try:
-                from courses.models import QuizAttempt
-                quiz_attempt = get_object_or_404(QuizAttempt, id=assessment_id)
+                from courses.models import QuizAttempt, Quiz, Question
+                
+                # Get quiz attempt with all related data
+                quiz_attempt = get_object_or_404(
+                    QuizAttempt.objects.select_related(
+                        'quiz', 'quiz__lesson', 'quiz__lesson__course', 'student'
+                    ).prefetch_related(
+                        'quiz__questions',
+                        'question_feedbacks__teacher',
+                        'attempt_feedbacks__teacher'
+                    ),
+                    id=assessment_id
+                )
                 
                 # Check permissions
                 if request.user.role == 'student' and quiz_attempt.student != request.user:
@@ -2031,13 +2112,9 @@ class AssessmentView(APIView):
                         status=status.HTTP_403_FORBIDDEN
                     )
                 
-                # Get related assessments
-                assessments = LessonAssessment.objects.filter(
-                    quiz_attempt=quiz_attempt
-                ).order_by('-created_at')
-                
-                serializer = QuizQuestionFeedbackDetailSerializer(assessments, many=True)
-                return Response(serializer.data)
+                # Build comprehensive quiz assessment response
+                quiz_data = self._build_quiz_assessment_response(quiz_attempt)
+                return Response(quiz_data)
                 
             except Exception as e:
                 return Response(
@@ -2045,99 +2122,175 @@ class AssessmentView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
         else:
-            # Get all quiz assessments for user
+            # Get all quiz attempts for user with basic info
             if request.user.role == 'student':
                 enrollments = EnrolledCourse.objects.filter(
                     student_profile__user=request.user
                 )
-                assessments = LessonAssessment.objects.filter(
-                    enrollment__in=enrollments,
-                    quiz_attempt__isnull=False
-                ).order_by('-created_at')
+                quiz_attempts = QuizAttempt.objects.filter(
+                    enrollment__in=enrollments
+                ).select_related('quiz', 'quiz__lesson').order_by('-started_at')
             else:
-                # Teacher/Admin can see all assessments they created
-                assessments = LessonAssessment.objects.filter(
-                    teacher=request.user,
-                    quiz_attempt__isnull=False
-                ).order_by('-created_at')
+                # Teacher/Admin can see all quiz attempts they have access to
+                quiz_attempts = QuizAttempt.objects.filter(
+                    quiz__lesson__course__teacher=request.user
+                ).select_related('quiz', 'quiz__lesson', 'student').order_by('-started_at')
             
             # Pagination
             paginator = StudentPagination()
-            page = paginator.paginate_queryset(assessments, request)
-            if page is not None:
-                serializer = QuizQuestionFeedbackDetailSerializer(page, many=True)
-                return paginator.get_paginated_response(serializer.data)
+            page = paginator.paginate_queryset(quiz_attempts, request)
             
-            serializer = QuizQuestionFeedbackDetailSerializer(assessments, many=True)
-            return Response(serializer.data)
+            if page is not None:
+                quiz_list = [self._build_quiz_summary(attempt) for attempt in page]
+                return paginator.get_paginated_response(quiz_list)
+            
+            quiz_list = [self._build_quiz_summary(attempt) for attempt in quiz_attempts]
+            return Response(quiz_list)
     
-    def _create_quiz_assessment(self, request):
-        """Create new quiz assessment"""
-        data = request.data.copy()
-        data['teacher'] = request.user.id
+    def _build_quiz_assessment_response(self, quiz_attempt):
+        """Build comprehensive quiz assessment response for detailed view"""
+        from courses.models import Question
         
-        # Validate required fields
-        required_fields = ['enrollment', 'lesson', 'quiz_attempt', 'title', 'content', 'assessment_type']
-        for field in required_fields:
-            if field not in data:
-                return Response(
-                    {'error': f'Missing required field: {field}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        # Get overall quiz attempt feedback
+        overall_feedback = quiz_attempt.attempt_feedbacks.first()
         
-        # Check if assessment already exists
-        existing = LessonAssessment.objects.filter(
-            enrollment_id=data['enrollment'],
-            lesson_id=data['lesson'],
-            teacher=request.user,
-            quiz_attempt_id=data['quiz_attempt']
-        ).first()
+        # Get all questions with their feedback
+        questions_data = []
+        for question in quiz_attempt.quiz.questions.all().order_by('order'):
+            # Get feedback for this specific question
+            question_feedback = quiz_attempt.question_feedbacks.filter(
+                question=question
+            ).first()
+            
+            # Get student's answer for this question
+            student_answer = quiz_attempt.answers.get(str(question.id), '')
+            
+            # Determine if answer is correct
+            is_correct = self._check_answer_correctness(question, student_answer)
+            
+            question_data = {
+                'question_id': str(question.id),
+                'question_number': question.order,
+                'question_text': question.question_text,
+                'question_type': question.type,
+                'points_possible': question.points,
+                'student_answer': student_answer,
+                'correct_answer': self._get_correct_answer(question),
+                'is_correct': is_correct,
+                'points_earned': question.points if is_correct else 0,
+                'explanation': question.explanation or '',
+                'teacher_feedback': {
+                    'feedback_text': question_feedback.feedback_text if question_feedback else '',
+                    'points_earned': float(question_feedback.points_earned) if question_feedback and question_feedback.points_earned else (question.points if is_correct else 0),
+                    'points_possible': float(question_feedback.points_possible) if question_feedback and question_feedback.points_possible else question.points,
+                    'is_correct': question_feedback.is_correct if question_feedback else is_correct,
+                    'teacher_name': question_feedback.teacher.get_full_name() if question_feedback else '',
+                    'created_at': question_feedback.created_at.isoformat() if question_feedback else None
+                } if question_feedback else None
+            }
+            questions_data.append(question_data)
         
-        if existing:
-            return Response(
-                {'error': 'Assessment already exists for this quiz attempt'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # Calculate totals
+        total_points_earned = sum(q['points_earned'] for q in questions_data)
+        total_points_possible = sum(q['points_possible'] for q in questions_data)
+        percentage = (total_points_earned / total_points_possible * 100) if total_points_possible > 0 else 0
         
-        serializer = QuizQuestionFeedbackCreateUpdateSerializer(data=data)
-        if serializer.is_valid():
-            assessment = serializer.save()
-            return Response(
-                QuizQuestionFeedbackDetailSerializer(assessment).data,
-                status=status.HTTP_201_CREATED
-            )
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # Calculate time taken
+        time_taken = None
+        if quiz_attempt.completed_at and quiz_attempt.started_at:
+            time_taken = (quiz_attempt.completed_at - quiz_attempt.started_at).total_seconds() / 60  # minutes
+        
+        # Build response
+        response_data = {
+            'quiz_info': {
+                'quiz_id': str(quiz_attempt.quiz.id),
+                'quiz_title': quiz_attempt.quiz.title,
+                'lesson_title': quiz_attempt.quiz.lesson.title,
+                'course_title': quiz_attempt.quiz.lesson.course.title,
+                'attempt_number': quiz_attempt.attempt_number,
+                'time_limit': quiz_attempt.quiz.time_limit,
+                'time_taken': time_taken,
+                'started_at': quiz_attempt.started_at.isoformat(),
+                'completed_at': quiz_attempt.completed_at.isoformat() if quiz_attempt.completed_at else None
+            },
+            'overall_feedback': {
+                'score_percentage': float(quiz_attempt.final_score) if quiz_attempt.final_score else percentage,
+                'points_earned': int(quiz_attempt.final_points_earned) if quiz_attempt.final_points_earned else int(total_points_earned),
+                'points_possible': int(quiz_attempt.final_points_possible) if quiz_attempt.final_points_possible else int(total_points_possible),
+                'passed': quiz_attempt.passed,
+                'rating': overall_feedback.overall_rating if overall_feedback else self._get_performance_rating(percentage),
+                'feedback_text': overall_feedback.feedback_text if overall_feedback else '',
+                'strengths_highlighted': overall_feedback.strengths_highlighted if overall_feedback else '',
+                'areas_for_improvement': overall_feedback.areas_for_improvement if overall_feedback else '',
+                'study_recommendations': overall_feedback.study_recommendations if overall_feedback else '',
+                'teacher_name': overall_feedback.teacher.get_full_name() if overall_feedback else '',
+                'created_at': overall_feedback.created_at.isoformat() if overall_feedback else None
+            },
+            'questions': questions_data,
+            'summary': {
+                'total_questions': len(questions_data),
+                'correct_answers': sum(1 for q in questions_data if q['is_correct']),
+                'incorrect_answers': sum(1 for q in questions_data if not q['is_correct']),
+                'completion_percentage': percentage
+            }
+        }
+        
+        return response_data
     
-    def _update_quiz_assessment(self, request, assessment_id):
-        """Update existing quiz assessment"""
-        assessment = get_object_or_404(LessonAssessment, id=assessment_id)
-        
-        # Check permissions
-        if assessment.teacher != request.user and request.user.role not in ['admin', 'superuser']:
-            return Response(
-                {'error': 'Permission denied'}, 
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        serializer = QuizQuestionFeedbackCreateUpdateSerializer(assessment, data=request.data, partial=True)
-        if serializer.is_valid():
-            assessment = serializer.save()
-            return Response(QuizQuestionFeedbackDetailSerializer(assessment).data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    def _build_quiz_summary(self, quiz_attempt):
+        """Build summary data for quiz attempt list view"""
+        return {
+            'quiz_attempt_id': str(quiz_attempt.id),
+            'quiz_title': quiz_attempt.quiz.title,
+            'lesson_title': quiz_attempt.quiz.lesson.title,
+            'course_title': quiz_attempt.quiz.lesson.course.title,
+            'student_name': quiz_attempt.student.get_full_name(),
+            'score_percentage': float(quiz_attempt.final_score) if quiz_attempt.final_score else 0,
+            'passed': quiz_attempt.passed,
+            'attempt_number': quiz_attempt.attempt_number,
+            'started_at': quiz_attempt.started_at.isoformat(),
+            'completed_at': quiz_attempt.completed_at.isoformat() if quiz_attempt.completed_at else None,
+            'has_teacher_feedback': quiz_attempt.attempt_feedbacks.exists()
+        }
     
-    def _delete_quiz_assessment(self, request, assessment_id):
-        """Delete quiz assessment"""
-        assessment = get_object_or_404(LessonAssessment, id=assessment_id)
-        
-        # Check permissions
-        if assessment.teacher != request.user and request.user.role not in ['admin', 'superuser']:
-            return Response(
-                {'error': 'Permission denied'}, 
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        assessment.delete()
-        return Response(status=status.HTTP_204_NO_CONTENT)
+    def _check_answer_correctness(self, question, student_answer):
+        """Check if student's answer is correct for a given question"""
+        if question.type == 'true_false':
+            correct_answer = question.content.get('correct_answer', '').lower()
+            return str(student_answer).lower() == correct_answer
+        elif question.type == 'multiple_choice':
+            correct_answer = question.content.get('correct_answer', '')
+            return str(student_answer) == str(correct_answer)
+        elif question.type == 'fill_blank':
+            correct_answers = question.content.get('correct_answers', [])
+            return str(student_answer).lower().strip() in [ans.lower().strip() for ans in correct_answers]
+        # Add more question types as needed
+        return False
+    
+    def _get_correct_answer(self, question):
+        """Get the correct answer for display"""
+        if question.type == 'true_false':
+            return question.content.get('correct_answer', '')
+        elif question.type == 'multiple_choice':
+            return question.content.get('correct_answer', '')
+        elif question.type == 'fill_blank':
+            correct_answers = question.content.get('correct_answers', [])
+            return ', '.join(correct_answers) if correct_answers else ''
+        return ''
+    
+    def _get_performance_rating(self, percentage):
+        """Get performance rating based on percentage"""
+        if percentage >= 90:
+            return 'excellent'
+        elif percentage >= 80:
+            return 'good'
+        elif percentage >= 70:
+            return 'satisfactory'
+        elif percentage >= 60:
+            return 'needs_improvement'
+        else:
+            return 'poor'
+    
     
     # Assignment Assessment Methods
     def _get_assignment_assessment(self, request, assessment_id=None):
@@ -2239,6 +2392,210 @@ class AssessmentView(APIView):
         
         assessment.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DashboardAssessmentView(APIView):
+    """
+    Returns assessment summary data for dashboard
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        try:
+            # Get current user's student profile
+            student_profile = request.user.student_profile
+            
+            # Quiz assessments stats - filter by user, not student_profile
+            quiz_attempts = QuizAttempt.objects.filter(
+                student=request.user,
+                completed_at__isnull=False
+            )
+            
+            total_quizzes = quiz_attempts.count()
+            passed_quizzes = quiz_attempts.filter(passed=True).count()
+            failed_quizzes = total_quizzes - passed_quizzes
+            avg_score = quiz_attempts.aggregate(avg=Avg('score'))['avg'] or 0
+            
+            # Recent week quizzes (last 7 days)
+            week_ago = datetime.now() - timedelta(days=7)
+            recent_quizzes = quiz_attempts.filter(completed_at__gte=week_ago).count()
+            
+            # Quiz assessments list (last attempts only)
+            quiz_assessments = []
+            for attempt in quiz_attempts.order_by('-completed_at')[:10]:  # Limit to 10 most recent
+                quiz_assessments.append({
+                    'quiz_attempt_id': str(attempt.id),
+                    'quiz_title': attempt.quiz.title,
+                    'lesson_title': attempt.quiz.lesson.title if attempt.quiz.lesson else 'N/A',
+                    'course_title': attempt.quiz.lesson.course.title if attempt.quiz.lesson else 'N/A',
+                    'student_name': f"{student_profile.child_first_name} {student_profile.child_last_name}",
+                    'score_percentage': float(attempt.final_score) if attempt.final_score else 0.0,
+                    'passed': attempt.passed,
+                    'attempt_number': attempt.attempt_number,
+                    'started_at': attempt.started_at.isoformat(),
+                    'completed_at': attempt.completed_at.isoformat() if attempt.completed_at else None,
+                    'has_teacher_feedback': attempt.is_teacher_graded
+                })
+            
+            # Assignment assessments (placeholder - implement based on your models)
+            assignment_assessments = []
+            instructor_assessments = []
+            
+            response_data = {
+                'dashboard': {
+                    'quiz_assessments': {
+                        'total': total_quizzes,
+                        'passed': passed_quizzes,
+                        'failed': failed_quizzes,
+                        'average_score': round(avg_score, 1),
+                        'recent_week': recent_quizzes
+                    },
+                    'assignment_assessments': {
+                        'total': 0,
+                        'recent_week': 0
+                    },
+                    'instructor_assessments': {
+                        'total': 0,
+                        'recent_week': 0
+                    },
+                    'overview': {
+                        'total_assessments': total_quizzes,
+                        'total_courses': 0,
+                        'recent_activity': recent_quizzes
+                    }
+                },
+                'quiz_assessments': quiz_assessments,
+                'assignment_assessments': assignment_assessments,
+                'instructor_assessments': instructor_assessments,
+                'summary': {
+                    'total_assessments': total_quizzes,
+                    'quiz_count': total_quizzes,
+                    'assignment_count': 0,
+                    'instructor_count': 0
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to fetch assessment data: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class QuizDetailView(APIView):
+    """
+    Returns detailed quiz attempt data including questions and answers
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, quiz_attempt_id):
+        try:
+            # Get current user's student profile
+            student_profile = request.user.student_profile
+            
+            # Get the quiz attempt - filter by user, not student_profile
+            quiz_attempt = get_object_or_404(
+                QuizAttempt, 
+                id=quiz_attempt_id, 
+                student=request.user
+            )
+            
+            # Get quiz questions
+            quiz_questions = Question.objects.filter(quiz=quiz_attempt.quiz)
+            
+            # Get quiz attempt feedback (overall feedback)
+            quiz_attempt_feedback = QuizAttemptFeedback.objects.filter(
+                quiz_attempt=quiz_attempt
+            ).first()
+            
+            # Build questions list from answers JSONField and questions
+            questions = []
+            answers_data = quiz_attempt.answers or {}
+            
+            for question in quiz_questions:
+                question_id = str(question.id)
+                student_answer = answers_data.get(question_id, '')
+                
+                # Get question-specific feedback
+                question_feedback = QuizQuestionFeedback.objects.filter(
+                    quiz_attempt=quiz_attempt,
+                    question=question
+                ).first()
+                
+                # Extract correct answer and options from content JSONField
+                content = question.content or {}
+                correct_answer = content.get('correct_answer', '')
+                options = content.get('options', [])
+                
+                # Calculate if answer is correct
+                is_correct = student_answer.lower().strip() == correct_answer.lower().strip() if correct_answer else False
+                
+                question_data = {
+                    'question_id': question_id,
+                    'question_text': question.question_text,
+                    'question_type': question.type,
+                    'student_answer': student_answer,
+                    'correct_answer': correct_answer,
+                    'options': options,  # Add options for multiple choice questions
+                    'points_earned': float(question_feedback.points_earned) if question_feedback and question_feedback.points_earned else (question.points if is_correct else 0),
+                    'points_possible': float(question_feedback.points_possible) if question_feedback and question_feedback.points_possible else question.points,
+                    'explanation': question.explanation or '',
+                    'teacher_feedback': question_feedback.feedback_text if question_feedback else '',
+                    'is_correct': is_correct
+                }
+                questions.append(question_data)
+            
+            # Calculate summary statistics
+            correct_answers = sum(1 for q in questions if q['is_correct'])
+            incorrect_answers = len(questions) - correct_answers
+            completion_percentage = 100.0 if quiz_attempt.completed_at else 0.0
+            
+            # Calculate total points earned and possible
+            total_points_earned = sum(q['points_earned'] for q in questions)
+            total_points_possible = sum(q['points_possible'] for q in questions)
+            
+            response_data = {
+                'quiz_info': {
+                    'quiz_attempt_id': str(quiz_attempt.id),
+                    'quiz_title': quiz_attempt.quiz.title,
+                    'lesson_title': quiz_attempt.quiz.lesson.title if quiz_attempt.quiz.lesson else 'N/A',
+                    'course_title': quiz_attempt.quiz.lesson.course.title if quiz_attempt.quiz.lesson else 'N/A',
+                    'student_name': f"{student_profile.child_first_name} {student_profile.child_last_name}",
+                    'attempt_number': quiz_attempt.attempt_number,
+                    'started_at': quiz_attempt.started_at.isoformat(),
+                    'completed_at': quiz_attempt.completed_at.isoformat() if quiz_attempt.completed_at else None,
+                },
+                'overall_feedback': {
+                    'score_percentage': float(quiz_attempt.final_score) if quiz_attempt.final_score else (total_points_earned / total_points_possible * 100) if total_points_possible > 0 else 0.0,
+                    'points_earned': quiz_attempt.final_points_earned if quiz_attempt.final_points_earned else total_points_earned,
+                    'points_possible': quiz_attempt.final_points_possible if quiz_attempt.final_points_possible else total_points_possible,
+                    'passed': quiz_attempt.passed,
+                    'rating': quiz_attempt_feedback.overall_rating if quiz_attempt_feedback and quiz_attempt_feedback.overall_rating else ('excellent' if quiz_attempt.final_score and quiz_attempt.final_score >= 90 else 'good' if quiz_attempt.final_score and quiz_attempt.final_score >= 70 else 'needs_improvement'),
+                    'feedback_text': quiz_attempt_feedback.feedback_text if quiz_attempt_feedback else quiz_attempt.teacher_comments or '',
+                    'strengths_highlighted': quiz_attempt_feedback.strengths_highlighted if quiz_attempt_feedback else '',
+                    'areas_for_improvement': quiz_attempt_feedback.areas_for_improvement if quiz_attempt_feedback else '',
+                    'study_recommendations': quiz_attempt_feedback.study_recommendations if quiz_attempt_feedback else '',
+                    'teacher_name': quiz_attempt_feedback.teacher.get_full_name() if quiz_attempt_feedback and quiz_attempt_feedback.teacher else '',
+                    'created_at': quiz_attempt_feedback.created_at.isoformat() if quiz_attempt_feedback and quiz_attempt_feedback.created_at else quiz_attempt.completed_at.isoformat() if quiz_attempt.completed_at else None,
+                },
+                'questions': questions,
+                'summary': {
+                    'total_questions': len(questions),
+                    'correct_answers': correct_answers,
+                    'incorrect_answers': incorrect_answers,
+                    'completion_percentage': completion_percentage
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to fetch quiz detail: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     
     
