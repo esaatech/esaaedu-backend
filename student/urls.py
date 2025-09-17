@@ -26,8 +26,10 @@ urlpatterns = [
     
     # Dashboard Assessment endpoints - SPECIFIC PATTERNS FIRST
     path('dashboard-assessments/quiz/<uuid:quiz_attempt_id>/', views.QuizDetailView.as_view(), name='quiz_detail'),
-    
-    # Dashboard Assessment overview - GENERAL PATTERN LAST  
+    path('dashboard-assessments/teacher/<uuid:course_id>/<uuid:teacher_id>/', views.TeacherAssessmentListView.as_view(), name='teacher_assessment_list'),
+    path('dashboard-assessments/teacher/<uuid:assessment_id>/detail/', views.TeacherAssessmentDetailView.as_view(), name='teacher_assessment_detail'),
+
+    # Dashboard Assessment overview - GENERAL PATTERN LAST
     path('dashboard-assessments/', views.DashboardAssessmentView.as_view(), name='dashboard_assessments'),
     
     # Assessment View - Single endpoint for all assessment data

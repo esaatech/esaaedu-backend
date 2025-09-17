@@ -1034,6 +1034,7 @@ class TeacherAssessment(models.Model):
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    viewed_at = models.DateTimeField(null=True, blank=True, help_text="When the student first viewed this assessment")
     
     class Meta:
         db_table = 'teacher_assessments'

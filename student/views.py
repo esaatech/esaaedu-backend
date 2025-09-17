@@ -1,14 +1,18 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import status, permissions
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
 from django.utils import timezone
 from django.db import models
+from django.db.models import Q, Count, Avg
+from datetime import datetime, timedelta
+import uuid
 
 from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback
-from courses.models import Class, ClassEvent, Course, Lesson
+from courses.models import Class, ClassEvent, Course, Lesson, Quiz, QuizAttempt, Question
 from settings.models import UserDashboardSettings
 from .serializers import (
     EnrolledCourseListSerializer, 
@@ -2393,6 +2397,56 @@ class DashboardAssessmentView(APIView):
             
             # Assignment assessments (placeholder - implement based on your models)
             assignment_assessments = []
+            
+            # Teacher assessments - get all assessments for this student
+            teacher_assessments = TeacherAssessment.objects.filter(
+                enrollment__student_profile=student_profile
+            ).select_related('enrollment__course', 'teacher')
+            
+            total_teacher_assessments = teacher_assessments.count()
+            new_teacher_assessments = teacher_assessments.filter(viewed_at__isnull=True).count()
+            recent_teacher_assessments = teacher_assessments.filter(created_at__gte=week_ago).count()
+            
+            # Group teacher assessments by course and teacher
+            teacher_assessment_groups = []
+            grouped_assessments = {}
+            
+            for assessment in teacher_assessments.order_by('-created_at'):
+                key = (assessment.enrollment.course.id, assessment.teacher.id)
+                if key not in grouped_assessments:
+                    grouped_assessments[key] = {
+                        'course_id': str(assessment.enrollment.course.id),
+                        'course_title': assessment.enrollment.course.title,
+                        'teacher_id': str(assessment.teacher.id),
+                        'teacher_name': assessment.teacher.get_full_name(),
+                        'assessments': [],
+                        'total_assessments': 0,
+                        'new_assessments': 0,
+                        'latest_assessment': None
+                    }
+                
+                assessment_data = {
+                    'id': str(assessment.id),
+                    'created_at': assessment.created_at.isoformat(),
+                    'academic_performance': assessment.academic_performance,
+                    'participation_level': assessment.participation_level,
+                    'general_comments_preview': assessment.general_comments[:100] + '...' if len(assessment.general_comments) > 100 else assessment.general_comments,
+                    'viewed_at': assessment.viewed_at.isoformat() if assessment.viewed_at else None,
+                    'is_new': assessment.viewed_at is None
+                }
+                
+                grouped_assessments[key]['assessments'].append(assessment_data)
+                grouped_assessments[key]['total_assessments'] += 1
+                if assessment.viewed_at is None:
+                    grouped_assessments[key]['new_assessments'] += 1
+                
+                # Set latest assessment (first one since we're ordering by -created_at)
+                if grouped_assessments[key]['latest_assessment'] is None:
+                    grouped_assessments[key]['latest_assessment'] = assessment_data
+            
+            teacher_assessment_groups = list(grouped_assessments.values())
+            
+            # Instructor assessments (using teacher assessments data)
             instructor_assessments = []
             
             response_data = {
@@ -2409,8 +2463,9 @@ class DashboardAssessmentView(APIView):
                         'recent_week': 0
                     },
                     'instructor_assessments': {
-                        'total': 0,
-                        'recent_week': 0
+                        'total': total_teacher_assessments,
+                        'new': new_teacher_assessments,
+                        'recent_week': recent_teacher_assessments
                     },
                     'overview': {
                         'total_assessments': total_quizzes,
@@ -2421,6 +2476,7 @@ class DashboardAssessmentView(APIView):
                 'quiz_assessments': quiz_assessments,
                 'assignment_assessments': assignment_assessments,
                 'instructor_assessments': instructor_assessments,
+                'teacher_assessment_groups': teacher_assessment_groups,
                 'summary': {
                     'total_assessments': total_quizzes,
                     'quiz_count': total_quizzes,
@@ -2548,6 +2604,111 @@ class QuizDetailView(APIView):
         except Exception as e:
             return Response(
                 {'error': f'Failed to fetch quiz detail: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class TeacherAssessmentListView(APIView):
+    """
+    Returns list of teacher assessments for a specific course and teacher
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, course_id, teacher_id):
+        try:
+            student_profile = request.user.student_profile
+            
+            # Get teacher assessments for this course and teacher
+            teacher_assessments = TeacherAssessment.objects.filter(
+                enrollment__student_profile=student_profile,
+                enrollment__course_id=course_id,
+                teacher_id=teacher_id
+            ).select_related('enrollment__course', 'teacher').order_by('-created_at')
+            
+            if not teacher_assessments.exists():
+                return Response(
+                    {'error': 'No teacher assessments found for this course and teacher'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get course and teacher info from first assessment
+            first_assessment = teacher_assessments.first()
+            course_title = first_assessment.enrollment.course.title
+            teacher_name = first_assessment.teacher.get_full_name()
+            
+            # Build assessments list
+            assessments = []
+            for assessment in teacher_assessments:
+                assessments.append({
+                    'id': str(assessment.id),
+                    'created_at': assessment.created_at.isoformat(),
+                    'academic_performance': assessment.academic_performance,
+                    'participation_level': assessment.participation_level,
+                    'general_comments_preview': assessment.general_comments[:100] + '...' if len(assessment.general_comments) > 100 else assessment.general_comments,
+                    'viewed_at': assessment.viewed_at.isoformat() if assessment.viewed_at else None,
+                    'is_new': assessment.viewed_at is None
+                })
+            
+            response_data = {
+                'course_id': str(course_id),
+                'course_title': course_title,
+                'teacher_id': str(teacher_id),
+                'teacher_name': teacher_name,
+                'total_assessments': len(assessments),
+                'new_assessments': len([a for a in assessments if a['is_new']]),
+                'assessments': assessments
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to fetch teacher assessments: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class TeacherAssessmentDetailView(APIView):
+    """
+    Returns detailed teacher assessment and marks it as viewed
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, assessment_id):
+        try:
+            student_profile = request.user.student_profile
+            
+            # Get the specific assessment
+            assessment = get_object_or_404(
+                TeacherAssessment,
+                id=assessment_id,
+                enrollment__student_profile=student_profile
+            )
+            
+            # Mark as viewed if not already viewed
+            if assessment.viewed_at is None:
+                assessment.viewed_at = timezone.now()
+                assessment.save()
+            
+            response_data = {
+                'id': str(assessment.id),
+                'teacher_name': assessment.teacher.get_full_name(),
+                'course_title': assessment.enrollment.course.title,
+                'created_at': assessment.created_at.isoformat(),
+                'viewed_at': assessment.viewed_at.isoformat() if assessment.viewed_at else None,
+                'academic_performance': assessment.academic_performance,
+                'participation_level': assessment.participation_level,
+                'strengths': assessment.strengths,
+                'weaknesses': assessment.weaknesses,
+                'recommendations': assessment.recommendations,
+                'general_comments': assessment.general_comments
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to fetch teacher assessment detail: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
