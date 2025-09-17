@@ -4,14 +4,10 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 from django.db import models
-from django.db.models import Q, Count, Avg
-from datetime import datetime, timedelta
 
 from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback
-from courses.models import Quiz, QuizAttempt, Question
 from courses.models import Class, ClassEvent, Course, Lesson
 from settings.models import UserDashboardSettings
 from .serializers import (
@@ -1948,6 +1944,7 @@ class AssessmentView(APIView):
                 'instructor_assessments': self._get_instructor_assessments_data(enrollments),
                 'summary': self._get_assessment_summary_data(enrollments)
             }
+            print(f"Assessment data is: {assessment_data}")
             
             return Response(assessment_data)
             
@@ -2336,50 +2333,7 @@ class AssessmentView(APIView):
             serializer = QuizQuestionFeedbackDetailSerializer(assessments, many=True)
             return Response(serializer.data)
     
-    def _create_assignment_assessment(self, request):
-        """Create new assignment assessment"""
-        data = request.data.copy()
-        data['teacher'] = request.user.id
-        
-        # Validate required fields
-        required_fields = ['enrollment', 'lesson', 'title', 'content', 'assessment_type']
-        for field in required_fields:
-            if field not in data:
-                return Response(
-                    {'error': f'Missing required field: {field}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        
-        # Ensure it's not linked to a quiz attempt
-        data['quiz_attempt'] = None
-        
-        serializer = QuizQuestionFeedbackCreateUpdateSerializer(data=data)
-        if serializer.is_valid():
-            assessment = serializer.save()
-            return Response(
-                QuizQuestionFeedbackDetailSerializer(assessment).data,
-                status=status.HTTP_201_CREATED
-            )
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    def _update_assignment_assessment(self, request, assessment_id):
-        """Update existing assignment assessment"""
-        assessment = get_object_or_404(LessonAssessment, id=assessment_id)
-        
-        # Check permissions
-        if assessment.teacher != request.user and request.user.role not in ['admin', 'superuser']:
-            return Response(
-                {'error': 'Permission denied'}, 
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        serializer = QuizQuestionFeedbackCreateUpdateSerializer(assessment, data=request.data, partial=True)
-        if serializer.is_valid():
-            assessment = serializer.save()
-            return Response(QuizQuestionFeedbackDetailSerializer(assessment).data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    def _delete_assignment_assessment(self, request, assessment_id):
+   
         """Delete assignment assessment"""
         assessment = get_object_or_404(LessonAssessment, id=assessment_id)
         
@@ -2393,7 +2347,7 @@ class AssessmentView(APIView):
         assessment.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-
+    
 class DashboardAssessmentView(APIView):
     """
     Returns assessment summary data for dashboard
@@ -2598,4 +2552,4 @@ class QuizDetailView(APIView):
             )
 
     
-    
+     
