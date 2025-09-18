@@ -1692,6 +1692,7 @@ class BillingDashboardView(APIView):
                     'status': payment.status,
                     'paid_at': payment.paid_at.isoformat() if payment.paid_at else None,
                     'created_at': payment.created_at.isoformat(),
+                    'stripe_invoice_id': payment.stripe_invoice_id,
                 })
             
             return Response({
@@ -1707,5 +1708,72 @@ class BillingDashboardView(APIView):
             traceback.print_exc()
             return Response(
                 {'error': 'Failed to fetch billing data', 'details': str(e)}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class DownloadInvoiceView(APIView):
+    """
+    Download invoice PDF from Stripe for authenticated users
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, payment_id: int):
+        try:
+            # Initialize Stripe client
+            get_stripe_client()
+            
+            # Get payment record and validate ownership
+            payment = Payment.objects.get(id=payment_id, user=request.user)
+            
+            if not payment.stripe_invoice_id:
+                return Response(
+                    {'error': 'No invoice available for this payment'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get invoice from Stripe
+            stripe_invoice = stripe.Invoice.retrieve(payment.stripe_invoice_id)
+            invoice_pdf_url = stripe_invoice.get('invoice_pdf')
+            
+            if not invoice_pdf_url:
+                return Response(
+                    {'error': 'PDF not available from Stripe'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Stream PDF content from Stripe
+            import requests
+            pdf_response = requests.get(invoice_pdf_url, stream=True)
+            
+            if pdf_response.status_code != 200:
+                print(f"❌ Failed to fetch PDF from Stripe: {pdf_response.status_code}")
+                return Response(
+                    {'error': 'Failed to fetch PDF from Stripe'}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Create Django response with PDF content
+            response = HttpResponse(
+                pdf_response.content,
+                content_type='application/pdf'
+            )
+            response['Content-Disposition'] = f'attachment; filename="invoice_{payment_id}.pdf"'
+            response['Cache-Control'] = 'no-cache'
+            
+            return response
+            
+        except Payment.DoesNotExist:
+            print(f"❌ Payment {payment_id} not found for user {request.user.id}")
+            return Response(
+                {'error': 'Payment not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            print(f"❌ Error downloading invoice: {e}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': 'Failed to download invoice'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

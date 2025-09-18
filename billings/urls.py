@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import CreateCheckoutSessionView, ListMySubscriptionsView, CancelSubscriptionView
 from .views  import StripeWebhookView
-from .views import CreatePaymentIntentView, ConfirmEnrollmentView, CancelIncompleteSubscriptionView, BillingDashboardView
+from .views import CreatePaymentIntentView, ConfirmEnrollmentView, CancelIncompleteSubscriptionView, BillingDashboardView, DownloadInvoiceView
 
 
 app_name = 'billing'
@@ -15,6 +15,7 @@ urlpatterns = [
     path('subscriptions/me/', ListMySubscriptionsView.as_view(), name='billing-subscriptions-me'),
     path('subscriptions/<uuid:subscription_id>/cancel/', CancelSubscriptionView.as_view(), name='billing-subscription-cancel'),
     path('dashboard/', BillingDashboardView.as_view(), name='billing-dashboard'),
+    path('payments/<int:payment_id>/download-invoice/', DownloadInvoiceView.as_view(), name='download-invoice'),
     path('webhooks/stripe/', StripeWebhookView.as_view(), name='billing-stripe-webhook'),
 ]
 
