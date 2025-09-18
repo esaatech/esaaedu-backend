@@ -1777,3 +1777,69 @@ class DownloadInvoiceView(APIView):
                 {'error': 'Failed to download invoice'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class CancelCourseView(APIView):
+    """
+    Cancel course subscription and remove student from course
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, subscription_id: int):
+        try:
+            print(f"🔍 CancelCourseView: Received subscription_id: {subscription_id} (type: {type(subscription_id)})")
+            
+            # Get subscription and validate ownership
+            subscriber = Subscribers.objects.get(
+                id=subscription_id,
+                user=request.user
+            )
+            
+            # Get cancellation reason from request
+            reason = request.data.get('reason', 'No reason provided')
+            
+            # Cancel Stripe subscription
+            try:
+                stripe.Subscription.cancel(subscriber.stripe_subscription_id)
+                print(f"✅ Stripe subscription {subscriber.stripe_subscription_id} cancelled successfully")
+            except Exception as e:
+                print(f"❌ Failed to cancel Stripe subscription: {e}")
+                # If Stripe fails, we still cancel locally to maintain consistency
+                # User will be removed from course regardless of Stripe status
+            
+            # Update local subscription status
+            subscriber.status = 'canceled'
+            subscriber.canceled_at = timezone.now()
+            subscriber.save()
+            
+            # Remove from enrolled courses
+            try:
+                enrolled_course = EnrolledCourse.objects.get(
+                    student_profile__user=request.user,
+                    course=subscriber.course
+                )
+                enrolled_course.delete()
+                print(f"✅ Removed user {request.user.id} from course {subscriber.course.id}")
+            except EnrolledCourse.DoesNotExist:
+                print(f"⚠️ No enrolled course found for user {request.user.id} and course {subscriber.course.id}")
+            
+            return Response({
+                'message': 'Course cancelled successfully',
+                'cancelled_at': subscriber.canceled_at.isoformat(),
+                'reason': reason
+            })
+            
+        except Subscribers.DoesNotExist:
+            print(f"❌ Subscription {subscription_id} not found for user {request.user.id}")
+            return Response(
+                {'error': 'Subscription not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            print(f"❌ Error cancelling course: {e}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': 'Failed to cancel course'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
