@@ -1843,3 +1843,50 @@ class CancelCourseView(APIView):
                 {'error': 'Failed to cancel course'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class CreateCustomerPortalSessionView(APIView):
+    """
+    Create Stripe Customer Portal session for payment method management
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            # Get customer account
+            customer_account = CustomerAccount.objects.get(user=request.user)
+            
+            # Initialize Stripe
+            get_stripe_client()
+            
+            # Create Stripe Customer Portal session
+            # Get Stripe billing redirect URL from environment variable
+            billing_redirect_url = os.getenv('STRIPE_BILLING_REDIRECT_URL', 'http://localhost:8080/billing-success')
+            
+            if not billing_redirect_url:
+                return Response(
+                    {'error': 'Billing redirect URL not configured'}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            session = stripe.billing_portal.Session.create(
+                customer=customer_account.stripe_customer_id,
+                return_url=billing_redirect_url,
+                # Optional: specify a configuration ID if you have one
+                # configuration='bpc_xxxxxxxxxxxxx'
+            )
+            
+            return Response({
+                'url': session.url
+            })
+            
+        except CustomerAccount.DoesNotExist:
+            return Response(
+                {'error': 'Customer account not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to create billing portal session'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
