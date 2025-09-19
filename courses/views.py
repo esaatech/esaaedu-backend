@@ -259,9 +259,11 @@ def teacher_courses(request):
 
 class CourseCreationView(APIView):
     """
-    Course Creation CBV - Handles both defaults and creation
+    Course Management CBV - Complete CRUD operations for courses
     GET: Retrieve default values for course creation form
     POST: Create a new course with validation and Stripe integration
+    PUT: Update an existing course
+    DELETE: Delete a course
     """
     permission_classes = [permissions.IsAuthenticated]
     
@@ -362,6 +364,83 @@ class CourseCreationView(APIView):
             from settings.models import CourseSettings
             settings = CourseSettings.get_settings()
             
+            # If price control is admin-only and user is not staff, set default price values
+            if settings.who_sets_price == 'admin' and not request.user.is_staff:
+                # Set default values instead of removing fields
+                request.data['price'] = 0  # Default to free
+                request.data['is_free'] = True  # Default to free
+            
+            # Use existing serializer for validation and saving
+            serializer = CourseCreateUpdateSerializer(data=request.data)
+            
+            if serializer.is_valid():
+                course = serializer.save(teacher=request.user)
+                
+                # Create Stripe product and prices
+                from .stripe_integration import create_stripe_product_for_course
+                stripe_result = create_stripe_product_for_course(course)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            if not stripe_result['success']:
+                # If Stripe setup fails, delete the course and return error
+                course.delete()
+                return Response(
+                    {'error': 'Course creation failed - billing setup error', 'details': stripe_result['error']},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Prepare response data
+            response_serializer = CourseDetailSerializer(course)
+            response_data = response_serializer.data
+            response_data['billing_setup'] = stripe_result
+            response_data['message'] = 'Course created successfully'
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            print(f"Error in CourseCreationView POST: {str(e)}")
+            return Response(
+                {'error': 'Failed to create course', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, course_id=None):
+        """
+        PUT: Update an existing course
+        Requires course_id in URL or request data
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can update courses'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get course_id from URL parameter or request data
+            if not course_id:
+                course_id = request.data.get('course_id')
+            
+            if not course_id:
+                return Response(
+                    {'error': 'Course ID is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the course and check ownership
+            try:
+                course = Course.objects.get(id=course_id, teacher=request.user)
+            except Course.DoesNotExist:
+                return Response(
+                    {'error': 'Course not found or you do not have permission to update it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check price control permissions
+            from settings.models import CourseSettings
+            settings = CourseSettings.get_settings()
+            
             # If price control is admin-only and user is not staff, remove price from data
             if settings.who_sets_price == 'admin' and not request.user.is_staff:
                 if 'price' in request.data:
@@ -369,37 +448,110 @@ class CourseCreationView(APIView):
                 if 'is_free' in request.data:
                     request.data.pop('is_free')
             
-            # Use existing serializer for validation and saving
-            serializer = CourseCreateUpdateSerializer(data=request.data)
+            # Use existing serializer for validation and updating
+            serializer = CourseCreateUpdateSerializer(course, data=request.data, partial=True)
             if serializer.is_valid():
-                course = serializer.save(teacher=request.user)
+                updated_course = serializer.save()
                 
-                # Create Stripe product and prices
-                from .stripe_integration import create_stripe_product_for_course
-                stripe_result = create_stripe_product_for_course(course)
-                
-                if not stripe_result['success']:
-                    # If Stripe setup fails, delete the course and return error
-                    course.delete()
-                    return Response(
-                        {'error': 'Course creation failed - billing setup error', 'details': stripe_result['error']},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                    )
+                # Update Stripe product if price changed
+                if 'price' in request.data or 'is_free' in request.data:
+                    from .stripe_integration import update_stripe_product_for_course
+                    stripe_result = update_stripe_product_for_course(updated_course)
+                    
+                    if not stripe_result['success']:
+                        return Response(
+                            {'error': 'Course updated but Stripe sync failed', 'details': stripe_result['error']},
+                            status=status.HTTP_206_PARTIAL_CONTENT
+                        )
                 
                 # Prepare response data
-                response_serializer = CourseDetailSerializer(course)
+                response_serializer = CourseDetailSerializer(updated_course)
                 response_data = response_serializer.data
-                response_data['billing_setup'] = stripe_result
-                response_data['message'] = 'Course created successfully'
+                response_data['message'] = 'Course updated successfully'
                 
-                return Response(response_data, status=status.HTTP_201_CREATED)
+                return Response(response_data, status=status.HTTP_200_OK)
             
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
             
         except Exception as e:
-            print(f"Error in CourseCreationView POST: {str(e)}")
+            print(f"Error in CourseCreationView PUT: {str(e)}")
             return Response(
-                {'error': 'Failed to create course', 'details': str(e)},
+                {'error': 'Failed to update course', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def delete(self, request, course_id=None):
+        """
+        DELETE: Delete a course
+        Requires course_id in URL or request data
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can delete courses'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get course_id from URL parameter or request data
+            if not course_id:
+                course_id = request.data.get('course_id')
+            
+            if not course_id:
+                return Response(
+                    {'error': 'Course ID is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the course and check ownership
+            try:
+                course = Course.objects.get(id=course_id, teacher=request.user)
+            except Course.DoesNotExist:
+                return Response(
+                    {'error': 'Course not found or you do not have permission to delete it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if course has enrollments
+            from student.models import EnrolledCourse
+            enrollment_count = EnrolledCourse.objects.filter(course=course).count()
+            
+            if enrollment_count > 0:
+                return Response(
+                    {'error': f'Cannot delete course with {enrollment_count} active enrollments. Please contact admin.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Store course data for response
+            course_data = {
+                'id': str(course.id),
+                'title': course.title,
+                'teacher': course.teacher.email
+            }
+            
+            # Delete Stripe product if it exists
+            if hasattr(course, 'stripe_product_id') and course.stripe_product_id:
+                from .stripe_integration import delete_stripe_product
+                stripe_result = delete_stripe_product(course.stripe_product_id)
+                
+                if not stripe_result['success']:
+                    print(f"Warning: Stripe product deletion failed: {stripe_result['error']}")
+            
+            # Delete the course
+            course.delete()
+            
+            return Response(
+                {
+                    'message': 'Course deleted successfully',
+                    'deleted_course': course_data
+                },
+                status=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            print(f"Error in CourseCreationView DELETE: {str(e)}")
+            return Response(
+                {'error': 'Failed to delete course', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

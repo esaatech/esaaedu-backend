@@ -21,20 +21,33 @@ def api_documentation(request):
         "description": "API contract for EsaaEdu educational platform",
         "base_url": "https://your-domain.com/api",
         "authentication": {
-            "type": "JWT Bearer Token",
-            "header": "Authorization: Bearer <token>",
+            "type": "Firebase ID Token",
+            "header": "Authorization: Bearer <firebase_id_token>",
+            "description": "Firebase authentication token obtained from Firebase Auth",
+            "token_verification": "Backend verifies Firebase ID token with Firebase Admin SDK",
             "login_endpoint": "/api/auth/login/",
-            "refresh_endpoint": "/api/auth/refresh/"
+            "refresh_endpoint": "/api/auth/refresh/",
+            "firebase_config": {
+                "project_id": "your-firebase-project-id",
+                "auth_domain": "your-project.firebaseapp.com"
+            },
+            "frontend_integration": {
+                "sdk": "Firebase Auth SDK",
+                "get_token": "firebase.auth().currentUser.getIdToken()",
+                "refresh_token": "firebase.auth().currentUser.getIdToken(true)",
+                "token_expiry": "1 hour (Firebase default)",
+                "auto_refresh": "Firebase SDK handles automatic token refresh"
+            }
         },
         "endpoints": {
             "courses": {
-                "create_course": {
-                    "method": "POST",
-                    "url": "/api/courses/create/",
-                    "description": "Create a new course or get creation defaults",
+                "course_management": {
+                    "base_url": "/api/courses/create/",
+                    "description": "Complete CRUD operations for course management",
                     "authentication": "Required (Teacher role)",
                     "methods": {
                         "GET": {
+                            "url": "/api/courses/create/",
                             "description": "Get course creation defaults and categories",
                             "response": {
                                 "categories": [
@@ -68,6 +81,7 @@ def api_documentation(request):
                             }
                         },
                         "POST": {
+                            "url": "/api/courses/create/",
                             "description": "Create a new course",
                             "request_body": {
                                 "title": "string (required)",
@@ -98,6 +112,56 @@ def api_documentation(request):
                                 "course": "CourseDetailSerializer data",
                                 "billing_setup": "Stripe integration result",
                                 "message": "Course created successfully"
+                            }
+                        },
+                        "PUT": {
+                            "url": "/api/courses/create/{course_id}/",
+                            "description": "Update an existing course",
+                            "request_body": {
+                                "title": "string (optional)",
+                                "description": "string (optional)",
+                                "long_description": "string (optional)",
+                                "category": "string (optional)",
+                                "age_range": "string (optional)",
+                                "level": "string (beginner|intermediate|advanced) (optional)",
+                                "price": "decimal (optional, if user can set price)",
+                                "is_free": "boolean (optional, if user can set price)",
+                                "max_students": "integer (optional)",
+                                "duration_weeks": "integer (optional)",
+                                "features": "array of strings (optional)",
+                                "overview": "string (optional)",
+                                "learning_objectives": "array of strings (optional)",
+                                "prerequisites_text": "string (optional)",
+                                "sessions_per_week": "integer (optional)",
+                                "total_projects": "integer (optional)",
+                                "value_propositions": "array of strings (optional)",
+                                "color": "string (hex color) (optional)",
+                                "icon": "string (optional)",
+                                "image": "file upload (optional)",
+                                "schedule": "string (optional)",
+                                "certificate": "boolean (optional)",
+                                "status": "string (draft|published) (optional)"
+                            },
+                            "response": {
+                                "course": "Updated CourseDetailSerializer data",
+                                "message": "Course updated successfully"
+                            }
+                        },
+                        "DELETE": {
+                            "url": "/api/courses/create/{course_id}/",
+                            "description": "Delete a course (only if no enrollments)",
+                            "request_body": "None",
+                            "response": {
+                                "message": "Course deleted successfully",
+                                "deleted_course": {
+                                    "id": "uuid",
+                                    "title": "string",
+                                    "teacher": "string"
+                                }
+                            },
+                            "constraints": {
+                                "enrollment_check": "Cannot delete course with active enrollments",
+                                "ownership": "Only course owner (teacher) can delete"
                             }
                         }
                     }
@@ -136,29 +200,32 @@ def api_documentation(request):
                 "login": {
                     "method": "POST",
                     "url": "/api/auth/login/",
-                    "description": "User login",
+                    "description": "User login with Firebase ID token",
                     "authentication": "None",
                     "request_body": {
-                        "email": "string (required)",
-                        "password": "string (required)"
+                        "id_token": "string (required) - Firebase ID token from client"
                     },
                     "response": {
-                        "access": "JWT access token",
-                        "refresh": "JWT refresh token",
-                        "user": "User profile data"
-                    }
+                        "access": "Firebase ID token (same as input)",
+                        "refresh": "Firebase refresh token",
+                        "user": "User profile data",
+                        "message": "Login successful"
+                    },
+                    "note": "Frontend should obtain Firebase ID token using Firebase Auth SDK before calling this endpoint"
                 },
                 "refresh": {
                     "method": "POST",
                     "url": "/api/auth/refresh/",
-                    "description": "Refresh JWT token",
+                    "description": "Refresh Firebase token",
                     "authentication": "None",
                     "request_body": {
-                        "refresh": "string (required)"
+                        "refresh_token": "string (required) - Firebase refresh token"
                     },
                     "response": {
-                        "access": "New JWT access token"
-                    }
+                        "access": "New Firebase ID token",
+                        "refresh": "New Firebase refresh token"
+                    },
+                    "note": "Use Firebase Auth SDK to refresh tokens on the client side"
                 }
             }
         },
@@ -171,7 +238,7 @@ def api_documentation(request):
         },
         "common_headers": {
             "Content-Type": "application/json",
-            "Authorization": "Bearer <jwt_token>",
+            "Authorization": "Bearer <firebase_id_token>",
             "Accept": "application/json"
         },
         "data_models": {
@@ -207,8 +274,8 @@ def course_creation_contract(request):
     """
     contract = {
         "endpoint": "/api/courses/create/",
-        "description": "Course Creation API Contract",
-        "authentication": "JWT Bearer Token (Teacher role required)",
+        "description": "Course Management API Contract - Complete CRUD Operations",
+        "authentication": "Firebase ID Token (Teacher role required)",
         "methods": {
             "GET": {
                 "purpose": "Get course creation defaults and form data",
@@ -223,6 +290,7 @@ def course_creation_contract(request):
             },
             "POST": {
                 "purpose": "Create a new course",
+                "url": "/api/courses/create/",
                 "required_fields": ["title", "description", "category"],
                 "optional_fields": [
                     "long_description", "age_range", "level", "price", 
@@ -241,6 +309,40 @@ def course_creation_contract(request):
                     "billing_setup": "Stripe integration result",
                     "message": "Success message"
                 }
+            },
+            "PUT": {
+                "purpose": "Update an existing course",
+                "url": "/api/courses/create/{course_id}/",
+                "required_fields": ["course_id"],
+                "optional_fields": [
+                    "title", "description", "long_description", "category", 
+                    "age_range", "level", "price", "is_free", "max_students", 
+                    "duration_weeks", "features", "overview", "learning_objectives", 
+                    "prerequisites_text", "sessions_per_week", "total_projects", 
+                    "value_propositions", "color", "icon", "image", "schedule", 
+                    "certificate", "status"
+                ],
+                "ownership_check": "Only course owner (teacher) can update",
+                "price_control": "Same logic as POST method",
+                "stripe_sync": "Updates Stripe product if price/is_free changed",
+                "response": {
+                    "course": "Updated course data",
+                    "message": "Course updated successfully"
+                }
+            },
+            "DELETE": {
+                "purpose": "Delete a course",
+                "url": "/api/courses/create/{course_id}/",
+                "required_fields": ["course_id"],
+                "constraints": {
+                    "enrollment_check": "Cannot delete if course has active enrollments",
+                    "ownership": "Only course owner (teacher) can delete"
+                },
+                "stripe_cleanup": "Deletes associated Stripe product",
+                "response": {
+                    "message": "Course deleted successfully",
+                    "deleted_course": "Course details before deletion"
+                }
             }
         },
         "example_requests": {
@@ -254,6 +356,30 @@ def course_creation_contract(request):
                 "is_free": False,
                 "max_students": 30,
                 "duration_weeks": 8
+            },
+            "PUT_example": {
+                "url": "PUT /api/courses/create/123e4567-e89b-12d3-a456-426614174000/",
+                "body": {
+                    "title": "Advanced Python Programming",
+                    "price": 149.99,
+                    "level": "intermediate",
+                    "status": "published"
+                }
+            },
+            "DELETE_example": {
+                "url": "DELETE /api/courses/create/123e4567-e89b-12d3-a456-426614174000/",
+                "body": "None"
+            }
+        },
+        "firebase_integration_examples": {
+            "javascript": {
+                "get_token": "const token = await firebase.auth().currentUser.getIdToken();",
+                "api_call": "fetch('/api/courses/create/', { headers: { 'Authorization': `Bearer ${token}` } })",
+                "auto_refresh": "firebase.auth().onAuthStateChanged(async (user) => { if (user) { const token = await user.getIdToken(); } })"
+            },
+            "react_example": {
+                "useEffect": "useEffect(() => { const getToken = async () => { const user = firebase.auth().currentUser; if (user) { const token = await user.getIdToken(); setAuthToken(token); } }; getToken(); }, []);",
+                "api_call": "const response = await fetch('/api/courses/create/', { method: 'POST', headers: { 'Authorization': `Bearer ${authToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(courseData) });"
             }
         }
     }

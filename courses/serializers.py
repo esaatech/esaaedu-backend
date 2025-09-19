@@ -503,7 +503,7 @@ class CourseCreateUpdateSerializer(serializers.ModelSerializer):
         fields = [
             # Basic course info
             'title', 'description', 'long_description', 'category',
-            'age_range', 'level', 'price', 'features',
+            'age_range', 'level', 'price', 'is_free', 'features',
             'featured', 'popular', 'color', 'icon', 'image', 'max_students',
             'schedule', 'certificate', 'status',
             
@@ -522,6 +522,9 @@ class CourseCreateUpdateSerializer(serializers.ModelSerializer):
         if value < 1 or value > 50:
             raise serializers.ValidationError("Max students must be between 1 and 50")
         return value
+    
+    def validate(self, data):
+        return data
 
 
 # Frontend-compatible serializers (matching existing data structure)
