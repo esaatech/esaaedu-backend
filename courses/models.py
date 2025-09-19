@@ -6,6 +6,21 @@ import uuid
 
 User = get_user_model()
 
+class CourseCategory(models.Model):
+    """
+    Course category model
+    """
+    name = models.CharField(max_length=200, help_text="Course category name")
+    description = models.TextField(help_text="Course category description")
+    
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        verbose_name = "Course Category"
+        verbose_name_plural = "Course Categories"
+        ordering = ['name']
+
 
 class Course(models.Model):
     """
@@ -48,6 +63,10 @@ class Course(models.Model):
         decimal_places=2, 
         validators=[MinValueValidator(0)],
         help_text="Course price in USD"
+    )
+    is_free = models.BooleanField(
+        default=False,
+        help_text="Whether this course is free to access"
     )
     features = models.JSONField(
         default=list, 
