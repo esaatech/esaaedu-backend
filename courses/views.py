@@ -26,6 +26,13 @@ from .serializers import (
 )
 
 
+
+
+
+
+
+
+
 class CoursesPagination(PageNumberPagination):
     page_size = 12
     page_size_query_param = 'page_size'
@@ -244,6 +251,153 @@ def teacher_courses(request):
                 return Response(response_data, status=status.HTTP_201_CREATED)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
+            return Response(
+                {'error': 'Failed to create course', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CourseCreationView(APIView):
+    """
+    Course Creation CBV - Handles both defaults and creation
+    GET: Retrieve default values for course creation form
+    POST: Create a new course with validation and Stripe integration
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """
+        GET: Retrieve default values for course creation
+        Returns categories, settings, and form defaults
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can access course creation'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get course categories
+            from .models import CourseCategory
+            categories = CourseCategory.objects.all().order_by('name')
+            categories_data = [
+                {
+                    'id': str(cat.id),
+                    'name': cat.name,
+                    'description': cat.description
+                }
+                for cat in categories
+            ]
+            
+            # Get course settings
+            from settings.models import CourseSettings
+            settings = CourseSettings.get_settings()
+            
+            # Check price control permissions
+            user_can_set_price = (
+                settings.who_sets_price == 'teacher' or 
+                settings.who_sets_price == 'both' or
+                request.user.is_staff
+            )
+            
+            # Form defaults based on settings
+            form_defaults = {
+                'max_students': settings.max_students_per_course,
+                'duration_weeks': settings.default_course_duration_weeks,
+                'enable_trial_period': settings.enable_trial_period,
+                'trial_period_days': settings.trial_period_days,
+                'price': 0.00,  # Default free course
+                'is_free': True,  # Default to free
+                'level': 'beginner',  # Default level
+                'status': 'draft'  # Default status
+            }
+            
+            # Default settings for response
+            default_settings = {
+                'monthly_price_markup_percentage': float(settings.monthly_price_markup_percentage),
+                'max_students_per_course': settings.max_students_per_course,
+                'default_course_duration_weeks': settings.default_course_duration_weeks,
+                'enable_trial_period': settings.enable_trial_period,
+                'trial_period_days': settings.trial_period_days,
+                'who_sets_price': settings.who_sets_price
+            }
+            
+            response_data = {
+                'categories': categories_data,
+                'default_settings': default_settings,
+                'form_defaults': form_defaults,
+                'price_control': settings.who_sets_price,
+                'user_can_set_price': user_can_set_price,
+                'user_context': {
+                    'teacher_id': str(request.user.id),
+                    'teacher_name': f"{request.user.first_name} {request.user.last_name}".strip(),
+                    'teacher_email': request.user.email
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"Error in CourseCreationView GET: {str(e)}")
+            return Response(
+                {'error': 'Failed to fetch course creation defaults', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request):
+        """
+        POST: Create a new course
+        Uses existing CourseCreateUpdateSerializer and Stripe integration
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can create courses'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Check price control permissions
+            from settings.models import CourseSettings
+            settings = CourseSettings.get_settings()
+            
+            # If price control is admin-only and user is not staff, remove price from data
+            if settings.who_sets_price == 'admin' and not request.user.is_staff:
+                if 'price' in request.data:
+                    request.data.pop('price')
+                if 'is_free' in request.data:
+                    request.data.pop('is_free')
+            
+            # Use existing serializer for validation and saving
+            serializer = CourseCreateUpdateSerializer(data=request.data)
+            if serializer.is_valid():
+                course = serializer.save(teacher=request.user)
+                
+                # Create Stripe product and prices
+                from .stripe_integration import create_stripe_product_for_course
+                stripe_result = create_stripe_product_for_course(course)
+                
+                if not stripe_result['success']:
+                    # If Stripe setup fails, delete the course and return error
+                    course.delete()
+                    return Response(
+                        {'error': 'Course creation failed - billing setup error', 'details': stripe_result['error']},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+                
+                # Prepare response data
+                response_serializer = CourseDetailSerializer(course)
+                response_data = response_serializer.data
+                response_data['billing_setup'] = stripe_result
+                response_data['message'] = 'Course created successfully'
+                
+                return Response(response_data, status=status.HTTP_201_CREATED)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            print(f"Error in CourseCreationView POST: {str(e)}")
             return Response(
                 {'error': 'Failed to create course', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

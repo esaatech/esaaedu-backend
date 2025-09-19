@@ -17,6 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from api_docs import api_documentation, course_creation_contract
 
 # Create API router
 router = DefaultRouter()
@@ -32,6 +33,10 @@ urlpatterns = [
     path("api/teacher/", include('teacher.urls')),
     path("api/settings/", include('settings.urls')),
     path("api/", include(router.urls)),
+    
+    # API Documentation
+    path("api/docs/", api_documentation, name="api_documentation"),
+    path("api/docs/course-creation/", course_creation_contract, name="course_creation_contract"),
     
     # Health check endpoint
     path("health/", lambda request: JsonResponse({"status": "ok"})),

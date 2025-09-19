@@ -14,6 +14,9 @@ urlpatterns = [
     path('teacher/dashboard/', views.TeacherDashboardAPIView.as_view(), name='teacher_dashboard'),
     path('teacher/<uuid:course_id>/', views.teacher_course_detail, name='teacher_course_detail'),
     
+    # Course creation endpoints (new consolidated CBV)
+    path('create/', views.CourseCreationView.as_view(), name='course_creation'),
+    
     # Lesson management endpoints
     path('<uuid:course_id>/lessons/', views.course_lessons, name='course_lessons'),
     path('lessons/<uuid:lesson_id>/', views.lesson_detail, name='lesson_detail'),
