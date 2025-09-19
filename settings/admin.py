@@ -7,6 +7,7 @@ class CourseSettingsAdmin(admin.ModelAdmin):
     """Admin interface for CourseSettings"""
     list_display = (
         'monthly_price_markup_percentage',
+        'who_sets_price',
         'max_students_per_course',
         'default_course_duration_weeks',
         'enable_trial_period',
@@ -18,7 +19,7 @@ class CourseSettingsAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Billing Settings', {
-            'fields': ('monthly_price_markup_percentage',),
+            'fields': ('monthly_price_markup_percentage', 'who_sets_price'),
             'description': 'Configure course billing and pricing settings'
         }),
         ('Course Defaults', {

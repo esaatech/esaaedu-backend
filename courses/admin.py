@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory
 
 
 @admin.register(Course)
@@ -277,3 +277,49 @@ class CourseReviewAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('course')
+
+
+@admin.register(CourseCategory)
+class CourseCategoryAdmin(admin.ModelAdmin):
+    list_display = ['name', 'description_short', 'course_count']
+    list_filter = []
+    search_fields = ['name', 'description']
+    readonly_fields = ['id']
+    actions = ['duplicate_categories']
+    
+    def description_short(self, obj):
+        return obj.description[:100] + "..." if len(obj.description) > 100 else obj.description
+    description_short.short_description = 'Description'
+    
+    def course_count(self, obj):
+        return Course.objects.filter(category=obj.name).count()
+    course_count.short_description = 'Courses'
+    
+    def duplicate_categories(self, request, queryset):
+        """Action to duplicate selected categories with a suffix"""
+        duplicated_count = 0
+        for category in queryset:
+            new_category = CourseCategory.objects.create(
+                name=f"{category.name} (Copy)",
+                description=category.description
+            )
+            duplicated_count += 1
+        self.message_user(request, f'{duplicated_count} categories were duplicated.')
+    duplicate_categories.short_description = "Duplicate selected categories"
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('name', 'description')
+        }),
+        ('Statistics', {
+            'fields': ('course_count',),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('id',),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request)

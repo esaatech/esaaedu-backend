@@ -36,6 +36,20 @@ class CourseSettings(models.Model):
         help_text="Trial period duration in days"
     )
     
+    # Price Control Settings
+    PRICE_CONTROL_CHOICES = [
+        ('admin', 'Admin Only'),
+        ('teacher', 'Teachers Only'),
+        ('both', 'Both Admin and Teachers'),
+    ]
+    
+    who_sets_price = models.CharField(
+        max_length=10,
+        choices=PRICE_CONTROL_CHOICES,
+        default='admin',
+        help_text="Who can set course prices - Admin, Teachers, or Both"
+    )
+    
     # Other Course Settings
     max_students_per_course = models.PositiveIntegerField(
         default=30,
@@ -72,6 +86,7 @@ class CourseSettings(models.Model):
                 'default_course_duration_weeks': 8,
                 'enable_trial_period': True,
                 'trial_period_days': 14,
+                'who_sets_price': 'admin',
             }
         )
         return settings
