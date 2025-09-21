@@ -196,6 +196,143 @@ def api_documentation(request):
                     }
                 }
             },
+            "home": {
+                "contact_overview": {
+                    "method": "GET",
+                    "url": "/api/home/contact/",
+                    "description": "Get complete contact page data including methods, team, FAQs, and hours",
+                    "authentication": "None (Public endpoint)",
+                    "response": {
+                        "contact_methods": [
+                            {
+                                "id": "uuid",
+                                "type": "live_chat|email|phone|whatsapp",
+                                "title": "Contact Method Title",
+                                "description": "Description of the contact method",
+                                "availability": "When this method is available",
+                                "response_time": "Expected response time",
+                                "action_text": "Button or action text",
+                                "action_value": "Email, phone, or URL",
+                                "icon": "Icon identifier",
+                                "color": "Color theme"
+                            }
+                        ],
+                        "support_team": [
+                            {
+                                "id": "uuid",
+                                "name": "Team Member Name",
+                                "title": "Job Title",
+                                "responsibilities": "What they help with",
+                                "email": "Contact email",
+                                "avatar_initials": "Initials for avatar"
+                            }
+                        ],
+                        "faqs": [
+                            {
+                                "id": "uuid",
+                                "question": "Frequently asked question",
+                                "answer": "Answer to the question",
+                                "category": "Question category"
+                            }
+                        ],
+                        "support_hours": [
+                            {
+                                "id": "uuid",
+                                "period": "Time period (e.g., Mon-Fri)",
+                                "hours": "Hours (e.g., 9AM-6PM EST)",
+                                "is_emergency": "Boolean - is this emergency service"
+                            }
+                        ]
+                    }
+                },
+                "contact_form_submit": {
+                    "method": "POST",
+                    "url": "/api/home/contact/",
+                    "description": "Submit contact form with validation",
+                    "authentication": "None (Public endpoint)",
+                    "request_body": {
+                        "first_name": "string (required, min 2 chars)",
+                        "last_name": "string (required, min 2 chars)",
+                        "email": "string (required, valid email)",
+                        "phone_number": "string (optional, min 10 digits)",
+                        "subject": "string (required) - general|technical|billing|course_guidance|enrollment|other",
+                        "child_age": "string (optional) - 3-5|6-8|9-12|13-15|16-18|adult",
+                        "message": "string (required, 10-2000 chars)",
+                        "wants_updates": "boolean (optional, default false)"
+                    },
+                    "response": {
+                        "message": "Thank you for your message! We will get back to you soon.",
+                        "submission": {
+                            "id": "uuid",
+                            "first_name": "string",
+                            "last_name": "string",
+                            "email": "string",
+                            "subject": "string",
+                            "status": "new",
+                            "created_at": "datetime"
+                        }
+                    }
+                },
+                "contact_methods": {
+                    "method": "GET",
+                    "url": "/api/home/contact/methods/",
+                    "description": "Get all available contact methods",
+                    "authentication": "None (Public endpoint)",
+                    "response": "Array of ContactMethod objects"
+                },
+                "support_team": {
+                    "method": "GET",
+                    "url": "/api/home/contact/support-team/",
+                    "description": "Get support team members",
+                    "authentication": "None (Public endpoint)",
+                    "response": "Array of SupportTeamMember objects"
+                },
+                "faqs": {
+                    "method": "GET",
+                    "url": "/api/home/contact/faqs/",
+                    "description": "Get frequently asked questions",
+                    "authentication": "None (Public endpoint)",
+                    "response": "Array of FAQ objects"
+                },
+                "support_hours": {
+                    "method": "GET",
+                    "url": "/api/home/contact/support-hours/",
+                    "description": "Get support hours information",
+                    "authentication": "None (Public endpoint)",
+                    "response": "Array of SupportHours objects"
+                },
+                "contact_submissions": {
+                    "method": "GET",
+                    "url": "/api/home/contact/submissions/",
+                    "description": "Get all contact form submissions (admin only)",
+                    "authentication": "Required (Admin role)",
+                    "query_parameters": {
+                        "status": "string (optional) - new|in_progress|resolved|closed",
+                        "search": "string (optional) - search by name, email, subject"
+                    },
+                    "response": "Array of ContactSubmission objects"
+                },
+                "contact_submission_detail": {
+                    "method": "PUT",
+                    "url": "/api/home/contact/submissions/{submission_id}/",
+                    "description": "Update contact submission status (admin only)",
+                    "authentication": "Required (Admin role)",
+                    "request_body": {
+                        "status": "string (optional) - new|in_progress|resolved|closed",
+                        "response_notes": "string (optional) - internal notes"
+                    },
+                    "response": "Updated ContactSubmission object"
+                },
+                "contact_submission_delete": {
+                    "method": "DELETE",
+                    "url": "/api/home/contact/submissions/{submission_id}/",
+                    "description": "Delete contact submission (admin only)",
+                    "authentication": "Required (Admin role)",
+                    "response": {
+                        "message": "Contact submission deleted successfully"
+                    }
+                }
+            },
             "authentication": {
                 "login": {
                     "method": "POST",
@@ -385,3 +522,173 @@ def course_creation_contract(request):
     }
     
     return JsonResponse(contract, json_dumps_params={'indent': 2})
+
+
+@require_http_methods(["GET"])
+def contact_contract(request):
+    """
+    Specific API contract for contact functionality
+    """
+    contract = {
+        "endpoint": "/api/home/contact/",
+        "description": "Contact Management API Contract - Complete Contact System",
+        "authentication": "Firebase ID Token (Admin for submissions management)",
+        "methods": {
+            "GET": {
+                "purpose": "Get complete contact page data",
+                "url": "/api/home/contact/",
+                "response_structure": {
+                    "contact_methods": "Array of available contact methods (Live Chat, Email, Phone, WhatsApp)",
+                    "support_team": "Array of support team members with roles and contact info",
+                    "faqs": "Array of frequently asked questions with answers",
+                    "support_hours": "Array of support hours for different time periods"
+                },
+                "use_cases": [
+                    "Load contact page with all components",
+                    "Display contact methods with action buttons",
+                    "Show support team member cards",
+                    "Render FAQ accordion or list",
+                    "Display support hours information"
+                ]
+            },
+            "POST": {
+                "purpose": "Submit contact form",
+                "url": "/api/home/contact/",
+                "required_fields": ["first_name", "last_name", "email", "subject", "message"],
+                "optional_fields": [
+                    "phone_number", "child_age", "wants_updates"
+                ],
+                "validation_rules": {
+                    "first_name": "Minimum 2 characters, required",
+                    "last_name": "Minimum 2 characters, required", 
+                    "email": "Valid email format, required",
+                    "phone_number": "Minimum 10 digits, optional",
+                    "subject": "Must be one of: general, technical, billing, course_guidance, enrollment, other",
+                    "child_age": "Must be one of: 3-5, 6-8, 9-12, 13-15, 16-18, adult",
+                    "message": "10-2000 characters, required",
+                    "wants_updates": "Boolean, defaults to false"
+                },
+                "response": {
+                    "message": "Success message",
+                    "submission": "Created submission data with ID and status"
+                }
+            }
+        },
+        "individual_endpoints": {
+            "contact_methods": {
+                "url": "/api/home/contact/methods/",
+                "method": "GET",
+                "purpose": "Get contact methods only",
+                "authentication": "None"
+            },
+            "support_team": {
+                "url": "/api/home/contact/support-team/",
+                "method": "GET", 
+                "purpose": "Get support team only",
+                "authentication": "None"
+            },
+            "faqs": {
+                "url": "/api/home/contact/faqs/",
+                "method": "GET",
+                "purpose": "Get FAQs only", 
+                "authentication": "None"
+            },
+            "support_hours": {
+                "url": "/api/home/contact/support-hours/",
+                "method": "GET",
+                "purpose": "Get support hours only",
+                "authentication": "None"
+            },
+            "submissions_management": {
+                "url": "/api/home/contact/submissions/",
+                "methods": ["GET", "PUT", "DELETE"],
+                "purpose": "Manage contact submissions (admin only)",
+                "authentication": "Required (Admin role)",
+                "features": [
+                    "List all submissions with filtering",
+                    "Update submission status and notes",
+                    "Delete submissions",
+                    "Search by name, email, subject"
+                ]
+            }
+        },
+        "example_requests": {
+            "GET_contact_overview": "GET /api/home/contact/",
+            "POST_contact_form": {
+                "first_name": "John",
+                "last_name": "Doe", 
+                "email": "john@example.com",
+                "phone_number": "(555) 123-4567",
+                "subject": "course_guidance",
+                "child_age": "6-8",
+                "message": "I need help choosing the right programming course for my 7-year-old daughter. She's interested in coding but I'm not sure where to start.",
+                "wants_updates": True
+            },
+            "GET_contact_methods": "GET /api/home/contact/methods/",
+            "GET_support_team": "GET /api/home/contact/support-team/",
+            "GET_faqs": "GET /api/home/contact/faqs/",
+            "GET_support_hours": "GET /api/home/contact/support-hours/"
+        },
+        "frontend_integration_examples": {
+            "javascript": {
+                "load_contact_page": "const response = await fetch('/api/home/contact/'); const data = await response.json();",
+                "submit_contact_form": "const response = await fetch('/api/home/contact/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) });",
+                "load_individual_components": "const methods = await fetch('/api/home/contact/methods/').then(r => r.json());"
+            },
+            "react_example": {
+                "useEffect": "useEffect(() => { const loadContactData = async () => { const response = await fetch('/api/home/contact/'); const data = await response.json(); setContactData(data); }; loadContactData(); }, []);",
+                "form_submission": "const handleSubmit = async (formData) => { const response = await fetch('/api/home/contact/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) }); const result = await response.json(); if (response.ok) { setSuccessMessage(result.message); } };"
+            }
+        },
+        "data_models": {
+            "ContactMethod": {
+                "id": "UUID",
+                "type": "live_chat|email|phone|whatsapp",
+                "title": "string",
+                "description": "string",
+                "availability": "string",
+                "response_time": "string",
+                "action_text": "string",
+                "action_value": "string",
+                "icon": "string",
+                "color": "string"
+            },
+            "SupportTeamMember": {
+                "id": "UUID",
+                "name": "string",
+                "title": "string", 
+                "responsibilities": "string",
+                "email": "string",
+                "avatar_initials": "string"
+            },
+            "FAQ": {
+                "id": "UUID",
+                "question": "string",
+                "answer": "string",
+                "category": "string"
+            },
+            "SupportHours": {
+                "id": "UUID",
+                "period": "string",
+                "hours": "string",
+                "is_emergency": "boolean"
+            },
+            "ContactSubmission": {
+                "id": "UUID",
+                "first_name": "string",
+                "last_name": "string",
+                "email": "string",
+                "phone_number": "string",
+                "subject": "string",
+                "child_age": "string",
+                "message": "string",
+                "wants_updates": "boolean",
+                "status": "new|in_progress|resolved|closed",
+                "created_at": "datetime"
+            }
+        }
+    }
+    
+    return JsonResponse(contract, json_dumps_params={'indent': 2})
+
+

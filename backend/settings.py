@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     "users",
     "courses",
     "student",
+    "home",
     "teacher",
     "billings",
     "settings",
@@ -393,3 +394,8 @@ else:
                 'NAME': BASE_DIR / 'db.sqlite3',
             }
         }
+
+# Slack Configuration
+SLACK_BOT_TOKEN = config('SLACK_BOT_TOKEN', default='')
+SLACK_CHANNEL = config('SLACK_CHANNEL', default='#general')
+ADMIN_URL = config('ADMIN_URL', default='http://localhost:8000')
