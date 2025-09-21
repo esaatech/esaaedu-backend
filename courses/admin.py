@@ -233,9 +233,9 @@ class ClassEventAdmin(admin.ModelAdmin):
 
 @admin.register(CourseReview)
 class CourseReviewAdmin(admin.ModelAdmin):
-    list_display = ['student_name', 'course', 'rating', 'is_verified', 'is_featured', 'created_at']
+    list_display = ['student_name', 'parent_name', 'course', 'rating', 'is_verified', 'is_featured', 'created_at']
     list_filter = ['rating', 'is_verified', 'is_featured', 'student_age', 'created_at', 'course__category']
-    search_fields = ['student_name', 'review_text', 'course__title']
+    search_fields = ['student_name', 'parent_name', 'review_text', 'course__title']
     readonly_fields = ['id', 'created_at', 'updated_at']
     actions = ['verify_reviews', 'unverify_reviews', 'feature_reviews', 'unfeature_reviews']
     
@@ -261,7 +261,7 @@ class CourseReviewAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Student Information', {
-            'fields': ('student_name', 'student_age')
+            'fields': ('student_name', 'student_age', 'parent_name')
         }),
         ('Review Content', {
             'fields': ('course', 'rating', 'review_text')

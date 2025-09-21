@@ -331,6 +331,57 @@ def api_documentation(request):
                     "response": {
                         "message": "Contact submission deleted successfully"
                     }
+                },
+                "landing_page": {
+                    "method": "GET",
+                    "url": "/api/home/",
+                    "description": "Get complete landing page data including testimonials, featured courses, and stats",
+                    "authentication": "None (Public endpoint)",
+                    "response": {
+                        "testimonials": [
+                            {
+                                "id": "string",
+                                "rating": "integer (1-5)",
+                                "quote": "string - testimonial text",
+                                "reviewer_name": "string - Parent of Child (age)",
+                                "course_tag": "string - course category",
+                                "course_title": "string - course title",
+                                "avatar_initials": "string - initials for avatar",
+                                "created_at": "datetime - ISO format"
+                            }
+                        ],
+                        "featured_courses": [
+                            {
+                                "id": "uuid",
+                                "title": "string",
+                                "description": "string",
+                                "category": "string",
+                                "level": "string - beginner|intermediate|advanced",
+                                "age_range": "string - e.g., Ages 6-10",
+                                "price": "decimal",
+                                "is_free": "boolean",
+                                "duration_weeks": "integer",
+                                "enrolled_students_count": "integer",
+                                "rating": "decimal - average rating",
+                                "image_url": "string - course image URL",
+                                "color": "string - CSS color class",
+                                "icon": "string - icon name"
+                            }
+                        ],
+                        "stats": {
+                            "total_students": "integer",
+                            "total_courses": "integer", 
+                            "total_reviews": "integer",
+                            "average_rating": "decimal",
+                            "satisfaction_rate": "integer - percentage"
+                        },
+                        "hero_section": {
+                            "title": "string - main headline",
+                            "subtitle": "string - subheading",
+                            "cta_text": "string - call-to-action button text",
+                            "background_image": "string - hero background image URL"
+                        }
+                    }
                 }
             },
             "authentication": {
@@ -525,6 +576,196 @@ def course_creation_contract(request):
 
 
 @require_http_methods(["GET"])
+def landing_page_contract(request):
+    """
+    Specific API contract for landing page functionality
+    """
+    contract = {
+        "endpoint": "/api/home/",
+        "description": "Landing Page API Contract - Complete Homepage Data",
+        "authentication": "None (Public endpoint)",
+        "methods": {
+            "GET": {
+                "purpose": "Get complete landing page data",
+                "url": "/api/home/",
+                "response_structure": {
+                    "testimonials": "Array of featured testimonials for 'What People Are Saying' section",
+                    "featured_courses": "Array of featured courses for homepage display",
+                    "stats": "Landing page statistics and metrics",
+                    "hero_section": "Hero section content and configuration"
+                },
+                "use_cases": [
+                    "Load homepage with testimonials",
+                    "Display featured courses",
+                    "Show platform statistics",
+                    "Render hero section content"
+                ]
+            }
+        },
+        "testimonials_section": {
+            "description": "What People Are Saying section data",
+            "data_structure": {
+                "id": "string - testimonial ID",
+                "rating": "integer (1-5) - star rating",
+                "quote": "string - testimonial text content",
+                "reviewer_name": "string - formatted as 'Parent of Child (age)'",
+                "course_tag": "string - course category for display tag",
+                "course_title": "string - course title for context",
+                "avatar_initials": "string - initials for avatar display",
+                "created_at": "datetime - ISO format timestamp"
+            },
+            "frontend_integration": {
+                "display_format": "Card layout with rating stars, quote, reviewer info, and course tag",
+                "avatar_generation": "Use avatar_initials to generate circular avatars",
+                "rating_display": "Convert rating integer to star display (1-5 stars)",
+                "responsive_design": "Cards should be responsive and scrollable"
+            }
+        },
+        "featured_courses_section": {
+            "description": "Featured courses for homepage display",
+            "data_structure": {
+                "id": "UUID - course identifier",
+                "title": "string - course title",
+                "description": "string - course description",
+                "category": "string - course category",
+                "level": "string - beginner|intermediate|advanced",
+                "age_range": "string - target age range",
+                "price": "decimal - course price",
+                "is_free": "boolean - whether course is free",
+                "duration_weeks": "integer - course duration",
+                "enrolled_students_count": "integer - number of enrolled students",
+                "rating": "decimal - average course rating",
+                "image_url": "string - course image URL",
+                "color": "string - CSS color class",
+                "icon": "string - icon name for display"
+            }
+        },
+        "stats_section": {
+            "description": "Platform statistics and metrics",
+            "data_structure": {
+                "total_students": "integer - total number of students",
+                "total_courses": "integer - total number of courses",
+                "total_reviews": "integer - total number of reviews",
+                "average_rating": "decimal - average platform rating",
+                "satisfaction_rate": "integer - satisfaction percentage"
+            }
+        },
+        "hero_section": {
+            "description": "Hero section content and configuration",
+            "data_structure": {
+                "title": "string - main headline",
+                "subtitle": "string - subheading text",
+                "cta_text": "string - call-to-action button text",
+                "background_image": "string - hero background image URL"
+            }
+        },
+        "example_requests": {
+            "GET_landing_page": "GET /api/home/",
+            "response_example": {
+                "testimonials": [
+                    {
+                        "id": "10",
+                        "rating": 5,
+                        "quote": "Alex went from knowing nothing about coding to building his own game in just 6 weeks! The instructors are amazing and really know how to keep kids engaged.",
+                        "reviewer_name": "Sarah M. of Alex (12)",
+                        "course_tag": "Game Development",
+                        "course_title": "Game Development Course",
+                        "avatar_initials": "SM",
+                        "created_at": "2025-09-21T15:17:10.094196+00:00"
+                    }
+                ],
+                "featured_courses": [
+                    {
+                        "id": "23633616-9f19-42eb-8575-71411004ba53",
+                        "title": "Python Programming 101",
+                        "description": "A beginner-friendly course that teaches the fundamentals of Python programming",
+                        "category": "Programming",
+                        "level": "beginner",
+                        "age_range": "Ages 10-14",
+                        "price": 400.0,
+                        "is_free": false,
+                        "duration_weeks": 8,
+                        "enrolled_students_count": 12,
+                        "rating": 5.0,
+                        "image_url": "/static/images/course-placeholder.jpg",
+                        "color": "bg-gradient-primary",
+                        "icon": "BookOpen"
+                    }
+                ],
+                "stats": {
+                    "total_students": 12,
+                    "total_courses": 6,
+                    "total_reviews": 12,
+                    "average_rating": 4.8,
+                    "satisfaction_rate": 98
+                },
+                "hero_section": {
+                    "title": "Empowering Young Minds Through Technology",
+                    "subtitle": "Interactive coding courses designed for kids and teens",
+                    "cta_text": "Start Learning Today",
+                    "background_image": "/static/images/hero-bg.jpg"
+                }
+            }
+        },
+        "frontend_integration_examples": {
+            "javascript": {
+                "load_landing_page": "const response = await fetch('/api/home/'); const data = await response.json();",
+                "display_testimonials": "data.testimonials.forEach(testimonial => { /* render testimonial card */ });",
+                "display_courses": "data.featured_courses.forEach(course => { /* render course card */ });",
+                "display_stats": "document.getElementById('stats').innerHTML = data.stats.total_students;"
+            },
+            "react_example": {
+                "useEffect": "useEffect(() => { const loadLandingData = async () => { const response = await fetch('/api/home/'); const data = await response.json(); setTestimonials(data.testimonials); setCourses(data.featured_courses); setStats(data.stats); }; loadLandingData(); }, []);",
+                "testimonial_component": "const TestimonialCard = ({ testimonial }) => ( <div className='testimonial-card'> <div className='stars'>{'★'.repeat(testimonial.rating)}</div> <p>{testimonial.quote}</p> <div className='reviewer'>{testimonial.reviewer_name}</div> <div className='course-tag'>{testimonial.course_tag}</div> </div> );"
+            }
+        },
+        "data_models": {
+            "Testimonial": {
+                "id": "string",
+                "rating": "integer (1-5)",
+                "quote": "string",
+                "reviewer_name": "string",
+                "course_tag": "string",
+                "course_title": "string",
+                "avatar_initials": "string",
+                "created_at": "datetime"
+            },
+            "FeaturedCourse": {
+                "id": "UUID",
+                "title": "string",
+                "description": "string",
+                "category": "string",
+                "level": "string",
+                "age_range": "string",
+                "price": "decimal",
+                "is_free": "boolean",
+                "duration_weeks": "integer",
+                "enrolled_students_count": "integer",
+                "rating": "decimal",
+                "image_url": "string",
+                "color": "string",
+                "icon": "string"
+            },
+            "LandingStats": {
+                "total_students": "integer",
+                "total_courses": "integer",
+                "total_reviews": "integer",
+                "average_rating": "decimal",
+                "satisfaction_rate": "integer"
+            },
+            "HeroSection": {
+                "title": "string",
+                "subtitle": "string",
+                "cta_text": "string",
+                "background_image": "string"
+            }
+        }
+    }
+    
+    return JsonResponse(contract, json_dumps_params={'indent': 2})
+
+
+@require_http_methods(["GET"])
 def contact_contract(request):
     """
     Specific API contract for contact functionality
@@ -685,6 +926,45 @@ def contact_contract(request):
                 "wants_updates": "boolean",
                 "status": "new|in_progress|resolved|closed",
                 "created_at": "datetime"
+            },
+            "Testimonial": {
+                "id": "string",
+                "rating": "integer (1-5)",
+                "quote": "string",
+                "reviewer_name": "string",
+                "course_tag": "string",
+                "course_title": "string",
+                "avatar_initials": "string",
+                "created_at": "datetime"
+            },
+            "FeaturedCourse": {
+                "id": "UUID",
+                "title": "string",
+                "description": "string",
+                "category": "string",
+                "level": "string",
+                "age_range": "string",
+                "price": "decimal",
+                "is_free": "boolean",
+                "duration_weeks": "integer",
+                "enrolled_students_count": "integer",
+                "rating": "decimal",
+                "image_url": "string",
+                "color": "string",
+                "icon": "string"
+            },
+            "LandingStats": {
+                "total_students": "integer",
+                "total_courses": "integer",
+                "total_reviews": "integer",
+                "average_rating": "decimal",
+                "satisfaction_rate": "integer"
+            },
+            "HeroSection": {
+                "title": "string",
+                "subtitle": "string",
+                "cta_text": "string",
+                "background_image": "string"
             }
         }
     }

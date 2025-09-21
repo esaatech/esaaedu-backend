@@ -2,13 +2,15 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from rest_framework.decorators import api_view, permission_classes
-from django.db.models import Q
+from django.db.models import Q, Avg
+from django.db import models
 from .models import ContactMethod, SupportTeamMember, FAQ, SupportHours, ContactSubmission
 from .serializers import (
     ContactMethodSerializer, SupportTeamMemberSerializer, FAQSerializer,
     SupportHoursSerializer, ContactSubmissionSerializer, ContactSubmissionCreateSerializer,
     ContactOverviewSerializer
 )
+from courses.models import CourseReview, Course
 
 
 class ContactView(APIView):
@@ -282,3 +284,160 @@ class ContactSubmissionView(APIView):
                 {'error': 'Failed to delete submission', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class LandingPageView(APIView):
+    """
+    Landing Page CBV - Handles all landing page data
+    GET: Retrieve comprehensive landing page data including testimonials, featured courses, etc.
+    """
+    permission_classes = [permissions.AllowAny]  # Public endpoint
+    
+    def get(self, request):
+        """
+        GET: Retrieve complete landing page data
+        Returns testimonials, featured courses, and other landing page sections
+        """
+        try:
+            # Build comprehensive landing page data using separate methods
+            landing_data = {
+                'testimonials': self._get_testimonials_data(),
+                'featured_courses': self._get_featured_courses_data(),
+                'stats': self._get_landing_stats_data(),
+                'hero_section': self._get_hero_section_data(),
+            }
+            
+            return Response(landing_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Error retrieving landing page data: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _get_testimonials_data(self):
+        """
+        Get testimonials data for "What People Are Saying" section
+        Returns featured reviews with parent information and course tags
+        """
+        # Get featured reviews, ordered by display preference
+        reviews = CourseReview.objects.filter(
+            is_featured=True,
+            is_verified=True
+        ).select_related('course').order_by('-created_at')[:6]  # Limit to 6 for homepage
+        
+        testimonials = []
+        for review in reviews:
+            # Get parent name from review (we'll enhance the model)
+            parent_name = getattr(review, 'parent_name', 'Parent')
+            child_name = review.student_name
+            child_age = review.student_age
+            
+            # Format parent display name
+            if child_age:
+                parent_display = f"{parent_name} of {child_name} ({child_age})"
+            else:
+                parent_display = f"{parent_name} of {child_name}"
+            
+            # Get course category for the tag
+            course_category = review.course.category
+            
+            testimonial = {
+                'id': str(review.id),
+                'rating': review.rating,
+                'quote': review.review_text,
+                'reviewer_name': parent_display,
+                'course_tag': course_category,
+                'course_title': review.course.title,
+                'avatar_initials': self._get_avatar_initials(parent_name),
+                'created_at': review.created_at.isoformat(),
+            }
+            testimonials.append(testimonial)
+        
+        return testimonials
+    
+    def _get_featured_courses_data(self):
+        """
+        Get featured courses data for landing page
+        """
+        featured_courses = Course.objects.filter(
+            featured=True,
+            status='published'
+        ).order_by('-created_at')[:6]
+        
+        courses = []
+        for course in featured_courses:
+            course_data = {
+                'id': str(course.id),
+                'title': course.title,
+                'description': course.description,
+                'category': course.category,
+                'level': course.level,
+                'age_range': course.age_range,
+                'price': float(course.price),
+                'is_free': course.is_free,
+                'duration_weeks': course.duration_weeks,
+                'enrolled_students_count': course.enrolled_students_count,
+                'rating': self._get_course_average_rating(course),
+                'image_url': course.image_url,
+                'color': course.color,
+                'icon': course.icon,
+            }
+            courses.append(course_data)
+        
+        return courses
+    
+    def _get_landing_stats_data(self):
+        """
+        Get landing page statistics
+        """
+        total_students = CourseReview.objects.values('student_name').distinct().count()
+        total_courses = Course.objects.filter(status='published').count()
+        total_reviews = CourseReview.objects.filter(is_verified=True).count()
+        average_rating = CourseReview.objects.filter(is_verified=True).aggregate(
+            avg_rating=Avg('rating')
+        )['avg_rating'] or 0
+        
+        return {
+            'total_students': total_students,
+            'total_courses': total_courses,
+            'total_reviews': total_reviews,
+            'average_rating': round(float(average_rating), 1),
+            'satisfaction_rate': 98,  # Could be calculated from ratings
+        }
+    
+    def _get_hero_section_data(self):
+        """
+        Get hero section data
+        """
+        return {
+            'title': "Empowering Young Minds Through Technology",
+            'subtitle': "Interactive coding courses designed for kids and teens",
+            'cta_text': "Start Learning Today",
+            'background_image': "/static/images/hero-bg.jpg",
+        }
+    
+    def _get_avatar_initials(self, name):
+        """
+        Generate avatar initials from name
+        """
+        if not name:
+            return "P"
+        
+        words = name.split()
+        if len(words) >= 2:
+            return f"{words[0][0]}{words[1][0]}".upper()
+        else:
+            return f"{words[0][0]}".upper()
+    
+    def _get_course_average_rating(self, course):
+        """
+        Get average rating for a course
+        """
+        from django.db.models import Avg
+        avg_rating = CourseReview.objects.filter(
+            course=course,
+            is_verified=True
+        ).aggregate(avg_rating=Avg('rating'))['avg_rating']
+        
+        return round(float(avg_rating), 1) if avg_rating else 0.0

@@ -1028,6 +1028,11 @@ class CourseReview(models.Model):
         validators=[MinValueValidator(5), MaxValueValidator(18)],
         help_text="Student's age when review was written"
     )
+    parent_name = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Parent's name for testimonials (e.g., 'Sarah M.', 'Emily Chen')"
+    )
     
     # Review Content
     rating = models.PositiveIntegerField(

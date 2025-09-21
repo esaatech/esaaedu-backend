@@ -4,6 +4,9 @@ from . import views
 app_name = 'home'
 
 urlpatterns = [
+    # Landing page - main endpoint for homepage
+    path('', views.LandingPageView.as_view(), name='landing_page'),
+    
     # Contact overview - main endpoint for contact page
     path('contact/', views.ContactView.as_view(), name='contact_overview'),
     
