@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission
 
 
 @admin.register(Course)
@@ -323,3 +323,170 @@ class CourseCategoryAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request)
+
+
+@admin.register(Project)
+class ProjectAdmin(admin.ModelAdmin):
+    list_display = [
+        'title', 'course', 'submission_type', 'points', 'due_at', 
+        'submission_count', 'graded_count', 'pending_count', 'created_at'
+    ]
+    list_filter = [
+        'submission_type', 'created_at', 'due_at', 'course__teacher'
+    ]
+    search_fields = [
+        'title', 'instructions', 'course__title', 'course__teacher__first_name',
+        'course__teacher__last_name', 'course__teacher__email'
+    ]
+    readonly_fields = ['id', 'created_at', 'submission_count', 'graded_count', 'pending_count']
+    date_hierarchy = 'created_at'
+    actions = ['duplicate_projects', 'extend_due_dates']
+    
+    def submission_count(self, obj):
+        return obj.submissions.count()
+    submission_count.short_description = 'Total Submissions'
+    
+    def graded_count(self, obj):
+        return obj.submissions.filter(status='GRADED').count()
+    graded_count.short_description = 'Graded'
+    
+    def pending_count(self, obj):
+        return obj.submissions.filter(status__in=['ASSIGNED', 'SUBMITTED', 'RETURNED']).count()
+    pending_count.short_description = 'Pending'
+    
+    def duplicate_projects(self, request, queryset):
+        """Action to duplicate selected projects"""
+        duplicated_count = 0
+        for project in queryset:
+            new_project = Project.objects.create(
+                course=project.course,
+                title=f"{project.title} (Copy)",
+                instructions=project.instructions,
+                submission_type=project.submission_type,
+                allowed_file_types=project.allowed_file_types,
+                points=project.points,
+                due_at=project.due_at
+            )
+            duplicated_count += 1
+        self.message_user(request, f'{duplicated_count} projects were duplicated.')
+    duplicate_projects.short_description = "Duplicate selected projects"
+    
+    def extend_due_dates(self, request, queryset):
+        """Action to extend due dates by 1 week"""
+        from datetime import timedelta
+        updated_count = 0
+        for project in queryset:
+            if project.due_at:
+                project.due_at += timedelta(weeks=1)
+                project.save()
+                updated_count += 1
+        self.message_user(request, f'{updated_count} project due dates were extended by 1 week.')
+    extend_due_dates.short_description = "Extend due dates by 1 week"
+    
+    fieldsets = (
+        ('Project Details', {
+            'fields': ('course', 'title', 'instructions', 'submission_type', 'points', 'due_at')
+        }),
+        ('File Upload Settings', {
+            'fields': ('allowed_file_types',),
+            'classes': ('collapse',)
+        }),
+        ('Statistics', {
+            'fields': ('submission_count', 'graded_count', 'pending_count'),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('course', 'course__teacher')
+
+
+@admin.register(ProjectSubmission)
+class ProjectSubmissionAdmin(admin.ModelAdmin):
+    list_display = [
+        'project', 'student_name', 'status', 'points_earned', 
+        'submitted_at', 'graded_at', 'feedback_checked', 'created_at'
+    ]
+    list_filter = [
+        'status', 'feedback_checked', 'submitted_at', 'graded_at', 
+        'project__course', 'project__submission_type'
+    ]
+    search_fields = [
+        'project__title', 'student__first_name', 'student__last_name', 
+        'student__email', 'content', 'feedback'
+    ]
+    readonly_fields = ['id', 'created_at', 'updated_at', 'submitted_at', 'graded_at']
+    date_hierarchy = 'submitted_at'
+    actions = ['mark_as_graded', 'mark_as_returned', 'reset_submissions']
+    
+    def student_name(self, obj):
+        return f"{obj.student.first_name} {obj.student.last_name}".strip() or obj.student.email
+    student_name.short_description = 'Student'
+    
+    def mark_as_graded(self, request, queryset):
+        """Action to mark submissions as graded"""
+        from django.utils import timezone
+        updated = queryset.filter(status__in=['SUBMITTED', 'RETURNED']).update(
+            status='GRADED',
+            graded_at=timezone.now(),
+            grader=request.user
+        )
+        self.message_user(request, f'{updated} submissions were marked as graded.')
+    mark_as_graded.short_description = "Mark selected submissions as graded"
+    
+    def mark_as_returned(self, request, queryset):
+        """Action to mark submissions as returned for revision"""
+        from django.utils import timezone
+        updated = queryset.filter(status='SUBMITTED').update(
+            status='RETURNED',
+            graded_at=timezone.now(),
+            grader=request.user
+        )
+        self.message_user(request, f'{updated} submissions were marked as returned.')
+    mark_as_returned.short_description = "Mark selected submissions as returned"
+    
+    def reset_submissions(self, request, queryset):
+        """Action to reset submissions to assigned status"""
+        updated = queryset.update(
+            status='ASSIGNED',
+            content='',
+            file_url='',
+            reflection='',
+            submitted_at=None,
+            graded_at=None,
+            grader=None,
+            points_earned=None,
+            feedback='',
+            feedback_response='',
+            feedback_checked=False,
+            feedback_checked_at=None
+        )
+        self.message_user(request, f'{updated} submissions were reset to assigned status.')
+    reset_submissions.short_description = "Reset selected submissions"
+    
+    fieldsets = (
+        ('Submission Details', {
+            'fields': ('project', 'student', 'status', 'content', 'file_url', 'reflection')
+        }),
+        ('Grading', {
+            'fields': ('points_earned', 'feedback', 'feedback_response', 'grader'),
+            'classes': ('collapse',)
+        }),
+        ('Feedback Tracking', {
+            'fields': ('feedback_checked', 'feedback_checked_at'),
+            'classes': ('collapse',)
+        }),
+        ('Timestamps', {
+            'fields': ('submitted_at', 'graded_at', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'project', 'project__course', 'student', 'grader'
+        )

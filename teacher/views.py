@@ -3,11 +3,17 @@ from rest_framework.response import Response
 from rest_framework import status, permissions
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
+from django.db.models import Q, Count, Avg, Sum
+from django.utils import timezone
 from users.models import User, TeacherProfile
-from .serializers import TeacherProfileSerializer, TeacherProfileUpdateSerializer
-from courses.models import Course, ClassEvent, CourseReview
+from .serializers import (
+    TeacherProfileSerializer, TeacherProfileUpdateSerializer,
+    ProjectSerializer, ProjectCreateUpdateSerializer,
+    ProjectSubmissionSerializer, ProjectSubmissionGradingSerializer,
+    ProjectSubmissionFeedbackSerializer
+)
+from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission
 from student.models import EnrolledCourse
-from django.db.models import Count, Avg, Sum
 from datetime import datetime, timedelta
 
 
@@ -460,3 +466,754 @@ class TeacherScheduleAPIView(APIView):
             'today_events': today_events,
             'upcoming_live_classes': upcoming_live_classes,
         }
+
+
+class ProjectManagementView(APIView):
+    """
+    Teacher project management - CRUD operations for projects
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """
+        GET: List all projects for the teacher's courses
+        """
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get query parameters for filtering
+            course_id = request.query_params.get('course_id')
+            status_filter = request.query_params.get('status')
+            search = request.query_params.get('search')
+            
+            # Base queryset - projects from teacher's courses
+            projects = Project.objects.filter(course__teacher=teacher).select_related('course')
+            
+            # Apply filters
+            if course_id:
+                projects = projects.filter(course_id=course_id)
+            
+            if search:
+                projects = projects.filter(
+                    Q(title__icontains=search) | 
+                    Q(instructions__icontains=search) |
+                    Q(course__title__icontains=search)
+                )
+            
+            # Order by creation date (newest first)
+            projects = projects.order_by('-created_at')
+            
+            # Serialize projects
+            serializer = ProjectSerializer(projects, many=True, context={'request': request})
+            
+            # Get summary statistics
+            summary = self._get_projects_summary(teacher)
+            
+            return Response({
+                'projects': serializer.data,
+                'summary': summary
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch projects', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request):
+        """
+        POST: Create a new project
+        """
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can create projects'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            serializer = ProjectCreateUpdateSerializer(
+                data=request.data, 
+                context={'request': request}
+            )
+            
+            if serializer.is_valid():
+                project = serializer.save()
+                
+                # Create submissions for all enrolled students
+                # self._create_student_submissions(project)  # Disabled to prevent immediate submission creation
+                
+                response_serializer = ProjectSerializer(project, context={'request': request})
+                return Response({
+                    'project': response_serializer.data,
+                    'message': 'Project created successfully'
+                }, status=status.HTTP_201_CREATED)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to create project', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, project_id):
+        """
+        PUT: Update an existing project
+        """
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can update projects'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            project = get_object_or_404(Project, id=project_id, course__teacher=teacher)
+            
+            serializer = ProjectCreateUpdateSerializer(
+                project, 
+                data=request.data, 
+                partial=True,
+                context={'request': request}
+            )
+            
+            if serializer.is_valid():
+                updated_project = serializer.save()
+                
+                response_serializer = ProjectSerializer(updated_project, context={'request': request})
+                return Response({
+                    'project': response_serializer.data,
+                    'message': 'Project updated successfully'
+                }, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to update project', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def delete(self, request, project_id):
+        """
+        DELETE: Delete a project
+        """
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can delete projects'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            project = get_object_or_404(Project, id=project_id, course__teacher=teacher)
+            
+            # Check if there are any submissions
+            submission_count = project.submissions.count()
+            if submission_count > 0:
+                return Response(
+                    {'error': f'Cannot delete project with {submission_count} submissions. Please delete submissions first.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            project_title = project.title
+            project.delete()
+            
+            return Response({
+                'message': f'Project "{project_title}" deleted successfully'
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to delete project', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _get_projects_summary(self, teacher):
+        """Get summary statistics for teacher's projects"""
+        projects = Project.objects.filter(course__teacher=teacher)
+        
+        total_projects = projects.count()
+        total_submissions = ProjectSubmission.objects.filter(project__course__teacher=teacher).count()
+        graded_submissions = ProjectSubmission.objects.filter(
+            project__course__teacher=teacher, 
+            status='GRADED'
+        ).count()
+        pending_submissions = ProjectSubmission.objects.filter(
+            project__course__teacher=teacher,
+            status__in=['ASSIGNED', 'SUBMITTED', 'RETURNED']
+        ).count()
+        
+        return {
+            'total_projects': total_projects,
+            'total_submissions': total_submissions,
+            'graded_submissions': graded_submissions,
+            'pending_submissions': pending_submissions,
+            'grading_completion_rate': round((graded_submissions / total_submissions * 100), 1) if total_submissions > 0 else 0
+        }
+    
+    def _create_student_submissions(self, project):
+        """Create project submissions for all enrolled students"""
+        try:
+            # Get all enrolled students for this course
+            enrolled_students = EnrolledCourse.objects.filter(
+                course=project.course,
+                status='active'
+            ).select_related('student_profile__user')
+            
+            # Create submissions for each student
+            submissions_to_create = []
+            for enrollment in enrolled_students:
+                submission = ProjectSubmission(
+                    project=project,
+                    student=enrollment.student_profile.user,
+                    status='ASSIGNED'
+                )
+                submissions_to_create.append(submission)
+            
+            # Bulk create submissions
+            if submissions_to_create:
+                ProjectSubmission.objects.bulk_create(submissions_to_create)
+                
+        except Exception as e:
+            print(f"Error creating student submissions: {str(e)}")
+
+
+class ProjectGradingView(APIView):
+    """
+    Teacher project grading - Manage and grade project submissions
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, project_id):
+        """
+        GET: Get all submissions for a specific project
+        """
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Verify project belongs to teacher
+            project = get_object_or_404(Project, id=project_id, course__teacher=teacher)
+            
+            # Get query parameters for filtering
+            status_filter = request.query_params.get('status')
+            search = request.query_params.get('search')
+            
+            # Get submissions for this project
+            submissions = ProjectSubmission.objects.filter(project=project).select_related('student')
+            
+            # Apply filters
+            if status_filter:
+                submissions = submissions.filter(status=status_filter)
+            
+            if search:
+                submissions = submissions.filter(
+                    Q(student__first_name__icontains=search) |
+                    Q(student__last_name__icontains=search) |
+                    Q(student__email__icontains=search)
+                )
+            
+            # Order by submission date
+            submissions = submissions.order_by('-submitted_at', '-created_at')
+            
+            # Serialize submissions
+            serializer = ProjectSubmissionSerializer(submissions, many=True)
+            
+            # Get project details
+            project_serializer = ProjectSerializer(project, context={'request': request})
+            
+            # Get grading statistics
+            stats = self._get_grading_stats(project)
+            
+            return Response({
+                'project': project_serializer.data,
+                'submissions': serializer.data,
+                'grading_stats': stats
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch project submissions', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, submission_id):
+        """
+        PUT: Grade a project submission
+        """
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can grade submissions'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get submission and verify it belongs to teacher's project
+            submission = get_object_or_404(
+                ProjectSubmission, 
+                id=submission_id,
+                project__course__teacher=teacher
+            )
+            
+            serializer = ProjectSubmissionGradingSerializer(data=request.data)
+            
+            if serializer.is_valid():
+                # Update submission with grading data
+                submission.status = serializer.validated_data['status']
+                submission.points_earned = serializer.validated_data.get('points_earned')
+                submission.feedback = serializer.validated_data.get('feedback', '')
+                submission.grader = teacher
+                submission.graded_at = timezone.now()
+                submission.save()
+                
+                response_serializer = ProjectSubmissionSerializer(submission)
+                return Response({
+                    'submission': response_serializer.data,
+                    'message': 'Submission graded successfully'
+                }, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to grade submission', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _get_grading_stats(self, project):
+        """Get grading statistics for a project"""
+        submissions = ProjectSubmission.objects.filter(project=project)
+        
+        total_submissions = submissions.count()
+        graded_count = submissions.filter(status='GRADED').count()
+        pending_count = submissions.filter(status__in=['ASSIGNED', 'SUBMITTED', 'RETURNED']).count()
+        
+        # Calculate average score
+        avg_score = submissions.filter(
+            status='GRADED',
+            points_earned__isnull=False
+        ).aggregate(avg_score=Avg('points_earned'))['avg_score'] or 0
+        
+        return {
+            'total_submissions': total_submissions,
+            'graded_count': graded_count,
+            'pending_count': pending_count,
+            'average_score': round(float(avg_score), 1),
+            'grading_progress': round((graded_count / total_submissions * 100), 1) if total_submissions > 0 else 0
+        }
+
+
+class ProjectSubmissionDetailView(APIView):
+    """
+    Detailed view for individual project submissions
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, submission_id):
+        """
+        GET: Get detailed view of a specific submission
+        """
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get submission and verify it belongs to teacher's project
+            submission = get_object_or_404(
+                ProjectSubmission, 
+                id=submission_id,
+                project__course__teacher=teacher
+            )
+            
+            serializer = ProjectSubmissionSerializer(submission)
+            
+            # Get related data
+            project_serializer = ProjectSerializer(submission.project, context={'request': request})
+            
+            return Response({
+                'submission': serializer.data,
+                'project': project_serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch submission details', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, submission_id):
+        """
+        POST: Provide feedback on a submission
+        """
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can provide feedback'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get submission and verify it belongs to teacher's project
+            submission = get_object_or_404(
+                ProjectSubmission, 
+                id=submission_id,
+                project__course__teacher=teacher
+            )
+            
+            serializer = ProjectSubmissionFeedbackSerializer(data=request.data)
+            
+            if serializer.is_valid():
+                # Update submission with feedback
+                submission.status = serializer.validated_data['status']
+                submission.feedback = serializer.validated_data['feedback']
+                submission.grader = teacher
+                submission.graded_at = timezone.now()
+                submission.save()
+                
+                response_serializer = ProjectSubmissionSerializer(submission)
+                return Response({
+                    'submission': response_serializer.data,
+                    'message': 'Feedback provided successfully'
+                }, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to provide feedback', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class ProjectDashboardView(APIView):
+    """
+    Teacher project dashboard - Overview of all project-related activities
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """
+        GET: Get comprehensive project dashboard data
+        """
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get dashboard data
+            dashboard_data = {
+                'overview': self._get_overview_stats(teacher),
+                'recent_projects': self._get_recent_projects(teacher),
+                'pending_grading': self._get_pending_grading(teacher),
+                'recent_submissions': self._get_recent_submissions(teacher),
+                'course_projects': self._get_course_projects_summary(teacher)
+            }
+            
+            return Response(dashboard_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch dashboard data', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _get_overview_stats(self, teacher):
+        """Get overview statistics"""
+        projects = Project.objects.filter(course__teacher=teacher)
+        submissions = ProjectSubmission.objects.filter(project__course__teacher=teacher)
+        
+        return {
+            'total_projects': projects.count(),
+            'total_submissions': submissions.count(),
+            'graded_submissions': submissions.filter(status='GRADED').count(),
+            'pending_submissions': submissions.filter(status__in=['ASSIGNED', 'SUBMITTED', 'RETURNED']).count(),
+            'overdue_submissions': submissions.filter(
+                project__due_at__lt=timezone.now(),
+                status__in=['ASSIGNED', 'SUBMITTED']
+            ).count()
+        }
+    
+    def _get_recent_projects(self, teacher):
+        """Get recent projects"""
+        projects = Project.objects.filter(
+            course__teacher=teacher
+        ).select_related('course').order_by('-created_at')[:5]
+        
+        return ProjectSerializer(projects, many=True, context={'request': self.request}).data
+    
+    def _get_pending_grading(self, teacher):
+        """Get submissions pending grading"""
+        submissions = ProjectSubmission.objects.filter(
+            project__course__teacher=teacher,
+            status__in=['SUBMITTED', 'RETURNED']
+        ).select_related('project', 'student').order_by('-submitted_at')[:10]
+        
+        return ProjectSubmissionSerializer(submissions, many=True).data
+    
+    def _get_recent_submissions(self, teacher):
+        """Get recent submissions"""
+        submissions = ProjectSubmission.objects.filter(
+            project__course__teacher=teacher
+        ).select_related('project', 'student').order_by('-submitted_at')[:10]
+        
+        return ProjectSubmissionSerializer(submissions, many=True).data
+    
+    def _get_course_projects_summary(self, teacher):
+        """Get projects summary by course"""
+        courses = Course.objects.filter(teacher=teacher)
+        course_summaries = []
+        
+        for course in courses:
+            projects = Project.objects.filter(course=course)
+            submissions = ProjectSubmission.objects.filter(project__course=course)
+            
+            course_summaries.append({
+                'course_id': str(course.id),
+                'course_title': course.title,
+                'project_count': projects.count(),
+                'submission_count': submissions.count(),
+                'graded_count': submissions.filter(status='GRADED').count(),
+                'pending_count': submissions.filter(status__in=['ASSIGNED', 'SUBMITTED', 'RETURNED']).count()
+            })
+        
+        return course_summaries
+
+
+class ProjectManagementView(APIView):
+    """
+    Project Management CBV - Complete CRUD operations for projects
+    GET: List all projects for teacher's courses
+    POST: Create a new project
+    PUT: Update an existing project
+    DELETE: Delete a project
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """
+        GET: List all projects for teacher's courses
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can access projects'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get teacher's courses
+            teacher_courses = Course.objects.filter(teacher=request.user)
+            
+            # Get projects for teacher's courses
+            projects = Project.objects.filter(course__in=teacher_courses).select_related('course')
+            
+            # Apply filters
+            course_id = request.query_params.get('course_id')
+            if course_id:
+                projects = projects.filter(course_id=course_id)
+            
+            search = request.query_params.get('search')
+            if search:
+                projects = projects.filter(
+                    Q(title__icontains=search) |
+                    Q(instructions__icontains=search) |
+                    Q(course__title__icontains=search)
+                )
+            
+            # Serialize projects
+            serializer = ProjectSerializer(projects, many=True, context={'request': request})
+            
+            # Calculate summary statistics
+            total_projects = projects.count()
+            total_submissions = ProjectSubmission.objects.filter(project__in=projects).count()
+            graded_submissions = ProjectSubmission.objects.filter(
+                project__in=projects, status='GRADED'
+            ).count()
+            pending_submissions = ProjectSubmission.objects.filter(
+                project__in=projects, status__in=['ASSIGNED', 'SUBMITTED', 'RETURNED']
+            ).count()
+            
+            summary = {
+                'total_projects': total_projects,
+                'total_submissions': total_submissions,
+                'graded_submissions': graded_submissions,
+                'pending_submissions': pending_submissions,
+                'grading_completion_rate': (graded_submissions / total_submissions * 100) if total_submissions > 0 else 0
+            }
+            
+            return Response({
+                'projects': serializer.data,
+                'summary': summary
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Error retrieving projects: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request):
+        """
+        POST: Create a new project
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can create projects'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            serializer = ProjectCreateUpdateSerializer(
+                data=request.data, 
+                context={'request': request}
+            )
+            
+            if serializer.is_valid():
+                project = serializer.save()
+                
+                # Create submissions for all enrolled students
+                # self._create_student_submissions(project)  # Disabled to prevent immediate submission creation
+                
+                response_serializer = ProjectSerializer(project, context={'request': request})
+                return Response({
+                    'project': response_serializer.data,
+                    'message': 'Project created successfully'
+                }, status=status.HTTP_201_CREATED)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            return Response(
+                {'error': f'Error creating project: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, project_id):
+        """
+        PUT: Update an existing project
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can update projects'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get project and check ownership
+            project = get_object_or_404(Project, id=project_id, course__teacher=request.user)
+            
+            serializer = ProjectCreateUpdateSerializer(
+                project, 
+                data=request.data, 
+                partial=True,
+                context={'request': request}
+            )
+            
+            if serializer.is_valid():
+                updated_project = serializer.save()
+                response_serializer = ProjectSerializer(updated_project, context={'request': request})
+                return Response({
+                    'project': response_serializer.data,
+                    'message': 'Project updated successfully'
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            return Response(
+                {'error': f'Error updating project: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def delete(self, request, project_id):
+        """
+        DELETE: Delete a project
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can delete projects'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get project and check ownership
+            project = get_object_or_404(Project, id=project_id, course__teacher=request.user)
+            
+            # Check if project has submissions and warn about deletion
+            submission_count = project.submissions.count()
+            if submission_count > 0:
+                # Delete all submissions along with the project
+                project.submissions.all().delete()
+            
+            # Store project data for response
+            project_data = {
+                'id': project.id,
+                'title': project.title,
+                'course': project.course.title
+            }
+            
+            # Delete the project
+            project.delete()
+            
+            response_data = {
+                'message': 'Project deleted successfully',
+                'deleted_project': project_data
+            }
+            
+            if submission_count > 0:
+                response_data['warning'] = f'Also deleted {submission_count} associated submissions'
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Error deleting project: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _create_student_submissions(self, project):
+        """
+        Create ProjectSubmission records for all students enrolled in the project's course
+        """
+        try:
+            # Get all students enrolled in the course
+            enrollments = EnrolledCourse.objects.filter(course=project.course)
+            
+            # Create submissions for each enrolled student
+            submissions_to_create = []
+            for enrollment in enrollments:
+                submission = ProjectSubmission(
+                    project=project,
+                    student=enrollment.student_profile.user,
+                    status='ASSIGNED'
+                )
+                submissions_to_create.append(submission)
+            
+            # Bulk create submissions
+            if submissions_to_create:
+                ProjectSubmission.objects.bulk_create(submissions_to_create)
+                
+        except Exception as e:
+            print(f"Error creating student submissions: {str(e)}")
+            # Don't raise the exception as project creation should still succeed

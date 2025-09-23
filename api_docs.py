@@ -196,6 +196,234 @@ def api_documentation(request):
                     }
                 }
             },
+            "teacher": {
+                "project_management": {
+                    "base_url": "/api/teacher/projects/",
+                    "description": "Complete project management system for teachers",
+                    "authentication": "Required (Teacher role)",
+                    "methods": {
+                        "GET": {
+                            "url": "/api/teacher/projects/",
+                            "description": "List all projects for teacher's courses",
+                            "query_parameters": {
+                                "course_id": "uuid (optional) - Filter by course",
+                                "status": "string (optional) - Filter by status",
+                                "search": "string (optional) - Search by title, instructions, or course name"
+                            },
+                            "response": {
+                                "projects": [
+                                    {
+                                        "id": "integer",
+                                        "course": "integer",
+                                        "course_id": "integer",
+                                        "course_title": "string",
+                                        "title": "string",
+                                        "instructions": "string",
+                                        "submission_type": "link|image|video|audio|file|note|code|presentation",
+                                        "submission_type_display": "string",
+                                        "allowed_file_types": "array of strings",
+                                        "points": "integer",
+                                        "due_at": "datetime (optional)",
+                                        "created_at": "datetime",
+                                        "submission_count": "integer",
+                                        "graded_count": "integer",
+                                        "pending_count": "integer",
+                                        "requires_file_upload": "boolean",
+                                        "requires_text_input": "boolean",
+                                        "requires_url_input": "boolean"
+                                    }
+                                ],
+                                "summary": {
+                                    "total_projects": "integer",
+                                    "total_submissions": "integer",
+                                    "graded_submissions": "integer",
+                                    "pending_submissions": "integer",
+                                    "grading_completion_rate": "decimal"
+                                }
+                            }
+                        },
+                        "POST": {
+                            "url": "/api/teacher/projects/",
+                            "description": "Create a new project",
+                            "request_body": {
+                                "course": "uuid (required) - Course ID",
+                                "title": "string (required) - Project title",
+                                "instructions": "string (required) - Project instructions",
+                                "submission_type": "string (required) - link|image|video|audio|file|note|code|presentation",
+                                "allowed_file_types": "array of strings (optional) - File extensions",
+                                "points": "integer (required) - Maximum points",
+                                "due_at": "datetime (optional) - Due date"
+                            },
+                            "response": {
+                                "project": "ProjectSerializer data",
+                                "message": "Project created successfully"
+                            },
+                            "features": [
+                                "Automatically creates submissions for all enrolled students",
+                                "Validates course ownership",
+                                "Supports all submission types"
+                            ]
+                        },
+                        "PUT": {
+                            "url": "/api/teacher/projects/{project_id}/",
+                            "description": "Update an existing project",
+                            "request_body": {
+                                "title": "string (optional)",
+                                "instructions": "string (optional)",
+                                "submission_type": "string (optional)",
+                                "allowed_file_types": "array of strings (optional)",
+                                "points": "integer (optional)",
+                                "due_at": "datetime (optional)"
+                            },
+                            "response": {
+                                "project": "Updated ProjectSerializer data",
+                                "message": "Project updated successfully"
+                            }
+                        },
+                        "DELETE": {
+                            "url": "/api/teacher/projects/{project_id}/",
+                            "description": "Delete a project",
+                            "response": {
+                                "message": "Project deleted successfully"
+                            },
+                            "constraints": {
+                                "submission_check": "Cannot delete if project has submissions",
+                                "ownership": "Only project owner (teacher) can delete"
+                            }
+                        }
+                    }
+                },
+                "project_grading": {
+                    "base_url": "/api/teacher/projects/{project_id}/grading/",
+                    "description": "Project submission grading and management",
+                    "authentication": "Required (Teacher role)",
+                    "methods": {
+                        "GET": {
+                            "url": "/api/teacher/projects/{project_id}/grading/",
+                            "description": "Get all submissions for a specific project",
+                            "query_parameters": {
+                                "status": "string (optional) - ASSIGNED|SUBMITTED|RETURNED|GRADED",
+                                "search": "string (optional) - Search by student name or email"
+                            },
+                            "response": {
+                                "project": "ProjectSerializer data",
+                                "submissions": [
+                                    {
+                                        "id": "integer",
+                                        "project": "integer",
+                                        "project_id": "integer",
+                                        "project_title": "string",
+                                        "student": "integer",
+                                        "student_name": "string",
+                                        "student_email": "string",
+                                        "status": "ASSIGNED|SUBMITTED|RETURNED|GRADED",
+                                        "status_display": "string",
+                                        "content": "string",
+                                        "file_url": "string (optional)",
+                                        "reflection": "string (optional)",
+                                        "submitted_at": "datetime (optional)",
+                                        "graded_at": "datetime (optional)",
+                                        "grader": "uuid (optional)",
+                                        "grader_name": "string (optional)",
+                                        "points_earned": "decimal (optional)",
+                                        "feedback": "string (optional)",
+                                        "feedback_response": "string (optional)",
+                                        "feedback_checked": "boolean",
+                                        "feedback_checked_at": "datetime (optional)",
+                                        "created_at": "datetime",
+                                        "updated_at": "datetime"
+                                    }
+                                ],
+                                "grading_stats": {
+                                    "total_submissions": "integer",
+                                    "graded_count": "integer",
+                                    "pending_count": "integer",
+                                    "average_score": "decimal",
+                                    "grading_progress": "decimal"
+                                }
+                            }
+                        },
+                        "PUT": {
+                            "url": "/api/teacher/projects/submissions/{submission_id}/",
+                            "description": "Grade a project submission",
+                            "request_body": {
+                                "status": "string (required) - ASSIGNED|SUBMITTED|RETURNED|GRADED",
+                                "points_earned": "decimal (optional) - Points awarded",
+                                "feedback": "string (optional) - Teacher feedback"
+                            },
+                            "response": {
+                                "submission": "Updated ProjectSubmissionSerializer data",
+                                "message": "Submission graded successfully"
+                            },
+                            "validation": {
+                                "status_transitions": "Validates proper status transitions",
+                                "points_validation": "Points cannot be negative",
+                                "grading_requirements": "GRADED status requires points_earned"
+                            }
+                        }
+                    }
+                },
+                "submission_detail": {
+                    "base_url": "/api/teacher/projects/submissions/{submission_id}/",
+                    "description": "Detailed view and feedback for individual submissions",
+                    "authentication": "Required (Teacher role)",
+                    "methods": {
+                        "GET": {
+                            "url": "/api/teacher/projects/submissions/{submission_id}/",
+                            "description": "Get detailed view of a specific submission",
+                            "response": {
+                                "submission": "ProjectSubmissionSerializer data",
+                                "project": "ProjectSerializer data"
+                            }
+                        },
+                        "POST": {
+                            "url": "/api/teacher/projects/submissions/{submission_id}/",
+                            "description": "Provide feedback on a submission",
+                            "request_body": {
+                                "status": "string (required) - RETURNED|GRADED",
+                                "feedback": "string (required) - Teacher feedback"
+                            },
+                            "response": {
+                                "submission": "Updated ProjectSubmissionSerializer data",
+                                "message": "Feedback provided successfully"
+                            }
+                        }
+                    }
+                },
+                "project_dashboard": {
+                    "base_url": "/api/teacher/projects/dashboard/",
+                    "description": "Comprehensive project dashboard for teachers",
+                    "authentication": "Required (Teacher role)",
+                    "methods": {
+                        "GET": {
+                            "url": "/api/teacher/projects/dashboard/",
+                            "description": "Get comprehensive project dashboard data",
+                            "response": {
+                                "overview": {
+                                    "total_projects": "integer",
+                                    "total_submissions": "integer",
+                                    "graded_submissions": "integer",
+                                    "pending_submissions": "integer",
+                                    "overdue_submissions": "integer"
+                                },
+                                "recent_projects": "Array of recent 5 projects",
+                                "pending_grading": "Array of submissions pending grading",
+                                "recent_submissions": "Array of recent 10 submissions",
+                                "course_projects": [
+                                    {
+                                        "course_id": "integer",
+                                        "course_title": "string",
+                                        "project_count": "integer",
+                                        "submission_count": "integer",
+                                        "graded_count": "integer",
+                                        "pending_count": "integer"
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            },
             "home": {
                 "contact_overview": {
                     "method": "GET",
@@ -449,6 +677,42 @@ def api_documentation(request):
                 "last_name": "string",
                 "role": "string (student|teacher|admin)",
                 "is_active": "boolean"
+            },
+            "Project": {
+                "id": "integer",
+                "course": "integer (Course ID)",
+                "title": "string",
+                "instructions": "string",
+                "submission_type": "string (link|image|video|audio|file|note|code|presentation)",
+                "allowed_file_types": "array of strings",
+                "points": "integer",
+                "due_at": "datetime (optional)",
+                "created_at": "datetime",
+                "submission_count": "integer (computed)",
+                "graded_count": "integer (computed)",
+                "pending_count": "integer (computed)",
+                "requires_file_upload": "boolean (computed)",
+                "requires_text_input": "boolean (computed)",
+                "requires_url_input": "boolean (computed)"
+            },
+            "ProjectSubmission": {
+                "id": "integer",
+                "project": "integer (Project ID)",
+                "student": "integer (User ID)",
+                "status": "string (ASSIGNED|SUBMITTED|RETURNED|GRADED)",
+                "content": "string (optional)",
+                "file_url": "string (optional)",
+                "reflection": "string (optional)",
+                "submitted_at": "datetime (optional)",
+                "graded_at": "datetime (optional)",
+                "grader": "UUID (User ID, optional)",
+                "points_earned": "decimal (optional)",
+                "feedback": "string (optional)",
+                "feedback_response": "string (optional)",
+                "feedback_checked": "boolean",
+                "feedback_checked_at": "datetime (optional)",
+                "created_at": "datetime",
+                "updated_at": "datetime"
             }
         }
     }
@@ -972,3 +1236,288 @@ def contact_contract(request):
     return JsonResponse(contract, json_dumps_params={'indent': 2})
 
 
+
+
+@require_http_methods(["GET"])
+def teacher_project_contract(request):
+    """
+    Specific API contract for teacher project management functionality
+    """
+    contract = {
+        "title": "Teacher Project Management API Contract",
+        "version": "1.0.0",
+        "description": "Complete project management system for teachers - Create, manage, and grade student projects",
+        "base_url": "/api/teacher/projects/",
+        "authentication": "Firebase ID Token (Teacher role required)",
+        "overview": {
+            "purpose": "Enable teachers to create projects, manage submissions, and provide grading/feedback",
+            "key_features": [
+                "Create projects with various submission types",
+                "Automatically assign projects to enrolled students",
+                "Grade submissions with detailed feedback",
+                "Track grading progress and statistics",
+                "Comprehensive dashboard for project management"
+            ],
+            "submission_types": [
+                "link - Students submit URLs (GitHub repos, live websites)",
+                "image - Image uploads (designs, screenshots)",
+                "video - Video uploads (presentations, demos)",
+                "audio - Audio uploads (podcasts, voice notes)",
+                "file - General file uploads (documents, code)",
+                "note - Text-based submissions (essays, reflections)",
+                "code - Code submissions (programming assignments)",
+                "presentation - Presentation files (PowerPoint, PDF)"
+            ]
+        },
+        "endpoints": {
+            "project_management": {
+                "base_url": "/api/teacher/projects/",
+                "description": "CRUD operations for project management",
+                "methods": {
+                    "GET": {
+                        "purpose": "List all projects for teacher's courses",
+                        "url": "/api/teacher/projects/",
+                        "query_parameters": {
+                            "course_id": "uuid (optional) - Filter by specific course",
+                            "status": "string (optional) - Filter by project status",
+                            "search": "string (optional) - Search by title, instructions, or course name"
+                        },
+                        "response_structure": {
+                            "projects": "Array of Project objects with statistics",
+                            "summary": "Overall project statistics and grading progress"
+                        },
+                        "use_cases": [
+                            "Display teacher's project dashboard",
+                            "Filter projects by course or search terms",
+                            "View project statistics and progress"
+                        ]
+                    },
+                    "POST": {
+                        "purpose": "Create a new project assignment",
+                        "url": "/api/teacher/projects/",
+                        "required_fields": ["course", "title", "instructions", "submission_type", "points"],
+                        "optional_fields": ["allowed_file_types", "due_at"],
+                        "automation": "Automatically creates submissions for all enrolled students",
+                        "validation": "Validates course ownership and positive points",
+                        "response": "Created project with statistics"
+                    },
+                    "PUT": {
+                        "purpose": "Update existing project",
+                        "url": "/api/teacher/projects/{project_id}/",
+                        "fields": "All project fields (partial updates supported)",
+                        "ownership_check": "Only project owner (teacher) can update",
+                        "response": "Updated project data"
+                    },
+                    "DELETE": {
+                        "purpose": "Delete project",
+                        "url": "/api/teacher/projects/{project_id}/",
+                        "constraints": "Cannot delete if project has submissions",
+                        "response": "Success message with project title"
+                    }
+                }
+            },
+            "project_grading": {
+                "base_url": "/api/teacher/projects/{project_id}/grading/",
+                "description": "Project submission grading and management",
+                "methods": {
+                    "GET": {
+                        "purpose": "View all submissions for a specific project",
+                        "url": "/api/teacher/projects/{project_id}/grading/",
+                        "query_parameters": {
+                            "status": "string (optional) - ASSIGNED|SUBMITTED|RETURNED|GRADED",
+                            "search": "string (optional) - Search by student name or email"
+                        },
+                        "response_structure": {
+                            "project": "Project details and metadata",
+                            "submissions": "Array of ProjectSubmission objects",
+                            "grading_stats": "Statistics for grading progress and scores"
+                        },
+                        "use_cases": [
+                            "Grade all submissions for a project",
+                            "Filter submissions by status",
+                            "Search for specific student submissions"
+                        ]
+                    },
+                    "PUT": {
+                        "purpose": "Grade individual project submission",
+                        "url": "/api/teacher/projects/submissions/{submission_id}/",
+                        "required_fields": ["status"],
+                        "optional_fields": ["points_earned", "feedback"],
+                        "status_workflow": "ASSIGNED → SUBMITTED → RETURNED → GRADED",
+                        "validation": "GRADED status requires points_earned",
+                        "response": "Updated submission with grading data"
+                    }
+                }
+            },
+            "submission_detail": {
+                "base_url": "/api/teacher/projects/submissions/{submission_id}/",
+                "description": "Detailed view and feedback for individual submissions",
+                "methods": {
+                    "GET": {
+                        "purpose": "View detailed submission information",
+                        "url": "/api/teacher/projects/submissions/{submission_id}/",
+                        "response": "Complete submission and project data"
+                    },
+                    "POST": {
+                        "purpose": "Provide feedback on submission",
+                        "url": "/api/teacher/projects/submissions/{submission_id}/",
+                        "required_fields": ["status", "feedback"],
+                        "status_options": "RETURNED|GRADED",
+                        "response": "Updated submission with feedback"
+                    }
+                }
+            },
+            "project_dashboard": {
+                "base_url": "/api/teacher/projects/dashboard/",
+                "description": "Comprehensive project dashboard",
+                "methods": {
+                    "GET": {
+                        "purpose": "Get complete project management overview",
+                        "url": "/api/teacher/projects/dashboard/",
+                        "response_structure": {
+                            "overview": "High-level statistics and counts",
+                            "recent_projects": "Latest 5 projects created",
+                            "pending_grading": "Submissions waiting for teacher review",
+                            "recent_submissions": "Latest 10 submissions across all projects",
+                            "course_projects": "Project statistics grouped by course"
+                        },
+                        "use_cases": [
+                            "Teacher dashboard homepage",
+                            "Quick overview of project status",
+                            "Identify pending grading work",
+                            "Monitor project activity across courses"
+                        ]
+                    }
+                }
+            }
+        },
+        "data_models": {
+            "Project": {
+                "id": "integer - Unique project identifier",
+                "course": "integer - Associated course ID",
+                "title": "string - Project title",
+                "instructions": "string - Detailed project instructions",
+                "submission_type": "string - Type of submission expected",
+                "allowed_file_types": "array - Permitted file extensions",
+                "points": "integer - Maximum points for project",
+                "due_at": "datetime - Project due date (optional)",
+                "created_at": "datetime - Project creation timestamp",
+                "submission_count": "integer - Total submissions (computed)",
+                "graded_count": "integer - Graded submissions (computed)",
+                "pending_count": "integer - Pending submissions (computed)",
+                "requires_file_upload": "boolean - File upload required (computed)",
+                "requires_text_input": "boolean - Text input required (computed)",
+                "requires_url_input": "boolean - URL input required (computed)"
+            },
+            "ProjectSubmission": {
+                "id": "integer - Unique submission identifier",
+                "project": "integer - Associated project ID",
+                "student": "integer - Student user ID",
+                "status": "string - Submission status",
+                "content": "string - Text content (optional)",
+                "file_url": "string - Cloud storage URL (optional)",
+                "reflection": "string - Student reflection (optional)",
+                "submitted_at": "datetime - Submission timestamp (optional)",
+                "graded_at": "datetime - Grading timestamp (optional)",
+                "grader": "UUID - Teacher who graded (optional)",
+                "points_earned": "decimal - Points awarded (optional)",
+                "feedback": "string - Teacher feedback (optional)",
+                "feedback_response": "string - Student response to feedback (optional)",
+                "feedback_checked": "boolean - Student has seen feedback",
+                "feedback_checked_at": "datetime - Last feedback check (optional)",
+                "created_at": "datetime - Submission creation timestamp",
+                "updated_at": "datetime - Last update timestamp"
+            }
+        },
+        "status_workflow": {
+            "project_lifecycle": [
+                "1. Teacher creates project",
+                "2. System auto-creates submissions for enrolled students",
+                "3. Students submit work (status: ASSIGNED → SUBMITTED)",
+                "4. Teacher grades and provides feedback (status: SUBMITTED → RETURNED/GRADED)",
+                "5. Students can respond to feedback (optional)"
+            ],
+            "submission_statuses": {
+                "ASSIGNED": "Project assigned to student, not yet submitted",
+                "SUBMITTED": "Student has submitted work, awaiting teacher review",
+                "RETURNED": "Teacher has provided feedback, student can resubmit",
+                "GRADED": "Final grading complete, project closed"
+            }
+        },
+        "example_requests": {
+            "create_project": {
+                "url": "POST /api/teacher/projects/",
+                "body": {
+                    "course": "123e4567-e89b-12d3-a456-426614174000",
+                    "title": "Build a Calculator App",
+                    "instructions": "Create a calculator with basic operations (+, -, *, /) using HTML, CSS, and JavaScript. Include a clean UI and error handling.",
+                    "submission_type": "code",
+                    "allowed_file_types": ["html", "css", "js"],
+                    "points": 100,
+                    "due_at": "2025-10-15T23:59:59Z"
+                }
+            },
+            "grade_submission": {
+                "url": "PUT /api/teacher/projects/submissions/456e7890-e89b-12d3-a456-426614174000/",
+                "body": {
+                    "status": "GRADED",
+                    "points_earned": 85,
+                    "feedback": "Great work! The calculator functions correctly and has a clean design. Consider adding keyboard support for better UX. -5 points for missing error handling on division by zero."
+                }
+            },
+            "provide_feedback": {
+                "url": "POST /api/teacher/projects/submissions/456e7890-e89b-12d3-a456-426614174000/",
+                "body": {
+                    "status": "RETURNED",
+                    "feedback": "Good start! Please add input validation and improve the styling. Resubmit when ready."
+                }
+            }
+        },
+        "frontend_integration": {
+            "project_creation_form": {
+                "fields": ["course", "title", "instructions", "submission_type", "points", "due_at"],
+                "validation": "Client-side validation for required fields and positive points",
+                "file_type_handling": "Show/hide file type input based on submission_type"
+            },
+            "grading_interface": {
+                "submission_display": "Show student work based on submission_type",
+                "grading_form": "Points input, feedback textarea, status dropdown",
+                "bulk_actions": "Select multiple submissions for batch operations"
+            },
+            "dashboard_widgets": {
+                "overview_cards": "Total projects, submissions, grading progress",
+                "recent_activity": "Latest submissions and projects",
+                "pending_work": "Submissions awaiting teacher review",
+                "course_breakdown": "Project statistics per course"
+            }
+        },
+        "error_handling": {
+            "400": "Bad Request - Invalid data or missing required fields",
+            "401": "Unauthorized - Invalid or missing Firebase token",
+            "403": "Forbidden - User is not a teacher or doesn't own the resource",
+            "404": "Not Found - Project or submission not found",
+            "500": "Internal Server Error - Server error during processing"
+        },
+        "best_practices": {
+            "project_creation": [
+                "Provide clear, detailed instructions",
+                "Set appropriate due dates",
+                "Choose correct submission type for the assignment",
+                "Specify allowed file types for file uploads"
+            ],
+            "grading": [
+                "Provide constructive feedback",
+                "Use consistent grading criteria",
+                "Grade submissions promptly",
+                "Use RETURNED status for revisions, GRADED for final submissions"
+            ],
+            "dashboard_usage": [
+                "Check dashboard regularly for pending work",
+                "Use filters to focus on specific courses or statuses",
+                "Monitor overdue submissions",
+                "Track grading progress across all projects"
+            ]
+        }
+    }
+    
+    return JsonResponse(contract, json_dumps_params={'indent': 2})

@@ -1077,3 +1077,101 @@ class CourseReview(models.Model):
     def star_rating(self):
         """Get star rating as list of booleans for template rendering"""
         return [i < self.rating for i in range(5)]
+
+
+class Project(models.Model):
+    SUBMISSION_TYPES = [
+        ('link', 'Link/URL'),
+        ('image', 'Image'),
+        ('video', 'Video'),
+        ('audio', 'Audio'),
+        ('file', 'File Upload'),
+        ('note', 'Text Note'),
+        ('code', 'Code'),
+        ('presentation', 'Presentation'),
+    ]
+    
+    course = models.ForeignKey("courses.Course", on_delete=models.CASCADE, related_name="projects")
+    title = models.CharField(max_length=200)
+    instructions = models.TextField()
+    
+    # Submission type and requirements
+    submission_type = models.CharField(
+        max_length=20, 
+        choices=SUBMISSION_TYPES,
+        help_text="Type of submission expected from students"
+    )
+    
+    # File upload constraints (if applicable)
+    allowed_file_types = models.JSONField(default=list, blank=True, help_text="Allowed file extensions")
+    
+    points = models.PositiveIntegerField(default=100)   # max points for this project
+    due_at = models.DateTimeField(null=True, blank=True)
+    
+    created_at = models.DateTimeField(default=timezone.now)
+    
+    class Meta:
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.course} · {self.title}"
+    
+    @property
+    def submission_type_display(self):
+        """Get the display name for the submission type"""
+        return dict(self.SUBMISSION_TYPES).get(self.submission_type, "Unknown")
+    
+    @property
+    def requires_file_upload(self):
+        """Check if this project type requires file upload"""
+        return self.submission_type in ['image', 'video', 'audio', 'file', 'code', 'presentation']
+    
+    @property
+    def requires_text_input(self):
+        """Check if this project type requires text input"""
+        return self.submission_type in ['note', 'code']
+    
+    @property
+    def requires_url_input(self):
+        """Check if this project type requires URL input"""
+        return self.submission_type in ['link', 'presentation']        
+
+
+
+class ProjectSubmission(models.Model):
+    STATUS = [
+        ("ASSIGNED", "Assigned"),
+        ("SUBMITTED", "Submitted"),
+        ("RETURNED", "Returned"),
+        ("GRADED", "Graded"),
+    ]
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="submissions")
+    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name="project_submissions")
+
+    status = models.CharField(max_length=20, choices=STATUS, default="ASSIGNED")
+    content = models.TextField(blank=True, help_text="Submission content (text, notes, code)")
+    file_url = models.URLField(blank=True, help_text="URL to uploaded file in cloud storage")
+    reflection = models.TextField(blank=True)
+
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    graded_at = models.DateTimeField(null=True, blank=True)
+    grader = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="graded_projects"
+    )
+
+    points_earned = models.FloatField(null=True, blank=True)
+    feedback = models.TextField(blank=True)
+    feedback_response = models.TextField(blank=True, help_text="Student's response to teacher feedback")
+    feedback_checked = models.BooleanField(default=False, help_text="Whether student has seen the feedback")
+    feedback_checked_at = models.DateTimeField(null=True, blank=True, help_text="When student last checked feedback")
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("project", "student")
+        ordering = ['-submitted_at', '-created_at']
+    
+    def __str__(self):
+        return f"{self.student} - {self.project.title} ({self.status})"        
