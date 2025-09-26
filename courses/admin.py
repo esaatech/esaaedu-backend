@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission
 
 
 @admin.register(Course)
@@ -489,4 +489,110 @@ class ProjectSubmissionAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
             'project', 'project__course', 'student', 'grader'
+        )
+
+
+@admin.register(Assignment)
+class AssignmentAdmin(admin.ModelAdmin):
+    list_display = ['title', 'lesson', 'assignment_type', 'passing_score', 'max_attempts', 'due_date', 'question_count', 'submission_count', 'created_at']
+    list_filter = ['assignment_type', 'passing_score', 'max_attempts', 'show_correct_answers', 'randomize_questions', 'created_at']
+    search_fields = ['title', 'description', 'lesson__title', 'lesson__course__title', 'lesson__course__teacher__email']
+    readonly_fields = ['id', 'created_at', 'updated_at', 'question_count', 'submission_count']
+    date_hierarchy = 'created_at'
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('lesson', 'title', 'description', 'assignment_type')
+        }),
+        ('Assignment Settings', {
+            'fields': ('due_date', 'passing_score', 'max_attempts', 'show_correct_answers', 'randomize_questions')
+        }),
+        ('Statistics', {
+            'fields': ('question_count', 'submission_count'),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def question_count(self, obj):
+        return obj.questions.count()
+    question_count.short_description = 'Questions'
+    
+    def submission_count(self, obj):
+        return obj.submissions.count()
+    submission_count.short_description = 'Submissions'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'lesson', 'lesson__course', 'lesson__course__teacher'
+        ).prefetch_related('questions', 'submissions')
+
+
+@admin.register(AssignmentQuestion)
+class AssignmentQuestionAdmin(admin.ModelAdmin):
+    list_display = ['question_text_short', 'assignment', 'type', 'points', 'order', 'created_at']
+    list_filter = ['type', 'points', 'assignment__assignment_type', 'created_at']
+    search_fields = ['question_text', 'assignment__title', 'assignment__lesson__title', 'assignment__lesson__course__title']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    date_hierarchy = 'created_at'
+    
+    fieldsets = (
+        ('Question Information', {
+            'fields': ('assignment', 'question_text', 'type', 'content', 'points', 'order', 'explanation')
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def question_text_short(self, obj):
+        return obj.question_text[:50] + '...' if len(obj.question_text) > 50 else obj.question_text
+    question_text_short.short_description = 'Question Text'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'assignment', 'assignment__lesson', 'assignment__lesson__course'
+        )
+
+
+@admin.register(AssignmentSubmission)
+class AssignmentSubmissionAdmin(admin.ModelAdmin):
+    list_display = ['student_name', 'assignment_title', 'attempt_number', 'points_earned', 'points_possible', 'percentage', 'passed', 'is_graded', 'submitted_at']
+    list_filter = ['is_graded', 'passed', 'attempt_number', 'assignment__assignment_type', 'submitted_at', 'graded_at']
+    search_fields = ['student__email', 'student__first_name', 'student__last_name', 'assignment__title', 'assignment__lesson__title']
+    readonly_fields = ['id', 'submitted_at', 'graded_at', 'percentage', 'passed']
+    date_hierarchy = 'submitted_at'
+    
+    fieldsets = (
+        ('Submission Information', {
+            'fields': ('student', 'assignment', 'enrollment', 'attempt_number', 'answers', 'submitted_at')
+        }),
+        ('Grading', {
+            'fields': ('is_graded', 'points_earned', 'points_possible', 'percentage', 'passed', 'graded_by', 'graded_at', 'graded_questions')
+        }),
+        ('Feedback', {
+            'fields': ('instructor_feedback', 'feedback_checked', 'feedback_checked_at', 'feedback_response'),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('id',),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def student_name(self, obj):
+        return obj.student.get_full_name() or obj.student.email
+    student_name.short_description = 'Student'
+    
+    def assignment_title(self, obj):
+        return obj.assignment.title
+    assignment_title.short_description = 'Assignment'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'student', 'assignment', 'assignment__lesson', 'assignment__lesson__course', 'graded_by', 'enrollment'
         )

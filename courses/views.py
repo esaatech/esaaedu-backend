@@ -410,6 +410,7 @@ class CourseCreationView(APIView):
         PUT: Update an existing course
         Requires course_id in URL or request data
         """
+        print(f"Request data: {request.data}")
         try:
             # Check if user is a teacher
             if request.user.role != 'teacher':
@@ -448,6 +449,7 @@ class CourseCreationView(APIView):
                 if 'is_free' in request.data:
                     request.data.pop('is_free')
             
+            print(f"about to validate and update course")
             # Use existing serializer for validation and updating
             serializer = CourseCreateUpdateSerializer(course, data=request.data, partial=True)
             if serializer.is_valid():

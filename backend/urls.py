@@ -17,7 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from api_docs import api_documentation, course_creation_contract, contact_contract, landing_page_contract, teacher_project_contract
+from api_docs import api_documentation, course_creation_contract, contact_contract, landing_page_contract, teacher_project_contract, teacher_assignment_contract
 
 # Create API router
 router = DefaultRouter()
@@ -41,6 +41,7 @@ urlpatterns = [
     path("api/docs/contact/", contact_contract, name="contact_contract"),
     path("api/docs/landing-page/", landing_page_contract, name="landing_page_contract"),
     path("api/docs/teacher-projects/", teacher_project_contract, name="teacher_project_contract"),
+    path("api/docs/teacher-assignments/", teacher_assignment_contract, name="teacher_assignment_contract"),
     
     # Health check endpoint
     path("health/", lambda request: JsonResponse({"status": "ok"})),

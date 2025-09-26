@@ -422,6 +422,238 @@ def api_documentation(request):
                             }
                         }
                     }
+                },
+                "assignment_management": {
+                    "base_url": "/api/teacher/assignments/",
+                    "description": "Complete assignment management system for teachers",
+                    "authentication": "Required (Teacher role)",
+                    "methods": {
+                        "GET": {
+                            "url": "/api/teacher/assignments/",
+                            "description": "List all assignments for teacher's courses",
+                            "query_parameters": {
+                                "course_id": "uuid (optional) - Filter by course",
+                                "lesson_id": "uuid (optional) - Filter by lesson",
+                                "assignment_type": "string (optional) - Filter by type (homework|quiz|exam|project)",
+                                "search": "string (optional) - Search by title or description"
+                            },
+                            "response": {
+                                "assignments": [
+                                    {
+                                        "id": "uuid",
+                                        "lesson": "uuid",
+                                        "lesson_title": "string",
+                                        "course_title": "string",
+                                        "title": "string",
+                                        "description": "string",
+                                        "assignment_type": "homework|quiz|exam|project",
+                                        "due_date": "datetime (optional)",
+                                        "passing_score": "integer",
+                                        "max_attempts": "integer",
+                                        "show_correct_answers": "boolean",
+                                        "randomize_questions": "boolean",
+                                        "created_at": "datetime",
+                                        "question_count": "integer",
+                                        "submission_count": "integer"
+                                    }
+                                ],
+                                "total_count": "integer"
+                            }
+                        },
+                        "GET_DETAIL": {
+                            "url": "/api/teacher/assignments/{assignment_id}/",
+                            "description": "Get detailed assignment information with questions",
+                            "response": {
+                                "assignment": {
+                                    "id": "uuid",
+                                    "lesson": "uuid",
+                                    "lesson_title": "string",
+                                    "course_title": "string",
+                                    "title": "string",
+                                    "description": "string",
+                                    "assignment_type": "homework|quiz|exam|project",
+                                    "due_date": "datetime (optional)",
+                                    "passing_score": "integer",
+                                    "max_attempts": "integer",
+                                    "show_correct_answers": "boolean",
+                                    "randomize_questions": "boolean",
+                                    "created_at": "datetime",
+                                    "questions": [
+                                        {
+                                            "id": "uuid",
+                                            "question_text": "string",
+                                            "type": "multiple_choice|true_false|fill_blank|short_answer|essay|flashcard",
+                                            "content": "object - Question-specific content",
+                                            "points": "integer",
+                                            "order": "integer",
+                                            "explanation": "string (optional)"
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                        "POST": {
+                            "url": "/api/teacher/assignments/",
+                            "description": "Create a new assignment",
+                            "request_body": {
+                                "lesson": "uuid (required) - Lesson ID",
+                                "title": "string (required) - Assignment title",
+                                "description": "string (optional) - Assignment description",
+                                "assignment_type": "string (optional) - homework|quiz|exam|project (default: homework)",
+                                "due_date": "datetime (optional) - Due date",
+                                "passing_score": "integer (optional) - Minimum score to pass (default: 70)",
+                                "max_attempts": "integer (optional) - Max attempts allowed (default: 1)",
+                                "show_correct_answers": "boolean (optional) - Show answers after completion (default: false)",
+                                "randomize_questions": "boolean (optional) - Randomize question order (default: false)"
+                            },
+                            "response": {
+                                "assignment": "AssignmentDetailSerializer data",
+                                "message": "Assignment created successfully"
+                            },
+                            "features": [
+                                "Validates lesson ownership",
+                                "Supports all assignment types",
+                                "Automatic default values for optional fields"
+                            ]
+                        },
+                        "PUT": {
+                            "url": "/api/teacher/assignments/{assignment_id}/",
+                            "description": "Update an existing assignment",
+                            "request_body": {
+                                "title": "string (optional)",
+                                "description": "string (optional)",
+                                "assignment_type": "string (optional)",
+                                "due_date": "datetime (optional)",
+                                "passing_score": "integer (optional)",
+                                "max_attempts": "integer (optional)",
+                                "show_correct_answers": "boolean (optional)",
+                                "randomize_questions": "boolean (optional)"
+                            },
+                            "response": {
+                                "assignment": "Updated AssignmentDetailSerializer data",
+                                "message": "Assignment updated successfully"
+                            }
+                        },
+                        "DELETE": {
+                            "url": "/api/teacher/assignments/{assignment_id}/",
+                            "description": "Delete an assignment",
+                            "response": {
+                                "message": "Assignment deleted successfully"
+                            },
+                            "constraints": {
+                                "submission_check": "Cannot delete if assignment has submissions",
+                                "ownership": "Only assignment owner (teacher) can delete"
+                            }
+                        }
+                    }
+                },
+                "assignment_questions": {
+                    "base_url": "/api/teacher/assignments/{assignment_id}/questions/",
+                    "description": "Assignment question management system",
+                    "authentication": "Required (Teacher role)",
+                    "methods": {
+                        "GET": {
+                            "url": "/api/teacher/assignments/{assignment_id}/questions/",
+                            "description": "List all questions for an assignment",
+                            "response": {
+                                "questions": [
+                                    {
+                                        "id": "uuid",
+                                        "question_text": "string",
+                                        "type": "multiple_choice|true_false|fill_blank|short_answer|essay|flashcard",
+                                        "content": "object - Question-specific content",
+                                        "points": "integer",
+                                        "order": "integer",
+                                        "explanation": "string (optional)",
+                                        "created_at": "datetime"
+                                    }
+                                ]
+                            }
+                        },
+                        "POST": {
+                            "url": "/api/teacher/assignments/{assignment_id}/questions/",
+                            "description": "Create a new question for an assignment",
+                            "request_body": {
+                                "question_text": "string (required) - The question text",
+                                "type": "string (required) - multiple_choice|true_false|fill_blank|short_answer|essay|flashcard",
+                                "content": "object (required) - Question-specific content structure",
+                                "points": "integer (required) - Points for this question",
+                                "order": "integer (optional) - Question order",
+                                "explanation": "string (optional) - Explanation for correct answer"
+                            },
+                            "content_examples": {
+                                "multiple_choice": {
+                                    "content": {
+                                        "options": ["Option A", "Option B", "Option C", "Option D"],
+                                        "correct_answer": "Option B"
+                                    }
+                                },
+                                "true_false": {
+                                    "content": {
+                                        "correct_answer": true
+                                    }
+                                },
+                                "fill_blank": {
+                                    "content": {
+                                        "blanks": ["blank1", "blank2"],
+                                        "correct_answers": {
+                                            "blank1": "answer1",
+                                            "blank2": "answer2"
+                                        }
+                                    }
+                                },
+                                "short_answer": {
+                                    "content": {
+                                        "correct_answer": "Expected answer",
+                                        "accept_variations": true
+                                    }
+                                },
+                                "essay": {
+                                    "content": {
+                                        "min_words": 100,
+                                        "max_words": 500,
+                                        "rubric": "Grading criteria"
+                                    }
+                                },
+                                "flashcard": {
+                                    "content": {
+                                        "front": "Question side",
+                                        "back": "Answer side"
+                                    }
+                                }
+                            },
+                            "response": {
+                                "question": "AssignmentQuestionSerializer data",
+                                "message": "Question created successfully"
+                            }
+                        },
+                        "PUT": {
+                            "url": "/api/teacher/assignments/{assignment_id}/questions/{question_id}/",
+                            "description": "Update an existing question",
+                            "request_body": {
+                                "question_text": "string (optional)",
+                                "type": "string (optional)",
+                                "content": "object (optional)",
+                                "points": "integer (optional)",
+                                "order": "integer (optional)",
+                                "explanation": "string (optional)"
+                            },
+                            "response": {
+                                "question": "Updated AssignmentQuestionSerializer data",
+                                "message": "Question updated successfully"
+                            }
+                        },
+                        "DELETE": {
+                            "url": "/api/teacher/assignments/{assignment_id}/questions/{question_id}/",
+                            "description": "Delete a question",
+                            "response": {
+                                "message": "Question deleted successfully"
+                            },
+                            "constraints": {
+                                "ownership": "Only assignment owner (teacher) can delete questions"
+                            }
+                        }
+                    }
                 }
             },
             "home": {
@@ -1517,6 +1749,263 @@ def teacher_project_contract(request):
                 "Monitor overdue submissions",
                 "Track grading progress across all projects"
             ]
+        }
+    }
+    
+    return JsonResponse(contract, json_dumps_params={'indent': 2})
+
+
+@require_http_methods(["GET"])
+def teacher_assignment_contract(request):
+    """
+    Teacher Assignment Management API Contract
+    Returns detailed API contract for teacher assignment management
+    """
+    
+    contract = {
+        "title": "Teacher Assignment Management API Contract",
+        "version": "1.0.0",
+        "description": "Complete assignment management system for teachers",
+        "base_url": "https://your-domain.com/api/teacher/assignments",
+        "authentication": {
+            "type": "Firebase ID Token",
+            "header": "Authorization: Bearer <firebase_id_token>",
+            "description": "Firebase authentication token obtained from Firebase Auth",
+            "required_role": "teacher"
+        },
+        "endpoints": {
+            "assignment_management": {
+                "base_url": "/api/teacher/assignments/",
+                "description": "Complete assignment management system for teachers",
+                "authentication": "Required (Teacher role)",
+                "methods": {
+                    "GET": {
+                        "url": "/api/teacher/assignments/",
+                        "description": "List all assignments for teacher's courses",
+                        "query_parameters": {
+                            "course_id": "uuid (optional) - Filter by course",
+                            "lesson_id": "uuid (optional) - Filter by lesson",
+                            "assignment_type": "string (optional) - Filter by type (homework|quiz|exam|project)",
+                            "search": "string (optional) - Search by title or description"
+                        },
+                        "response": {
+                            "assignments": [
+                                {
+                                    "id": "uuid",
+                                    "lesson": "uuid",
+                                    "lesson_title": "string",
+                                    "course_title": "string",
+                                    "title": "string",
+                                    "description": "string",
+                                    "assignment_type": "homework|quiz|exam|project",
+                                    "due_date": "datetime (optional)",
+                                    "passing_score": "integer",
+                                    "max_attempts": "integer",
+                                    "show_correct_answers": "boolean",
+                                    "randomize_questions": "boolean",
+                                    "created_at": "datetime",
+                                    "question_count": "integer",
+                                    "submission_count": "integer"
+                                }
+                            ],
+                            "total_count": "integer"
+                        }
+                    },
+                    "GET_DETAIL": {
+                        "url": "/api/teacher/assignments/{assignment_id}/",
+                        "description": "Get detailed assignment information with questions",
+                        "response": {
+                            "assignment": {
+                                "id": "uuid",
+                                "lesson": "uuid",
+                                "lesson_title": "string",
+                                "course_title": "string",
+                                "title": "string",
+                                "description": "string",
+                                "assignment_type": "homework|quiz|exam|project",
+                                "due_date": "datetime (optional)",
+                                "passing_score": "integer",
+                                "max_attempts": "integer",
+                                "show_correct_answers": "boolean",
+                                "randomize_questions": "boolean",
+                                "created_at": "datetime",
+                                "questions": [
+                                    {
+                                        "id": "uuid",
+                                        "question_text": "string",
+                                        "type": "multiple_choice|true_false|fill_blank|short_answer|essay|flashcard",
+                                        "content": "object - Question-specific content",
+                                        "points": "integer",
+                                        "order": "integer",
+                                        "explanation": "string (optional)"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "POST": {
+                        "url": "/api/teacher/assignments/",
+                        "description": "Create a new assignment",
+                        "request_body": {
+                            "lesson": "uuid (required) - Lesson ID",
+                            "title": "string (required) - Assignment title",
+                            "description": "string (optional) - Assignment description",
+                            "assignment_type": "string (optional) - homework|quiz|exam|project (default: homework)",
+                            "due_date": "datetime (optional) - Due date",
+                            "passing_score": "integer (optional) - Minimum score to pass (default: 70)",
+                            "max_attempts": "integer (optional) - Max attempts allowed (default: 1)",
+                            "show_correct_answers": "boolean (optional) - Show answers after completion (default: false)",
+                            "randomize_questions": "boolean (optional) - Randomize question order (default: false)"
+                        },
+                        "response": {
+                            "assignment": "AssignmentDetailSerializer data",
+                            "message": "Assignment created successfully"
+                        },
+                        "features": [
+                            "Validates lesson ownership",
+                            "Supports all assignment types",
+                            "Automatic default values for optional fields"
+                        ]
+                    },
+                    "PUT": {
+                        "url": "/api/teacher/assignments/{assignment_id}/",
+                        "description": "Update an existing assignment",
+                        "request_body": {
+                            "title": "string (optional)",
+                            "description": "string (optional)",
+                            "assignment_type": "string (optional)",
+                            "due_date": "datetime (optional)",
+                            "passing_score": "integer (optional)",
+                            "max_attempts": "integer (optional)",
+                            "show_correct_answers": "boolean (optional)",
+                            "randomize_questions": "boolean (optional)"
+                        },
+                        "response": {
+                            "assignment": "Updated AssignmentDetailSerializer data",
+                            "message": "Assignment updated successfully"
+                        }
+                    },
+                    "DELETE": {
+                        "url": "/api/teacher/assignments/{assignment_id}/",
+                        "description": "Delete an assignment",
+                        "response": {
+                            "message": "Assignment deleted successfully"
+                        },
+                        "constraints": {
+                            "submission_check": "Cannot delete if assignment has submissions",
+                            "ownership": "Only assignment owner (teacher) can delete"
+                        }
+                    }
+                }
+            },
+            "assignment_questions": {
+                "base_url": "/api/teacher/assignments/{assignment_id}/questions/",
+                "description": "Assignment question management system",
+                "authentication": "Required (Teacher role)",
+                "methods": {
+                    "GET": {
+                        "url": "/api/teacher/assignments/{assignment_id}/questions/",
+                        "description": "List all questions for an assignment",
+                        "response": {
+                            "questions": [
+                                {
+                                    "id": "uuid",
+                                    "question_text": "string",
+                                    "type": "multiple_choice|true_false|fill_blank|short_answer|essay|flashcard",
+                                    "content": "object - Question-specific content",
+                                    "points": "integer",
+                                    "order": "integer",
+                                    "explanation": "string (optional)",
+                                    "created_at": "datetime"
+                                }
+                            ]
+                        }
+                    },
+                    "POST": {
+                        "url": "/api/teacher/assignments/{assignment_id}/questions/",
+                        "description": "Create a new question for an assignment",
+                        "request_body": {
+                            "question_text": "string (required) - The question text",
+                            "type": "string (required) - multiple_choice|true_false|fill_blank|short_answer|essay|flashcard",
+                            "content": "object (required) - Question-specific content structure",
+                            "points": "integer (required) - Points for this question",
+                            "order": "integer (optional) - Question order",
+                            "explanation": "string (optional) - Explanation for correct answer"
+                        },
+                        "content_examples": {
+                            "multiple_choice": {
+                                "content": {
+                                    "options": ["Option A", "Option B", "Option C", "Option D"],
+                                    "correct_answer": "Option B"
+                                }
+                            },
+                            "true_false": {
+                                "content": {
+                                    "correct_answer": True
+                                }
+                            },
+                            "fill_blank": {
+                                "content": {
+                                    "blanks": ["blank1", "blank2"],
+                                    "correct_answers": {
+                                        "blank1": "answer1",
+                                        "blank2": "answer2"
+                                    }
+                                }
+                            },
+                            "short_answer": {
+                                "content": {
+                                    "correct_answer": "Expected answer",
+                                    "accept_variations": True
+                                }
+                            },
+                            "essay": {
+                                "content": {
+                                    "min_words": 100,
+                                    "max_words": 500,
+                                    "rubric": "Grading criteria"
+                                }
+                            },
+                            "flashcard": {
+                                "content": {
+                                    "front": "Question side",
+                                    "back": "Answer side"
+                                }
+                            }
+                        },
+                        "response": {
+                            "question": "AssignmentQuestionSerializer data",
+                            "message": "Question created successfully"
+                        }
+                    },
+                    "PUT": {
+                        "url": "/api/teacher/assignments/{assignment_id}/questions/{question_id}/",
+                        "description": "Update an existing question",
+                        "request_body": {
+                            "question_text": "string (optional)",
+                            "type": "string (optional)",
+                            "content": "object (optional)",
+                            "points": "integer (optional)",
+                            "order": "integer (optional)",
+                            "explanation": "string (optional)"
+                        },
+                        "response": {
+                            "question": "Updated AssignmentQuestionSerializer data",
+                            "message": "Question updated successfully"
+                        }
+                    },
+                    "DELETE": {
+                        "url": "/api/teacher/assignments/{assignment_id}/questions/{question_id}/",
+                        "description": "Delete a question",
+                        "response": {
+                            "message": "Question deleted successfully"
+                        },
+                        "constraints": {
+                            "ownership": "Only assignment owner (teacher) can delete questions"
+                        }
+                    }
+                }
+            }
         }
     }
     

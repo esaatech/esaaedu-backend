@@ -13,4 +13,12 @@ urlpatterns = [
     path('projects/<int:project_id>/grading/', views.ProjectGradingView.as_view(), name='project_grading'),
     path('projects/submissions/<int:submission_id>/', views.ProjectSubmissionDetailView.as_view(), name='submission_detail'),
     path('projects/dashboard/', views.ProjectDashboardView.as_view(), name='project_dashboard'),
+    
+    # Assignment Management URLs
+    path('assignments/', views.AssignmentManagementView.as_view(), name='assignment_management'),
+    path('assignments/<uuid:assignment_id>/', views.AssignmentManagementView.as_view(), name='assignment_detail'),
+    path('assignments/<uuid:assignment_id>/questions/', views.AssignmentQuestionManagementView.as_view(), name='assignment_questions'),
+    path('assignments/<uuid:assignment_id>/questions/<uuid:question_id>/', views.AssignmentQuestionManagementView.as_view(), name='assignment_question_detail'),
+    path('assignments/<uuid:assignment_id>/grading/', views.AssignmentGradingView.as_view(), name='assignment_grading'),
+    path('assignments/<uuid:assignment_id>/grading/<uuid:submission_id>/', views.AssignmentGradingView.as_view(), name='assignment_submission_grading'),
 ]

@@ -10,9 +10,12 @@ from .serializers import (
     TeacherProfileSerializer, TeacherProfileUpdateSerializer,
     ProjectSerializer, ProjectCreateUpdateSerializer,
     ProjectSubmissionSerializer, ProjectSubmissionGradingSerializer,
-    ProjectSubmissionFeedbackSerializer
+    ProjectSubmissionFeedbackSerializer,
+    AssignmentListSerializer, AssignmentDetailSerializer, AssignmentCreateUpdateSerializer,
+    AssignmentQuestionSerializer, AssignmentSubmissionSerializer, AssignmentGradingSerializer,
+    AssignmentFeedbackSerializer
 )
-from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission
+from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission
 from student.models import EnrolledCourse
 from datetime import datetime, timedelta
 
@@ -1217,3 +1220,709 @@ class ProjectManagementView(APIView):
         except Exception as e:
             print(f"Error creating student submissions: {str(e)}")
             # Don't raise the exception as project creation should still succeed
+
+
+# ===== ASSIGNMENT MANAGEMENT CBV =====
+
+class AssignmentManagementView(APIView):
+    """
+    Complete CRUD operations for assignment management
+    GET: List all assignments for teacher's courses
+    POST: Create new assignment
+    PUT: Update assignment
+    DELETE: Delete assignment
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, assignment_id=None):
+        """
+        GET: List all assignments for teacher's courses OR get specific assignment
+        If assignment_id is provided, return single assignment detail
+        Query parameters (for list view):
+        - course_id: Filter by specific course
+        - lesson_id: Filter by specific lesson
+        - assignment_type: Filter by assignment type
+        - search: Search by title or description
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can access assignment management'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # If assignment_id is provided, return single assignment detail
+            if assignment_id:
+                try:
+                    assignment = Assignment.objects.select_related(
+                        'lesson', 'lesson__course'
+                    ).prefetch_related(
+                        'questions', 'submissions', 'submissions__student'
+                    ).get(
+                        id=assignment_id,
+                        lesson__course__teacher=request.user
+                    )
+                    
+                    serializer = AssignmentDetailSerializer(assignment, context={'request': request})
+                    return Response({
+                        'assignment': serializer.data
+                    }, status=status.HTTP_200_OK)
+                    
+                except Assignment.DoesNotExist:
+                    return Response(
+                        {'error': 'Assignment not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            
+            # Get assignments for teacher's courses
+            assignments = Assignment.objects.filter(
+                lesson__course__teacher=request.user
+            ).select_related('lesson', 'lesson__course').prefetch_related('questions', 'submissions')
+            
+            # Apply filters
+            course_id = request.query_params.get('course_id')
+            if course_id:
+                assignments = assignments.filter(lesson__course_id=course_id)
+            
+            lesson_id = request.query_params.get('lesson_id')
+            if lesson_id:
+                assignments = assignments.filter(lesson_id=lesson_id)
+            
+            assignment_type = request.query_params.get('assignment_type')
+            if assignment_type:
+                assignments = assignments.filter(assignment_type=assignment_type)
+            
+            search = request.query_params.get('search')
+            if search:
+                assignments = assignments.filter(
+                    Q(title__icontains=search) | Q(description__icontains=search)
+                )
+            
+            # Serialize and return
+            serializer = AssignmentListSerializer(assignments, many=True, context={'request': request})
+            return Response({
+                'assignments': serializer.data,
+                'total_count': assignments.count()
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Error retrieving assignments: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request):
+        """
+        POST: Create a new assignment
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can create assignments'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Use serializer for validation and creation
+            serializer = AssignmentCreateUpdateSerializer(
+                data=request.data, 
+                context={'request': request}
+            )
+            
+            if serializer.is_valid():
+                assignment = serializer.save()
+                
+                # Return detailed assignment data
+                response_serializer = AssignmentDetailSerializer(assignment, context={'request': request})
+                return Response({
+                    'assignment': response_serializer.data,
+                    'message': 'Assignment created successfully'
+                }, status=status.HTTP_201_CREATED)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            return Response(
+                {'error': f'Error creating assignment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, assignment_id=None):
+        """
+        PUT: Update an existing assignment
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can update assignments'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get assignment_id from URL parameter or request data
+            if not assignment_id:
+                assignment_id = request.data.get('assignment_id')
+            
+            if not assignment_id:
+                return Response(
+                    {'error': 'Assignment ID is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the assignment and check ownership
+            try:
+                assignment = Assignment.objects.get(
+                    id=assignment_id, 
+                    lesson__course__teacher=request.user
+                )
+            except Assignment.DoesNotExist:
+                return Response(
+                    {'error': 'Assignment not found or you do not have permission to update it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Use serializer for validation and updating
+            serializer = AssignmentCreateUpdateSerializer(
+                assignment, 
+                data=request.data, 
+                partial=True,
+                context={'request': request}
+            )
+            
+            if serializer.is_valid():
+                updated_assignment = serializer.save()
+                
+                # Return detailed assignment data
+                response_serializer = AssignmentDetailSerializer(updated_assignment, context={'request': request})
+                return Response({
+                    'assignment': response_serializer.data,
+                    'message': 'Assignment updated successfully'
+                }, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Error updating assignment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def delete(self, request, assignment_id=None):
+        """
+        DELETE: Delete an assignment
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can delete assignments'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get assignment_id from URL parameter or request data
+            if not assignment_id:
+                assignment_id = request.data.get('assignment_id')
+            
+            if not assignment_id:
+                return Response(
+                    {'error': 'Assignment ID is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the assignment and check ownership
+            try:
+                assignment = Assignment.objects.get(
+                    id=assignment_id, 
+                    lesson__course__teacher=request.user
+                )
+            except Assignment.DoesNotExist:
+                return Response(
+                    {'error': 'Assignment not found or you do not have permission to delete it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if assignment has submissions
+            submission_count = assignment.submissions.count()
+            if submission_count > 0:
+                return Response(
+                    {'error': f'Cannot delete assignment with {submission_count} submissions. Please delete submissions first.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Store assignment data for response
+            assignment_data = {
+                'id': str(assignment.id),
+                'title': assignment.title,
+                'lesson': assignment.lesson.title,
+                'course': assignment.lesson.course.title
+            }
+            
+            # Delete the assignment
+            assignment.delete()
+            
+            return Response({
+                'message': 'Assignment deleted successfully',
+                'deleted_assignment': assignment_data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Error deleting assignment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AssignmentQuestionManagementView(APIView):
+    """
+    CRUD operations for assignment questions
+    GET: List questions for specific assignment
+    POST: Create new question
+    PUT: Update question
+    DELETE: Delete question
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, assignment_id):
+        """
+        GET: List questions for specific assignment
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can access assignment questions'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get assignment and check ownership
+            try:
+                assignment = Assignment.objects.get(
+                    id=assignment_id, 
+                    lesson__course__teacher=request.user
+                )
+            except Assignment.DoesNotExist:
+                return Response(
+                    {'error': 'Assignment not found or you do not have permission to access it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get questions ordered by order field
+            questions = assignment.questions.all().order_by('order')
+            serializer = AssignmentQuestionSerializer(questions, many=True)
+            
+            return Response({
+                'assignment_id': str(assignment.id),
+                'assignment_title': assignment.title,
+                'questions': serializer.data,
+                'total_questions': questions.count()
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Error retrieving assignment questions: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, assignment_id):
+        """
+        POST: Create new question for assignment
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can create assignment questions'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get assignment and check ownership
+            try:
+                assignment = Assignment.objects.get(
+                    id=assignment_id, 
+                    lesson__course__teacher=request.user
+                )
+            except Assignment.DoesNotExist:
+                return Response(
+                    {'error': 'Assignment not found or you do not have permission to modify it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Add assignment to request data
+            request.data['assignment'] = assignment.id
+            
+            # Use serializer for validation and creation
+            serializer = AssignmentQuestionSerializer(data=request.data)
+            
+            if serializer.is_valid():
+                question = serializer.save(assignment=assignment)
+                
+                response_serializer = AssignmentQuestionSerializer(question)
+                return Response({
+                    'question': response_serializer.data,
+                    'message': 'Question created successfully'
+                }, status=status.HTTP_201_CREATED)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            return Response(
+                {'error': f'Error creating assignment question: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, assignment_id, question_id):
+        """
+        PUT: Update assignment question
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can update assignment questions'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get assignment and check ownership
+            try:
+                assignment = Assignment.objects.get(
+                    id=assignment_id, 
+                    lesson__course__teacher=request.user
+                )
+            except Assignment.DoesNotExist:
+                return Response(
+                    {'error': 'Assignment not found or you do not have permission to modify it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get question and check it belongs to assignment
+            try:
+                question = AssignmentQuestion.objects.get(
+                    id=question_id, 
+                    assignment=assignment
+                )
+            except AssignmentQuestion.DoesNotExist:
+                return Response(
+                    {'error': 'Question not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Use serializer for validation and updating
+            serializer = AssignmentQuestionSerializer(
+                question, 
+                data=request.data, 
+                partial=True
+            )
+            
+            if serializer.is_valid():
+                updated_question = serializer.save()
+                
+                response_serializer = AssignmentQuestionSerializer(updated_question)
+                return Response({
+                    'question': response_serializer.data,
+                    'message': 'Question updated successfully'
+                }, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Error updating assignment question: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def delete(self, request, assignment_id, question_id):
+        """
+        DELETE: Delete assignment question
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can delete assignment questions'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get assignment and check ownership
+            try:
+                assignment = Assignment.objects.get(
+                    id=assignment_id, 
+                    lesson__course__teacher=request.user
+                )
+            except Assignment.DoesNotExist:
+                return Response(
+                    {'error': 'Assignment not found or you do not have permission to modify it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get question and check it belongs to assignment
+            try:
+                question = AssignmentQuestion.objects.get(
+                    id=question_id, 
+                    assignment=assignment
+                )
+            except AssignmentQuestion.DoesNotExist:
+                return Response(
+                    {'error': 'Question not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Store question data for response
+            question_data = {
+                'id': str(question.id),
+                'question_text': question.question_text[:50] + '...',
+                'order': question.order
+            }
+            
+            # Delete the question
+            question.delete()
+            
+            return Response({
+                'message': 'Question deleted successfully',
+                'deleted_question': question_data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Error deleting assignment question: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AssignmentGradingView(APIView):
+    """
+    Assignment grading and submission management
+    GET: List submissions for assignment
+    PUT: Grade submission
+    POST: Provide feedback
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, assignment_id, submission_id=None):
+        """
+        GET: List all submissions for a specific assignment OR get specific submission
+        If submission_id is provided, return single submission detail
+        Query parameters (for list view):
+        - status: Filter by grading status (graded, pending)
+        - search: Search by student name or email
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can access assignment grading'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # If submission_id is provided, return single submission detail
+            if submission_id:
+                try:
+                    assignment = Assignment.objects.get(
+                        id=assignment_id, 
+                        lesson__course__teacher=request.user
+                    )
+                    
+                    submission = AssignmentSubmission.objects.select_related(
+                        'student', 'graded_by'
+                    ).get(
+                        id=submission_id,
+                        assignment=assignment
+                    )
+                    
+                    serializer = AssignmentSubmissionSerializer(submission)
+                    return Response({
+                        'submission': serializer.data
+                    }, status=status.HTTP_200_OK)
+                    
+                except Assignment.DoesNotExist:
+                    return Response(
+                        {'error': 'Assignment not found or you do not have permission to access it'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                except AssignmentSubmission.DoesNotExist:
+                    return Response(
+                        {'error': 'Submission not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            
+            # Get assignment and check ownership
+            try:
+                assignment = Assignment.objects.get(
+                    id=assignment_id, 
+                    lesson__course__teacher=request.user
+                )
+            except Assignment.DoesNotExist:
+                return Response(
+                    {'error': 'Assignment not found or you do not have permission to access it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get submissions
+            submissions = assignment.submissions.all().select_related(
+                'student', 'graded_by'
+            ).order_by('-submitted_at')
+            
+            # Apply filters
+            status_filter = request.query_params.get('status')
+            if status_filter == 'graded':
+                submissions = submissions.filter(is_graded=True)
+            elif status_filter == 'pending':
+                submissions = submissions.filter(is_graded=False)
+            
+            search = request.query_params.get('search')
+            if search:
+                submissions = submissions.filter(
+                    Q(student__first_name__icontains=search) |
+                    Q(student__last_name__icontains=search) |
+                    Q(student__email__icontains=search)
+                )
+            
+            # Serialize and return
+            serializer = AssignmentSubmissionSerializer(submissions, many=True)
+            
+            # Calculate grading stats
+            total_submissions = assignment.submissions.count()
+            graded_count = assignment.submissions.filter(is_graded=True).count()
+            pending_count = total_submissions - graded_count
+            
+            return Response({
+                'assignment_id': str(assignment.id),
+                'assignment_title': assignment.title,
+                'submissions': serializer.data,
+                'grading_stats': {
+                    'total_submissions': total_submissions,
+                    'graded_count': graded_count,
+                    'pending_count': pending_count,
+                    'grading_progress': (graded_count / total_submissions * 100) if total_submissions > 0 else 0
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Error retrieving assignment submissions: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, assignment_id, submission_id):
+        """
+        PUT: Grade an assignment submission
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can grade assignments'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get assignment and check ownership
+            try:
+                assignment = Assignment.objects.get(
+                    id=assignment_id, 
+                    lesson__course__teacher=request.user
+                )
+            except Assignment.DoesNotExist:
+                return Response(
+                    {'error': 'Assignment not found or you do not have permission to grade it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get submission and check it belongs to assignment
+            try:
+                submission = AssignmentSubmission.objects.get(
+                    id=submission_id, 
+                    assignment=assignment
+                )
+            except AssignmentSubmission.DoesNotExist:
+                return Response(
+                    {'error': 'Submission not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Use grading serializer for validation and updating
+            serializer = AssignmentGradingSerializer(
+                submission, 
+                data=request.data, 
+                partial=True
+            )
+            
+            if serializer.is_valid():
+                # Set grader and grading timestamp
+                updated_submission = serializer.save(
+                    graded_by=request.user,
+                    graded_at=timezone.now()
+                )
+                
+                response_serializer = AssignmentSubmissionSerializer(updated_submission)
+                return Response({
+                    'submission': response_serializer.data,
+                    'message': 'Submission graded successfully'
+                }, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Error grading assignment submission: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, assignment_id, submission_id):
+        """
+        POST: Provide feedback on an assignment submission
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can provide feedback on assignments'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get assignment and check ownership
+            try:
+                assignment = Assignment.objects.get(
+                    id=assignment_id, 
+                    lesson__course__teacher=request.user
+                )
+            except Assignment.DoesNotExist:
+                return Response(
+                    {'error': 'Assignment not found or you do not have permission to provide feedback'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get submission and check it belongs to assignment
+            try:
+                submission = AssignmentSubmission.objects.get(
+                    id=submission_id, 
+                    assignment=assignment
+                )
+            except AssignmentSubmission.DoesNotExist:
+                return Response(
+                    {'error': 'Submission not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Use feedback serializer for validation and updating
+            serializer = AssignmentFeedbackSerializer(
+                submission, 
+                data=request.data, 
+                partial=True
+            )
+            
+            if serializer.is_valid():
+                updated_submission = serializer.save()
+                
+                response_serializer = AssignmentSubmissionSerializer(updated_submission)
+                return Response({
+                    'submission': response_serializer.data,
+                    'message': 'Feedback provided successfully'
+                }, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Error providing feedback: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

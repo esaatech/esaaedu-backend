@@ -434,6 +434,81 @@ class Quiz(models.Model):
         return f"Quiz: {self.title} ({self.lesson.course.title})"
 
 
+class Assignment(models.Model):
+    """
+    Assignment associated with a lesson - similar to Quiz but for assignments
+    """
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    lesson = models.OneToOneField(Lesson, on_delete=models.CASCADE, related_name='assignment')
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    
+    # Assignment Configuration
+    due_date = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="Assignment due date"
+    )
+    passing_score = models.IntegerField(
+        default=70,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Minimum percentage to pass"
+    )
+    max_attempts = models.IntegerField(
+        default=1,
+        validators=[MinValueValidator(1)],
+        help_text="Maximum number of attempts allowed"
+    )
+    show_correct_answers = models.BooleanField(
+        default=False,
+        help_text="Show correct answers after completion"
+    )
+    randomize_questions = models.BooleanField(
+        default=False,
+        help_text="Randomize question order for each attempt"
+    )
+    
+    # Assignment Type
+    ASSIGNMENT_TYPES = [
+        ('homework', 'Homework'),
+        ('project', 'Project'),
+        ('exam', 'Exam'),
+        ('quiz', 'Quiz-style Assignment'),
+        ('essay', 'Essay Assignment'),
+        ('practical', 'Practical Assignment'),
+    ]
+    
+    assignment_type = models.CharField(
+        max_length=20,
+        choices=ASSIGNMENT_TYPES,
+        default='homework',
+        help_text="Type of assignment"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    @property
+    def total_points(self):
+        return sum(question.points for question in self.questions.all())
+    
+    @property
+    def question_count(self):
+        return self.questions.count()
+    
+    class Meta:
+        ordering = ['lesson__course', 'lesson__order']
+        indexes = [
+            models.Index(fields=['assignment_type']),
+            models.Index(fields=['due_date']),
+        ]
+    
+    def __str__(self):
+        return f"Assignment: {self.title} ({self.lesson.course.title})"
+
+
 class Question(models.Model):
     """
     Individual question within a quiz
@@ -446,6 +521,7 @@ class Question(models.Model):
         ('essay', 'Essay'),
         ('matching', 'Matching'),
         ('ordering', 'Ordering/Ranking'),
+        ('flashcard', 'Flashcard'),
     ]
     
     # Basic Information
@@ -490,6 +566,62 @@ class Question(models.Model):
 
 
 
+
+
+class AssignmentQuestion(models.Model):
+    """
+    Individual question within an assignment
+    Separate from Question model to avoid breaking existing quizzes
+    """
+    QUESTION_TYPES = [
+        ('multiple_choice', 'Multiple Choice'),
+        ('true_false', 'True/False'),
+        ('fill_blank', 'Fill in the Blank'),
+        ('short_answer', 'Short Answer'),
+        ('essay', 'Essay'),
+        ('matching', 'Matching'),
+        ('ordering', 'Ordering/Ranking'),
+        ('flashcard', 'Flashcard'),
+    ]
+    
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    assignment = models.ForeignKey(Assignment, on_delete=models.CASCADE, related_name='questions')
+    question_text = models.TextField(help_text="The question text")
+    order = models.IntegerField(help_text="Question order within the assignment")
+    points = models.IntegerField(
+        default=1,
+        validators=[MinValueValidator(1)],
+        help_text="Points awarded for correct answer"
+    )
+    
+    # Question Type & Content
+    type = models.CharField(max_length=20, choices=QUESTION_TYPES)
+    content = models.JSONField(
+        default=dict,
+        help_text="Question-specific content (options, answers, etc.)"
+    )
+    
+    # Optional fields
+    explanation = models.TextField(
+        blank=True,
+        help_text="Explanation shown after answering"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['assignment', 'order']
+        unique_together = ['assignment', 'order']
+        indexes = [
+            models.Index(fields=['assignment', 'order']),
+            models.Index(fields=['type']),
+        ]
+    
+    def __str__(self):
+        return f"AQ{self.order}: {self.question_text[:50]}..."
 
 
 class QuizAttempt(models.Model):
@@ -591,6 +723,142 @@ class QuizAttempt(models.Model):
             return "auto_graded"
         else:
             return "ungraded"
+
+
+class AssignmentSubmission(models.Model):
+    """
+    Student submissions for assignments with grading and feedback
+    """
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='assignment_submissions')
+    assignment = models.ForeignKey(Assignment, on_delete=models.CASCADE, related_name='submissions')
+    enrollment = models.ForeignKey('student.EnrolledCourse', on_delete=models.CASCADE)
+    
+    # Submission Details
+    attempt_number = models.IntegerField(validators=[MinValueValidator(1)])
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    
+    # Student Answers
+    answers = models.JSONField(
+        default=dict,
+        help_text="Student answers for each question"
+    )
+    
+    # Teacher Grading
+    is_graded = models.BooleanField(default=False, help_text="Has teacher graded this submission?")
+    graded_at = models.DateTimeField(null=True, blank=True)
+    graded_by = models.ForeignKey(
+        User, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='graded_assignments',
+        limit_choices_to={'role': 'teacher'}
+    )
+    
+    # Scoring
+    points_earned = models.DecimalField(
+        max_digits=6, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Points earned by student"
+    )
+    points_possible = models.DecimalField(
+        max_digits=6, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Total points possible"
+    )
+    percentage = models.DecimalField(
+        max_digits=5, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Percentage score"
+    )
+    passed = models.BooleanField(default=False, help_text="Did student pass the assignment?")
+    
+    # Feedback System
+    instructor_feedback = models.TextField(
+        blank=True,
+        help_text="Teacher's feedback on the submission"
+    )
+    feedback_checked = models.BooleanField(
+        default=False,
+        help_text="Has student seen the feedback?"
+    )
+    feedback_checked_at = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="When student last checked feedback"
+    )
+    feedback_response = models.TextField(
+        blank=True,
+        help_text="Student's response to teacher feedback"
+    )
+    
+    # Question-level grading
+    graded_questions = models.JSONField(
+        default=list,
+        help_text="Individual question grades and feedback - list of {question_id, is_correct, teacher_feedback, points_earned, points_possible}"
+    )
+    
+    # Grading History
+    grading_history = models.JSONField(
+        default=list,
+        help_text="Audit trail of grading changes"
+    )
+    
+    class Meta:
+        unique_together = ['student', 'assignment', 'attempt_number']
+        ordering = ['-submitted_at']
+        indexes = [
+            models.Index(fields=['student', 'assignment']),
+            models.Index(fields=['enrollment', 'submitted_at']),
+            models.Index(fields=['is_graded']),
+            models.Index(fields=['feedback_checked']),
+        ]
+    
+    def __str__(self):
+        return f"{self.student.get_full_name()} - {self.assignment.title} (Attempt {self.attempt_number})"
+    
+    def save(self, *args, **kwargs):
+        # Auto-calculate percentage if points are provided
+        if self.points_earned is not None and self.points_possible is not None and self.points_possible > 0:
+            self.percentage = (self.points_earned / self.points_possible) * 100
+            
+            # Check if passed based on assignment passing score
+            if self.assignment and self.percentage >= self.assignment.passing_score:
+                self.passed = True
+            else:
+                self.passed = False
+        
+        super().save(*args, **kwargs)
+    
+    @property
+    def display_status(self):
+        """Return status for frontend display"""
+        if self.is_graded:
+            return "graded"
+        else:
+            return "submitted"
+    
+    @property
+    def grader_name(self):
+        """Get grader's name if available"""
+        if self.graded_by:
+            return self.graded_by.get_full_name()
+        return "Unknown"
+    
+    def mark_feedback_checked(self):
+        """Mark feedback as checked by student"""
+        from django.utils import timezone
+        self.feedback_checked = True
+        self.feedback_checked_at = timezone.now()
+        self.save(update_fields=['feedback_checked', 'feedback_checked_at'])
 
 
 class Note(models.Model):

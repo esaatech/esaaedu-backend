@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from users.models import User, TeacherProfile
-from courses.models import Project, ProjectSubmission
+from courses.models import Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission
 
 
 class TeacherProfileSerializer(serializers.ModelSerializer):
@@ -194,4 +194,214 @@ class ProjectSubmissionFeedbackSerializer(serializers.ModelSerializer):
         """Validate status for feedback"""
         if value not in ['RETURNED', 'GRADED']:
             raise serializers.ValidationError("Status must be RETURNED or GRADED for feedback.")
+        return value
+
+
+# ===== ASSIGNMENT SERIALIZERS =====
+
+class AssignmentQuestionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for assignment questions
+    """
+    class Meta:
+        model = AssignmentQuestion
+        fields = [
+            'id', 'question_text', 'order', 'points', 'type', 'content', 
+            'explanation', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def validate_content(self, value):
+        """Validate question content based on type"""
+        question_type = self.initial_data.get('type')
+        
+        if question_type == 'multiple_choice':
+            if 'options' not in value or 'correct_answer' not in value:
+                raise serializers.ValidationError("Multiple choice questions require 'options' and 'correct_answer'")
+        
+        elif question_type == 'true_false':
+            if 'correct_answer' not in value:
+                raise serializers.ValidationError("True/False questions require 'correct_answer'")
+        
+        elif question_type == 'flashcard':
+            if 'answer' not in value:
+                raise serializers.ValidationError("Flashcard questions require 'answer'")
+        
+        return value
+
+
+class AssignmentListSerializer(serializers.ModelSerializer):
+    """
+    Lightweight serializer for assignment lists
+    """
+    lesson_title = serializers.CharField(source='lesson.title', read_only=True)
+    course_title = serializers.CharField(source='lesson.course.title', read_only=True)
+    question_count = serializers.SerializerMethodField()
+    submission_count = serializers.SerializerMethodField()
+    graded_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Assignment
+        fields = [
+            'id', 'title', 'description', 'assignment_type', 'due_date',
+            'lesson_title', 'course_title', 'question_count', 'submission_count',
+            'graded_count', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+    
+    def get_question_count(self, obj):
+        return obj.questions.count()
+    
+    def get_submission_count(self, obj):
+        return obj.submissions.count()
+    
+    def get_graded_count(self, obj):
+        return obj.submissions.filter(is_graded=True).count()
+
+
+class AssignmentDetailSerializer(serializers.ModelSerializer):
+    """
+    Detailed serializer for assignment with questions
+    """
+    lesson_title = serializers.CharField(source='lesson.title', read_only=True)
+    course_title = serializers.CharField(source='lesson.course.title', read_only=True)
+    questions = AssignmentQuestionSerializer(many=True, read_only=True)
+    question_count = serializers.SerializerMethodField()
+    submission_count = serializers.SerializerMethodField()
+    graded_count = serializers.SerializerMethodField()
+    pending_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Assignment
+        fields = [
+            'id', 'title', 'description', 'assignment_type', 'due_date',
+            'passing_score', 'max_attempts', 'show_correct_answers', 'randomize_questions',
+            'lesson_title', 'course_title', 'questions', 'question_count',
+            'submission_count', 'graded_count', 'pending_count', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_question_count(self, obj):
+        return obj.questions.count()
+    
+    def get_submission_count(self, obj):
+        return obj.submissions.count()
+    
+    def get_graded_count(self, obj):
+        return obj.submissions.filter(is_graded=True).count()
+    
+    def get_pending_count(self, obj):
+        return obj.submissions.filter(is_graded=False).count()
+
+
+class AssignmentCreateUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for creating and updating assignments
+    """
+    class Meta:
+        model = Assignment
+        fields = [
+            'lesson', 'title', 'description', 'assignment_type', 'due_date',
+            'passing_score', 'max_attempts', 'show_correct_answers', 'randomize_questions'
+        ]
+    
+    def validate_lesson(self, value):
+        """Ensure the lesson belongs to the requesting teacher"""
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            if value.course.teacher != request.user:
+                raise serializers.ValidationError("You can only create assignments for your own courses.")
+        return value
+    
+    def validate_due_date(self, value):
+        """Validate due date is in the future"""
+        from django.utils import timezone
+        if value and value <= timezone.now():
+            raise serializers.ValidationError("Due date must be in the future")
+        return value
+    
+    def validate_passing_score(self, value):
+        """Validate passing score is between 0 and 100"""
+        if value < 0 or value > 100:
+            raise serializers.ValidationError("Passing score must be between 0 and 100")
+        return value
+
+
+class AssignmentSubmissionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for assignment submissions (teacher grading view)
+    """
+    student_name = serializers.CharField(source='student.get_full_name', read_only=True)
+    student_email = serializers.CharField(source='student.email', read_only=True)
+    grader_name = serializers.CharField(source='grader_name', read_only=True)
+    display_status = serializers.CharField(source='display_status', read_only=True)
+    
+    class Meta:
+        model = AssignmentSubmission
+        fields = [
+            'id', 'student', 'student_name', 'student_email', 'attempt_number',
+            'submitted_at', 'answers', 'is_graded', 'graded_at', 'graded_by',
+            'grader_name', 'points_earned', 'points_possible', 'percentage',
+            'passed', 'instructor_feedback', 'feedback_checked', 'feedback_checked_at',
+            'feedback_response', 'graded_questions', 'display_status', 'created_at'
+        ]
+        read_only_fields = [
+            'id', 'student', 'student_name', 'student_email', 'attempt_number',
+            'submitted_at', 'graded_at', 'grader_name', 'percentage', 'passed',
+            'feedback_checked', 'feedback_checked_at', 'display_status', 'created_at'
+        ]
+    
+    def validate_points_earned(self, value):
+        """Validate points earned"""
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Points earned cannot be negative")
+        return value
+    
+    def validate(self, data):
+        """Validate grading data"""
+        if data.get('is_graded') and not data.get('points_earned'):
+            raise serializers.ValidationError("Graded submissions must have points earned")
+        
+        if data.get('points_earned') and not data.get('points_possible'):
+            raise serializers.ValidationError("Points possible is required when points earned is provided")
+        
+        return data
+
+
+class AssignmentGradingSerializer(serializers.ModelSerializer):
+    """
+    Serializer specifically for grading assignments
+    """
+    class Meta:
+        model = AssignmentSubmission
+        fields = [
+            'is_graded', 'points_earned', 'points_possible', 'instructor_feedback',
+            'graded_questions'
+        ]
+    
+    def validate(self, data):
+        """Validate grading data"""
+        if data.get('is_graded'):
+            if not data.get('points_earned'):
+                raise serializers.ValidationError("Points earned is required for graded submissions")
+            if not data.get('points_possible'):
+                raise serializers.ValidationError("Points possible is required for graded submissions")
+        
+        return data
+
+
+class AssignmentFeedbackSerializer(serializers.ModelSerializer):
+    """
+    Serializer specifically for providing feedback on assignments
+    """
+    class Meta:
+        model = AssignmentSubmission
+        fields = [
+            'instructor_feedback', 'feedback_response'
+        ]
+    
+    def validate_instructor_feedback(self, value):
+        """Validate instructor feedback"""
+        if value and len(value.strip()) < 10:
+            raise serializers.ValidationError("Instructor feedback must be at least 10 characters long")
         return value
