@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform
 
 
 @admin.register(Course)
@@ -596,3 +596,76 @@ class AssignmentSubmissionAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related(
             'student', 'assignment', 'assignment__lesson', 'assignment__lesson__course', 'graded_by', 'enrollment'
         )
+
+
+@admin.register(ProjectPlatform)
+class ProjectPlatformAdmin(admin.ModelAdmin):
+    list_display = ['display_name', 'platform_type', 'age_range_display', 'is_active', 'is_featured', 'is_free', 'usage_count', 'created_at']
+    list_filter = ['platform_type', 'is_active', 'is_featured', 'is_free', 'requires_authentication', 'supports_collaboration', 'created_at']
+    search_fields = ['name', 'display_name', 'description', 'supported_languages']
+    readonly_fields = ['id', 'usage_count', 'created_at', 'updated_at', 'age_range_display', 'capabilities_display']
+    date_hierarchy = 'created_at'
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('name', 'display_name', 'description', 'platform_type')
+        }),
+        ('Technical Details', {
+            'fields': ('base_url', 'api_endpoint', 'supported_languages', 'platform_config'),
+            'classes': ('collapse',)
+        }),
+        ('Platform Capabilities', {
+            'fields': ('requires_authentication', 'supports_collaboration', 'supports_file_upload', 
+                      'supports_live_preview', 'supports_version_control'),
+            'classes': ('collapse',)
+        }),
+        ('Visual & Branding', {
+            'fields': ('icon', 'color', 'logo_url'),
+            'classes': ('collapse',)
+        }),
+        ('Age & Skill Level', {
+            'fields': ('min_age', 'max_age', 'skill_levels'),
+            'classes': ('collapse',)
+        }),
+        ('Status & Features', {
+            'fields': ('is_active', 'is_featured', 'is_free')
+        }),
+        ('Statistics', {
+            'fields': ('usage_count', 'capabilities_display'),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def age_range_display(self, obj):
+        return obj.age_range_display
+    age_range_display.short_description = 'Age Range'
+    
+    def capabilities_display(self, obj):
+        return ', '.join(obj.capabilities_display) or 'None'
+    capabilities_display.short_description = 'Capabilities'
+    
+    actions = ['activate_platforms', 'deactivate_platforms', 'feature_platforms', 'unfeature_platforms']
+    
+    def activate_platforms(self, request, queryset):
+        updated = queryset.update(is_active=True)
+        self.message_user(request, f'{updated} platforms were activated.')
+    activate_platforms.short_description = "Activate selected platforms"
+    
+    def deactivate_platforms(self, request, queryset):
+        updated = queryset.update(is_active=False)
+        self.message_user(request, f'{updated} platforms were deactivated.')
+    deactivate_platforms.short_description = "Deactivate selected platforms"
+    
+    def feature_platforms(self, request, queryset):
+        updated = queryset.update(is_featured=True)
+        self.message_user(request, f'{updated} platforms were featured.')
+    feature_platforms.short_description = "Feature selected platforms"
+    
+    def unfeature_platforms(self, request, queryset):
+        updated = queryset.update(is_featured=False)
+        self.message_user(request, f'{updated} platforms were unfeatured.')
+    unfeature_platforms.short_description = "Remove featured status from selected platforms"

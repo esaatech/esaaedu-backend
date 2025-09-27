@@ -1442,4 +1442,183 @@ class ProjectSubmission(models.Model):
         ordering = ['-submitted_at', '-created_at']
     
     def __str__(self):
-        return f"{self.student} - {self.project.title} ({self.status})"        
+        return f"{self.student} - {self.project.title} ({self.status})"
+
+
+class ProjectPlatform(models.Model):
+    """
+    Defines different platforms where projects can be executed
+    Each platform represents a specific development environment or tool
+    """
+    
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(
+        max_length=100, 
+        unique=True,
+        help_text="Internal name (e.g., 'scratch', 'replit')"
+    )
+    display_name = models.CharField(
+        max_length=150,
+        help_text="User-friendly display name (e.g., 'Scratch Programming Platform')"
+    )
+    description = models.TextField(
+        help_text="Detailed description of the platform and its capabilities"
+    )
+    
+    # Platform Type
+    platform_type = models.CharField(
+        max_length=50,
+        help_text="Category of the platform (e.g., 'Visual Programming', 'Online IDE', 'Design Tool')"
+    )
+    
+    # Technical Details
+    base_url = models.URLField(
+        help_text="Base URL of the platform (e.g., https://scratch.mit.edu)"
+    )
+    api_endpoint = models.URLField(
+        blank=True,
+        help_text="API endpoint for integration (if available)"
+    )
+    supported_languages = models.JSONField(
+        default=list, 
+        help_text="List of supported programming languages"
+    )
+    
+    # Platform Capabilities
+    requires_authentication = models.BooleanField(
+        default=True,
+        help_text="Does this platform require user authentication?"
+    )
+    supports_collaboration = models.BooleanField(
+        default=False,
+        help_text="Does this platform support real-time collaboration?"
+    )
+    supports_file_upload = models.BooleanField(
+        default=True,
+        help_text="Can users upload files to this platform?"
+    )
+    supports_live_preview = models.BooleanField(
+        default=True,
+        help_text="Does this platform support live preview of work?"
+    )
+    supports_version_control = models.BooleanField(
+        default=False,
+        help_text="Does this platform support version control/git?"
+    )
+    
+    # Platform-specific settings
+    platform_config = models.JSONField(
+        default=dict,
+        help_text="Platform-specific configuration and settings"
+    )
+    
+    # Visual/UI
+    icon = models.CharField(
+        max_length=50,
+        help_text="Icon identifier for UI display"
+    )
+    color = models.CharField(
+        max_length=7,
+        help_text="Hex color code for branding"
+    )
+    logo_url = models.URLField(
+        blank=True,
+        help_text="URL to platform logo image"
+    )
+    
+    # Age and Skill Level
+    min_age = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Minimum recommended age for this platform"
+    )
+    max_age = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Maximum recommended age for this platform"
+    )
+    skill_levels = models.JSONField(
+        default=list,
+        help_text="Supported skill levels (e.g., ['beginner', 'intermediate', 'advanced'])"
+    )
+    
+    # Status and Features
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Is this platform currently available?"
+    )
+    is_featured = models.BooleanField(
+        default=False,
+        help_text="Should this platform be featured prominently?"
+    )
+    is_free = models.BooleanField(
+        default=True,
+        help_text="Is this platform free to use?"
+    )
+    
+    # Usage Statistics
+    usage_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of times this platform has been used"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-is_featured', 'display_name']
+        indexes = [
+            models.Index(fields=['platform_type']),
+            models.Index(fields=['is_active']),
+            models.Index(fields=['is_featured']),
+        ]
+    
+    def __str__(self):
+        return self.display_name
+    
+    @property
+    def age_range_display(self):
+        """Return formatted age range"""
+        if self.min_age and self.max_age:
+            return f"{self.min_age}-{self.max_age} years"
+        elif self.min_age:
+            return f"{self.min_age}+ years"
+        elif self.max_age:
+            return f"Up to {self.max_age} years"
+        return "All ages"
+    
+    @property
+    def capabilities_display(self):
+        """Return list of platform capabilities"""
+        capabilities = []
+        if self.supports_collaboration:
+            capabilities.append("Collaboration")
+        if self.supports_file_upload:
+            capabilities.append("File Upload")
+        if self.supports_live_preview:
+            capabilities.append("Live Preview")
+        if self.supports_version_control:
+            capabilities.append("Version Control")
+        return capabilities
+    
+    def clean(self):
+        """Validate platform data"""
+        from django.core.exceptions import ValidationError
+        
+        # Validate age range
+        if self.min_age and self.max_age and self.min_age > self.max_age:
+            raise ValidationError("Minimum age cannot be greater than maximum age")
+        
+        # Validate color format
+        if self.color and not self.color.startswith('#'):
+            self.color = f"#{self.color}"
+        
+        # Validate platform config is a dict
+        if not isinstance(self.platform_config, dict):
+            raise ValidationError("Platform config must be a dictionary")
+    
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
