@@ -379,6 +379,67 @@ class LessonMaterial(models.Model):
         return None
 
 
+class Project(models.Model):
+    SUBMISSION_TYPES = [
+        ('link', 'Link/URL'),
+        ('image', 'Image'),
+        ('video', 'Video'),
+        ('audio', 'Audio'),
+        ('file', 'File Upload'),
+        ('note', 'Text Note'),
+        ('code', 'Code'),
+        ('presentation', 'Presentation'),
+    ]
+    
+    course = models.ForeignKey("courses.Course", on_delete=models.CASCADE, related_name="projects")
+    title = models.CharField(max_length=200)
+    instructions = models.TextField()
+    
+    # Submission type and requirements
+    submission_type = models.CharField(
+        max_length=20, 
+        choices=SUBMISSION_TYPES,
+        help_text="Type of submission expected from students"
+    )
+    
+    # File upload constraints (if applicable)
+    allowed_file_types = models.JSONField(default=list, blank=True, help_text="Allowed file extensions")
+    
+    points = models.PositiveIntegerField(default=100)   # max points for this project
+    due_at = models.DateTimeField(null=True, blank=True)
+    
+    created_at = models.DateTimeField(default=timezone.now)
+    
+    class Meta:
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.course} · {self.title}"
+    
+    @property
+    def submission_type_display(self):
+        """Get the display name for the submission type"""
+        return dict(self.SUBMISSION_TYPES).get(self.submission_type, "Unknown")
+    
+    @property
+    def requires_file_upload(self):
+        """Check if this project type requires file upload"""
+        return self.submission_type in ['image', 'video', 'audio', 'file', 'code', 'presentation']
+    
+    @property
+    def requires_text_input(self):
+        """Check if this project type requires text input"""
+        return self.submission_type in ['note', 'code']
+    
+    @property
+    def requires_url_input(self):
+        """Check if this project type requires URL input"""
+        return self.submission_type in ['link', 'presentation']        
+
+
+
+
+
 class Quiz(models.Model):
     """
     Quiz associated with a lesson
@@ -1149,6 +1210,7 @@ class ClassEvent(models.Model):
     EVENT_TYPES = [
         ('lesson', 'Lesson'),
         ('meeting', 'Meeting'),
+        ('project', 'Project'),
         ('break', 'Break'),
     ]
     
@@ -1178,6 +1240,15 @@ class ClassEvent(models.Model):
         help_text="Associated lesson (if event type is lesson)"
     )
     
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Associated project (if event type is project)"
+    )
+    
+
     # Event Details
     event_type = models.CharField(
         max_length=20,
@@ -1347,62 +1418,6 @@ class CourseReview(models.Model):
         return [i < self.rating for i in range(5)]
 
 
-class Project(models.Model):
-    SUBMISSION_TYPES = [
-        ('link', 'Link/URL'),
-        ('image', 'Image'),
-        ('video', 'Video'),
-        ('audio', 'Audio'),
-        ('file', 'File Upload'),
-        ('note', 'Text Note'),
-        ('code', 'Code'),
-        ('presentation', 'Presentation'),
-    ]
-    
-    course = models.ForeignKey("courses.Course", on_delete=models.CASCADE, related_name="projects")
-    title = models.CharField(max_length=200)
-    instructions = models.TextField()
-    
-    # Submission type and requirements
-    submission_type = models.CharField(
-        max_length=20, 
-        choices=SUBMISSION_TYPES,
-        help_text="Type of submission expected from students"
-    )
-    
-    # File upload constraints (if applicable)
-    allowed_file_types = models.JSONField(default=list, blank=True, help_text="Allowed file extensions")
-    
-    points = models.PositiveIntegerField(default=100)   # max points for this project
-    due_at = models.DateTimeField(null=True, blank=True)
-    
-    created_at = models.DateTimeField(default=timezone.now)
-    
-    class Meta:
-        ordering = ['-created_at']
-    
-    def __str__(self):
-        return f"{self.course} · {self.title}"
-    
-    @property
-    def submission_type_display(self):
-        """Get the display name for the submission type"""
-        return dict(self.SUBMISSION_TYPES).get(self.submission_type, "Unknown")
-    
-    @property
-    def requires_file_upload(self):
-        """Check if this project type requires file upload"""
-        return self.submission_type in ['image', 'video', 'audio', 'file', 'code', 'presentation']
-    
-    @property
-    def requires_text_input(self):
-        """Check if this project type requires text input"""
-        return self.submission_type in ['note', 'code']
-    
-    @property
-    def requires_url_input(self):
-        """Check if this project type requires URL input"""
-        return self.submission_type in ['link', 'presentation']        
 
 
 
