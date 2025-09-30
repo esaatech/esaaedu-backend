@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform
 
 User = get_user_model()
 
@@ -1204,19 +1204,46 @@ class ClassCreateUpdateSerializer(serializers.ModelSerializer):
         return data
 
 
+# ===== PROJECT SERIALIZERS =====
+
+class ProjectPlatformSerializer(serializers.ModelSerializer):
+    """Serializer for project platforms"""
+    
+    class Meta:
+        model = ProjectPlatform
+        fields = [
+            'id', 'name', 'display_name', 'description', 'platform_type',
+            'base_url', 'icon', 'color', 'min_age', 'max_age', 'skill_levels',
+            'is_active', 'is_featured', 'is_free'
+        ]
+
+
+class ProjectListSerializer(serializers.ModelSerializer):
+    """Serializer for listing projects"""
+    
+    class Meta:
+        model = Project
+        fields = [
+            'id', 'title', 'instructions', 'submission_type', 'points', 'due_at', 'created_at'
+        ]
+
+
 # ===== CLASS SERIALIZERS =====
 
 class ClassEventListSerializer(serializers.ModelSerializer):
     """Serializer for listing class events"""
     lesson_title = serializers.CharField(source='lesson.title', read_only=True)
+    project_title = serializers.CharField(source='project.title', read_only=True)
+    project_platform_name = serializers.CharField(source='project_platform.display_name', read_only=True)
     duration_minutes = serializers.IntegerField(read_only=True)
     
     class Meta:
         model = ClassEvent
         fields = [
             'id', 'title', 'description', 'event_type', 'start_time', 'end_time',
-            'lesson_title', 'lesson_type', 'duration_minutes', 'meeting_platform', 'meeting_link',
-            'meeting_id', 'meeting_password', 'created_at'
+            'lesson_title', 'project_title', 'project_platform_name', 'lesson_type', 
+            'duration_minutes', 'meeting_platform', 'meeting_link',
+            'meeting_id', 'meeting_password', 'due_date', 'submission_type', 'created_at'
         ]
 
 
@@ -1224,6 +1251,10 @@ class ClassEventDetailSerializer(serializers.ModelSerializer):
     """Detailed serializer for individual class event"""
     lesson_title = serializers.CharField(source='lesson.title', read_only=True)
     lesson_id = serializers.CharField(source='lesson.id', read_only=True)
+    project_title = serializers.CharField(source='project.title', read_only=True)
+    project_id = serializers.CharField(source='project.id', read_only=True)
+    project_platform_name = serializers.CharField(source='project_platform.display_name', read_only=True)
+    project_platform_id = serializers.CharField(source='project_platform.id', read_only=True)
     class_name = serializers.CharField(source='class_instance.name', read_only=True)
     duration_minutes = serializers.IntegerField(read_only=True)
     
@@ -1231,9 +1262,11 @@ class ClassEventDetailSerializer(serializers.ModelSerializer):
         model = ClassEvent
         fields = [
             'id', 'title', 'description', 'event_type', 'start_time', 'end_time',
-            'lesson', 'lesson_id', 'lesson_title', 'lesson_type', 'class_name', 'duration_minutes',
+            'lesson', 'lesson_id', 'lesson_title', 'project', 'project_id', 'project_title',
+            'project_platform', 'project_platform_id', 'project_platform_name',
+            'lesson_type', 'class_name', 'duration_minutes',
             'meeting_platform', 'meeting_link', 'meeting_id', 'meeting_password',
-            'created_at', 'updated_at'
+            'due_date', 'submission_type', 'created_at', 'updated_at'
         ]
 
 
@@ -1243,18 +1276,41 @@ class ClassEventCreateUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = ClassEvent
         fields = [
-            'title', 'description', 'event_type', 'start_time', 'end_time', 'lesson',
+            'title', 'description', 'event_type', 'start_time', 'end_time', 
+            'lesson', 'project', 'project_platform', 'project_title', 'due_date', 'submission_type',
             'lesson_type', 'meeting_platform', 'meeting_link', 'meeting_id', 'meeting_password'
         ]
     
     def validate(self, data):
         """Validate event data"""
-        if data.get('start_time') and data.get('end_time'):
-            if data['end_time'] <= data['start_time']:
-                raise serializers.ValidationError("End time must be after start time")
+        event_type = data.get('event_type')
         
-        if data.get('event_type') == 'lesson' and not data.get('lesson'):
+        # For non-project events, validate start_time and end_time
+        if event_type != 'project':
+            if data.get('start_time') and data.get('end_time'):
+                if data['end_time'] <= data['start_time']:
+                    raise serializers.ValidationError("End time must be after start time")
+        
+        # Validate lesson events
+        if event_type == 'lesson' and not data.get('lesson'):
             raise serializers.ValidationError("Lesson events must have an associated lesson")
+        
+        # Validate project events
+        if event_type == 'project':
+            if not data.get('project'):
+                raise serializers.ValidationError("Project is required for project events")
+            if not data.get('project_platform'):
+                raise serializers.ValidationError("Project platform is required for project events")
+            
+            # For project events, due_date is required instead of start_time/end_time
+            if not data.get('due_date'):
+                raise serializers.ValidationError("Due date is required for project events")
+            
+            # Validate submission_type if provided
+            if data.get('submission_type'):
+                valid_submission_types = ['link', 'image', 'video', 'audio', 'file', 'note', 'code', 'presentation']
+                if data['submission_type'] not in valid_submission_types:
+                    raise serializers.ValidationError(f"Invalid submission type. Must be one of: {', '.join(valid_submission_types)}")
         
         return data
     

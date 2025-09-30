@@ -179,6 +179,166 @@ def api_documentation(request):
                     "description": "Get detailed course information",
                     "authentication": "Required (Teacher role)",
                     "response": "CourseDetailSerializer data"
+                },
+                "class_events": {
+                    "base_url": "/api/courses/classes/{class_id}/events/",
+                    "description": "Complete class event management system - Schedule lessons, projects, breaks, and meetings",
+                    "authentication": "Required (Teacher role)",
+                    "methods": {
+                        "GET": {
+                            "url": "/api/courses/classes/{class_id}/events/",
+                            "description": "Get all events for a class with available resources",
+                            "path_parameters": {
+                                "class_id": "uuid (required) - Class identifier"
+                            },
+                            "response": {
+                                "class_id": "uuid",
+                                "class_name": "string",
+                                "course_id": "uuid",
+                                "course_name": "string",
+                                "events": [
+                                    {
+                                        "id": "uuid",
+                                        "title": "string",
+                                        "description": "string",
+                                        "event_type": "lesson|project|meeting|break",
+                                        "lesson_type": "text|video|audio|live (for lesson events)",
+                                        "start_time": "datetime",
+                                        "end_time": "datetime",
+                                        "duration_minutes": "integer",
+                                        "lesson_title": "string (for lesson events)",
+                                        "project_title": "string (for project events)",
+                                        "project_platform_name": "string (for project events)",
+                                        "meeting_platform": "string (for live lessons)",
+                                        "meeting_link": "string (for live lessons)",
+                                        "meeting_id": "string (for live lessons)",
+                                        "meeting_password": "string (for live lessons)",
+                                        "created_at": "datetime",
+                                        "updated_at": "datetime"
+                                    }
+                                ],
+                                "available_lessons": [
+                                    {
+                                        "id": "integer",
+                                        "title": "string",
+                                        "description": "string",
+                                        "type": "text|video|audio|live",
+                                        "duration": "integer",
+                                        "order": "integer",
+                                        "status": "string",
+                                        "created_at": "datetime"
+                                    }
+                                ],
+                                "available_projects": [
+                                    {
+                                        "id": "integer",
+                                        "title": "string",
+                                        "instructions": "string",
+                                        "submission_type": "link|image|video|audio|file|note|code|presentation",
+                                        "points": "integer",
+                                        "due_at": "datetime (optional)",
+                                        "created_at": "datetime"
+                                    }
+                                ],
+                                "available_platforms": [
+                                    {
+                                        "id": "uuid",
+                                        "name": "string",
+                                        "display_name": "string",
+                                        "description": "string",
+                                        "platform_type": "string",
+                                        "base_url": "string",
+                                        "icon": "string",
+                                        "color": "string",
+                                        "is_active": "boolean",
+                                        "is_featured": "boolean",
+                                        "is_free": "boolean",
+                                        "min_age": "integer (optional)",
+                                        "max_age": "integer (optional)",
+                                        "skill_levels": "array of strings",
+                                        "capabilities": "array of strings"
+                                    }
+                                ]
+                            },
+                            "use_cases": [
+                                "Display class schedule/calendar",
+                                "Show available resources for creating new events",
+                                "Get comprehensive class event data in one API call"
+                            ]
+                        },
+                        "POST": {
+                            "url": "/api/courses/classes/{class_id}/events/",
+                            "description": "Create a new class event",
+                            "path_parameters": {
+                                "class_id": "uuid (required) - Class identifier"
+                            },
+                            "request_body": {
+                                "title": "string (required)",
+                                "description": "string (optional)",
+                                "event_type": "lesson|project|meeting|break (required)",
+                                "start_time": "datetime (required)",
+                                "end_time": "datetime (required)",
+                                "lesson": "integer (required for lesson events)",
+                                "project": "integer (required for project events)",
+                                "project_platform": "uuid (required for project events)",
+                                "lesson_type": "text|video|audio|live (optional)",
+                                "meeting_platform": "string (optional for live lessons)",
+                                "meeting_link": "string (optional for live lessons)",
+                                "meeting_id": "string (optional for live lessons)",
+                                "meeting_password": "string (optional for live lessons)"
+                            },
+                            "response": {
+                                "event": "ClassEventDetailSerializer data",
+                                "message": "Event created successfully"
+                            },
+                            "validation_rules": {
+                                "lesson_events": "Must specify lesson field",
+                                "project_events": "Must specify project and project_platform fields",
+                                "time_validation": "end_time must be after start_time",
+                                "project_course_match": "Project must belong to the same course as the class"
+                            }
+                        }
+                    },
+                    "event_types": {
+                        "lesson": {
+                            "description": "Scheduled lesson from course curriculum",
+                            "required_fields": ["lesson"],
+                            "optional_fields": ["lesson_type", "meeting_platform", "meeting_link", "meeting_id", "meeting_password"]
+                        },
+                        "project": {
+                            "description": "Scheduled project work session",
+                            "required_fields": ["project", "project_platform"],
+                            "optional_fields": []
+                        },
+                        "meeting": {
+                            "description": "General meeting or discussion",
+                            "required_fields": [],
+                            "optional_fields": ["meeting_platform", "meeting_link", "meeting_id", "meeting_password"]
+                        },
+                        "break": {
+                            "description": "Break time between activities",
+                            "required_fields": [],
+                            "optional_fields": []
+                        }
+                    },
+                    "platforms": {
+                        "description": "Project platforms available for project events",
+                        "categories": [
+                            "Visual Programming (Scratch, ScratchJr, Blockly)",
+                            "Online IDE (Replit, CodePen, JSFiddle)",
+                            "Design Tools (Figma, Canva)",
+                            "Data Science (Jupyter Notebook, Google Colab)",
+                            "Game Development (Unity, Godot)",
+                            "Electronics (Arduino IDE, Arduino Create, Tinkercad, Wokwi, Virtual Breadboard)"
+                        ],
+                        "features": [
+                            "Age-appropriate recommendations",
+                            "Skill level filtering",
+                            "Collaboration support",
+                            "File upload capabilities",
+                            "Live preview options"
+                        ]
+                    }
                 }
             },
             "assessments": {
@@ -2004,6 +2164,268 @@ def teacher_assignment_contract(request):
                             "ownership": "Only assignment owner (teacher) can delete questions"
                         }
                     }
+                }
+            }
+        }
+    }
+    
+    return JsonResponse(contract, json_dumps_params={'indent': 2})
+
+
+@require_http_methods(["GET"])
+def class_events_contract(request):
+    """
+    Class Events Management API Contract
+    Returns detailed API contract for class event management
+    """
+    
+    contract = {
+        "title": "Class Events Management API Contract",
+        "version": "1.0.0",
+        "description": "Complete class event management system for teachers - Schedule lessons, projects, breaks, and meetings",
+        "base_url": "/api/courses/classes/{class_id}/events/",
+        "authentication": {
+            "type": "Firebase ID Token",
+            "header": "Authorization: Bearer <firebase_id_token>",
+            "description": "Firebase authentication token obtained from Firebase Auth",
+            "required_role": "teacher"
+        },
+        "overview": {
+            "purpose": "Enable teachers to create and manage class schedules with various event types",
+            "key_features": [
+                "Schedule lessons from course curriculum",
+                "Schedule project work sessions with platforms",
+                "Create meeting and break events",
+                "Get all available resources in one API call",
+                "Comprehensive event management"
+            ],
+            "event_types": [
+                "lesson - Scheduled lesson from course curriculum",
+                "project - Scheduled project work session",
+                "meeting - General meeting or discussion",
+                "break - Break time between activities"
+            ]
+        },
+        "endpoints": {
+            "class_events": {
+                "base_url": "/api/courses/classes/{class_id}/events/",
+                "description": "Complete class event management system",
+                "authentication": "Required (Teacher role)",
+                "methods": {
+                    "GET": {
+                        "url": "/api/courses/classes/{class_id}/events/",
+                        "description": "Get all events for a class with available resources",
+                        "path_parameters": {
+                            "class_id": "uuid (required) - Class identifier"
+                        },
+                        "response_structure": {
+                            "class_info": {
+                                "class_id": "uuid",
+                                "class_name": "string",
+                                "course_id": "uuid",
+                                "course_name": "string"
+                            },
+                            "events": "Array of ClassEvent objects",
+                            "available_lessons": "Array of Lesson objects for the course",
+                            "available_projects": "Array of Project objects for the course",
+                            "available_platforms": "Array of active ProjectPlatform objects"
+                        },
+                        "use_cases": [
+                            "Display class schedule/calendar",
+                            "Show available resources for creating new events",
+                            "Get comprehensive class event data in one API call"
+                        ]
+                    },
+                    "POST": {
+                        "url": "/api/courses/classes/{class_id}/events/",
+                        "description": "Create a new class event",
+                        "path_parameters": {
+                            "class_id": "uuid (required) - Class identifier"
+                        },
+                        "request_body": {
+                            "title": "string (required)",
+                            "description": "string (optional)",
+                            "event_type": "lesson|project|meeting|break (required)",
+                            "start_time": "datetime (required)",
+                            "end_time": "datetime (required)",
+                            "lesson": "integer (required for lesson events)",
+                            "project": "integer (required for project events)",
+                            "project_platform": "uuid (required for project events)",
+                            "lesson_type": "text|video|audio|live (optional)",
+                            "meeting_platform": "string (optional for live lessons)",
+                            "meeting_link": "string (optional for live lessons)",
+                            "meeting_id": "string (optional for live lessons)",
+                            "meeting_password": "string (optional for live lessons)"
+                        },
+                        "response": {
+                            "event": "ClassEventDetailSerializer data",
+                            "message": "Event created successfully"
+                        },
+                        "validation_rules": {
+                            "lesson_events": "Must specify lesson field",
+                            "project_events": "Must specify project and project_platform fields",
+                            "time_validation": "end_time must be after start_time",
+                            "project_course_match": "Project must belong to the same course as the class"
+                        }
+                    }
+                }
+            }
+        },
+        "data_structures": {
+            "ClassEvent": {
+                "id": "uuid",
+                "title": "string",
+                "description": "string",
+                "event_type": "lesson|project|meeting|break",
+                "lesson_type": "text|video|audio|live (for lesson events)",
+                "start_time": "datetime",
+                "end_time": "datetime",
+                "duration_minutes": "integer",
+                "lesson_title": "string (for lesson events)",
+                "project_title": "string (for project events)",
+                "project_platform_name": "string (for project events)",
+                "meeting_platform": "string (for live lessons)",
+                "meeting_link": "string (for live lessons)",
+                "meeting_id": "string (for live lessons)",
+                "meeting_password": "string (for live lessons)",
+                "created_at": "datetime",
+                "updated_at": "datetime"
+            },
+            "Lesson": {
+                "id": "integer",
+                "title": "string",
+                "description": "string",
+                "type": "text|video|audio|live",
+                "duration": "integer",
+                "order": "integer",
+                "status": "string",
+                "created_at": "datetime"
+            },
+            "Project": {
+                "id": "integer",
+                "title": "string",
+                "instructions": "string",
+                "submission_type": "link|image|video|audio|file|note|code|presentation",
+                "points": "integer",
+                "due_at": "datetime (optional)",
+                "created_at": "datetime"
+            },
+            "ProjectPlatform": {
+                "id": "uuid",
+                "name": "string",
+                "display_name": "string",
+                "description": "string",
+                "platform_type": "string",
+                "base_url": "string",
+                "icon": "string",
+                "color": "string",
+                "is_active": "boolean",
+                "is_featured": "boolean",
+                "is_free": "boolean",
+                "min_age": "integer (optional)",
+                "max_age": "integer (optional)",
+                "skill_levels": "array of strings",
+                "capabilities": "array of strings"
+            }
+        },
+        "platforms": {
+            "description": "Project platforms available for project events",
+            "categories": [
+                "Visual Programming (Scratch, ScratchJr, Blockly)",
+                "Online IDE (Replit, CodePen, JSFiddle)",
+                "Design Tools (Figma, Canva)",
+                "Data Science (Jupyter Notebook, Google Colab)",
+                "Game Development (Unity, Godot)",
+                "Electronics (Arduino IDE, Arduino Create, Tinkercad, Wokwi, Virtual Breadboard)"
+            ],
+            "features": [
+                "Age-appropriate recommendations",
+                "Skill level filtering",
+                "Collaboration support",
+                "File upload capabilities",
+                "Live preview options"
+            ]
+        },
+        "examples": {
+            "get_class_events": {
+                "url": "/api/courses/classes/f0e4fe8b-4c52-4333-8b85-11af7ed1e750/events/",
+                "method": "GET",
+                "headers": {
+                    "Authorization": "Bearer <firebase_id_token>"
+                },
+                "response": {
+                    "class_id": "f0e4fe8b-4c52-4333-8b85-11af7ed1e750",
+                    "class_name": "English afternoon class",
+                    "course_id": "37ffa9a4-bf4f-4117-9cdd-be3d5c428f35",
+                    "course_name": "English",
+                    "events": [
+                        {
+                            "id": "uuid",
+                            "title": "Introduction to Programming",
+                            "event_type": "lesson",
+                            "start_time": "2024-01-15T10:00:00Z",
+                            "end_time": "2024-01-15T11:00:00Z",
+                            "lesson_title": "Introduction to Programming"
+                        }
+                    ],
+                    "available_lessons": [
+                        {
+                            "id": 1,
+                            "title": "Introduction to Programming",
+                            "type": "text",
+                            "duration": 60
+                        }
+                    ],
+                    "available_projects": [
+                        {
+                            "id": 11,
+                            "title": "Build an action script",
+                            "submission_type": "code"
+                        }
+                    ],
+                    "available_platforms": [
+                        {
+                            "id": "uuid",
+                            "name": "scratch",
+                            "display_name": "Scratch Programming Platform",
+                            "platform_type": "Visual Programming",
+                            "is_active": True
+                        }
+                    ]
+                }
+            },
+            "create_lesson_event": {
+                "url": "/api/courses/classes/f0e4fe8b-4c52-4333-8b85-11af7ed1e750/events/",
+                "method": "POST",
+                "headers": {
+                    "Authorization": "Bearer <firebase_id_token>",
+                    "Content-Type": "application/json"
+                },
+                "body": {
+                    "title": "Introduction to Programming",
+                    "description": "First lesson of the course",
+                    "event_type": "lesson",
+                    "start_time": "2024-01-15T10:00:00Z",
+                    "end_time": "2024-01-15T11:00:00Z",
+                    "lesson": 1,
+                    "lesson_type": "text"
+                }
+            },
+            "create_project_event": {
+                "url": "/api/courses/classes/f0e4fe8b-4c52-4333-8b85-11af7ed1e750/events/",
+                "method": "POST",
+                "headers": {
+                    "Authorization": "Bearer <firebase_id_token>",
+                    "Content-Type": "application/json"
+                },
+                "body": {
+                    "title": "Scratch Project Session",
+                    "description": "Work on Scratch programming project",
+                    "event_type": "project",
+                    "start_time": "2024-01-15T14:00:00Z",
+                    "end_time": "2024-01-15T16:00:00Z",
+                    "project": 11,
+                    "project_platform": "uuid-of-scratch-platform"
                 }
             }
         }

@@ -1203,261 +1203,6 @@ class ClassSession(models.Model):
         return f"{day_name} {start_str} - {end_str}"
 
 
-class ClassEvent(models.Model):
-    """
-    Individual events/sessions scheduled for a class
-    """
-    EVENT_TYPES = [
-        ('lesson', 'Lesson'),
-        ('meeting', 'Meeting'),
-        ('project', 'Project'),
-        ('break', 'Break'),
-    ]
-    
-    MEETING_PLATFORMS = [
-        ('google-meet', 'Google Meet'),
-        ('zoom', 'Zoom'),
-        ('other', 'Other'),
-    ]
-    
-    # Basic Information
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    title = models.CharField(max_length=200, help_text="Event title")
-    description = models.TextField(blank=True, help_text="Event description")
-    
-    # Relationships
-    class_instance = models.ForeignKey(
-        Class,
-        on_delete=models.CASCADE,
-        related_name='events',
-        help_text="The class this event belongs to"
-    )
-    lesson = models.ForeignKey(
-        Lesson,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        help_text="Associated lesson (if event type is lesson)"
-    )
-    
-    project = models.ForeignKey(
-        Project,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        help_text="Associated project (if event type is project)"
-    )
-    
-
-    # Event Details
-    event_type = models.CharField(
-        max_length=20,
-        choices=EVENT_TYPES,
-        default='lesson',
-        help_text="Type of event"
-    )
-    start_time = models.DateTimeField(help_text="Event start time")
-    end_time = models.DateTimeField(help_text="Event end time")
-    
-    # Lesson Type (for lesson events)
-    lesson_type = models.CharField(
-        max_length=20,
-        choices=[
-            ('live', 'Live Lesson'),
-            ('text', 'Text Lesson'),
-            ('video', 'Video Lesson'),
-            ('audio', 'Audio Lesson'),
-            ('interactive', 'Interactive Lesson'),
-        ],
-        default='text',
-        help_text="Type of lesson (live, text, video, audio, interactive)"
-    )
-    
-    # Meeting Details (for live classes)
-    meeting_platform = models.CharField(
-        max_length=20,
-        choices=MEETING_PLATFORMS,
-        blank=True,
-        null=True,
-        help_text="Platform for live class meetings"
-    )
-    meeting_link = models.URLField(
-        blank=True,
-        help_text="Meeting link for live classes (Google Meet, Zoom, etc.)"
-    )
-    meeting_id = models.CharField(
-        max_length=100,
-        blank=True,
-        help_text="Meeting ID or room number"
-    )
-    meeting_password = models.CharField(
-        max_length=50,
-        blank=True,
-        help_text="Meeting password if required"
-    )
-    
-    # Metadata
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        db_table = 'class_events'
-        ordering = ['start_time']
-        indexes = [
-            models.Index(fields=['class_instance', 'start_time']),
-            models.Index(fields=['event_type']),
-            models.Index(fields=['start_time']),
-        ]
-    
-    def __str__(self):
-        return f"{self.title} - {self.class_instance.name} ({self.start_time.strftime('%Y-%m-%d %H:%M')})"
-    
-    @property
-    def duration_minutes(self):
-        """Calculate event duration in minutes"""
-        if self.start_time and self.end_time:
-            delta = self.end_time - self.start_time
-            return int(delta.total_seconds() / 60)
-        return 0
-    
-    def clean(self):
-        """Validate event data"""
-        from django.core.exceptions import ValidationError
-        
-        if self.start_time and self.end_time:
-            if self.end_time <= self.start_time:
-                raise ValidationError("End time must be after start time")
-        
-        if self.event_type == 'lesson' and not self.lesson:
-            raise ValidationError("Lesson events must have an associated lesson")
-        
-        # Validate meeting details for live classes
-        if self.event_type == 'lesson' and self.lesson and self.lesson.type == 'live_class':
-            if self.meeting_link and not self.meeting_platform:
-                raise ValidationError("Meeting platform is required when meeting link is provided")
-    
-    def save(self, *args, **kwargs):
-        self.clean()
-        super().save(*args, **kwargs)
-
-
-# CourseIntroduction model completely removed - all fields are now in Course model
-    
-
-
-
-class CourseReview(models.Model):
-    """
-    Individual course reviews and ratings
-    """
-    course = models.ForeignKey(
-        Course,
-        on_delete=models.CASCADE,
-        related_name='reviews'
-    )
-    
-    # Student Information
-    student_name = models.CharField(
-        max_length=100,
-        help_text="Student's display name"
-    )
-    student_age = models.PositiveIntegerField(
-        null=True,
-        blank=True,
-        validators=[MinValueValidator(5), MaxValueValidator(18)],
-        help_text="Student's age when review was written"
-    )
-    parent_name = models.CharField(
-        max_length=100,
-        blank=True,
-        help_text="Parent's name for testimonials (e.g., 'Sarah M.', 'Emily Chen')"
-    )
-    
-    # Review Content
-    rating = models.PositiveIntegerField(
-        validators=[MinValueValidator(1), MaxValueValidator(5)],
-        help_text="Rating from 1 to 5 stars"
-    )
-    review_text = models.TextField(help_text="Review content")
-    
-    # Review Management
-    is_verified = models.BooleanField(
-        default=False,
-        help_text="Admin verified this is a real review"
-    )
-    is_featured = models.BooleanField(
-        default=False,
-        help_text="Show this review prominently on course details"
-    )
-    
-    # Metadata
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        ordering = ['-is_featured', '-created_at']
-        indexes = [
-            models.Index(fields=['course', '-created_at']),
-            models.Index(fields=['course', 'is_featured']),
-            models.Index(fields=['rating']),
-        ]
-    
-    def __str__(self):
-        return f"Review by {self.student_name} for {self.course.title} ({self.rating}★)"
-    
-    @property
-    def display_name(self):
-        """Get display name with age if available"""
-        if self.student_age:
-            return f"{self.student_name}, Age {self.student_age}"
-        return self.student_name
-    
-    @property
-    def star_rating(self):
-        """Get star rating as list of booleans for template rendering"""
-        return [i < self.rating for i in range(5)]
-
-
-
-
-
-class ProjectSubmission(models.Model):
-    STATUS = [
-        ("ASSIGNED", "Assigned"),
-        ("SUBMITTED", "Submitted"),
-        ("RETURNED", "Returned"),
-        ("GRADED", "Graded"),
-    ]
-
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="submissions")
-    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name="project_submissions")
-
-    status = models.CharField(max_length=20, choices=STATUS, default="ASSIGNED")
-    content = models.TextField(blank=True, help_text="Submission content (text, notes, code)")
-    file_url = models.URLField(blank=True, help_text="URL to uploaded file in cloud storage")
-    reflection = models.TextField(blank=True)
-
-    submitted_at = models.DateTimeField(null=True, blank=True)
-    graded_at = models.DateTimeField(null=True, blank=True)
-    grader = models.ForeignKey(
-        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="graded_projects"
-    )
-
-    points_earned = models.FloatField(null=True, blank=True)
-    feedback = models.TextField(blank=True)
-    feedback_response = models.TextField(blank=True, help_text="Student's response to teacher feedback")
-    feedback_checked = models.BooleanField(default=False, help_text="Whether student has seen the feedback")
-    feedback_checked_at = models.DateTimeField(null=True, blank=True, help_text="When student last checked feedback")
-
-    created_at = models.DateTimeField(default=timezone.now)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        unique_together = ("project", "student")
-        ordering = ['-submitted_at', '-created_at']
-    
-    def __str__(self):
-        return f"{self.student} - {self.project.title} ({self.status})"
 
 
 class ProjectPlatform(models.Model):
@@ -1637,3 +1382,326 @@ class ProjectPlatform(models.Model):
     def save(self, *args, **kwargs):
         self.clean()
         super().save(*args, **kwargs)
+
+
+
+
+
+class ClassEvent(models.Model):
+    """
+    Individual events/sessions scheduled for a class
+    """
+    EVENT_TYPES = [
+        ('lesson', 'Lesson'),
+        ('meeting', 'Meeting'),
+        ('project', 'Project'),
+        ('break', 'Break'),
+    ]
+    
+    MEETING_PLATFORMS = [
+        ('google-meet', 'Google Meet'),
+        ('zoom', 'Zoom'),
+        ('other', 'Other'),
+    ]
+    
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    title = models.CharField(max_length=200, help_text="Event title")
+    description = models.TextField(blank=True, help_text="Event description")
+    
+    # Relationships
+    class_instance = models.ForeignKey(
+        Class,
+        on_delete=models.CASCADE,
+        related_name='events',
+        help_text="The class this event belongs to"
+    )
+    lesson = models.ForeignKey(
+        Lesson,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Associated lesson (if event type is lesson)"
+    )
+    
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Associated project (if event type is project)"
+    )
+    project_platform = models.ForeignKey(
+        ProjectPlatform,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Platform for project events"
+    )
+    
+    # Project-specific fields (for project events)
+    project_title = models.CharField(
+        max_length=200,
+        blank=True,
+        null=True,
+        help_text="Project title (cached for display purposes)"
+    )
+    due_date = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Project due date (for project events)"
+    )
+    submission_type = models.CharField(
+        max_length=20,
+        choices=[
+            ('link', 'Link/URL'),
+            ('image', 'Image'),
+            ('video', 'Video'),
+            ('audio', 'Audio'),
+            ('file', 'File Upload'),
+            ('note', 'Text Note'),
+            ('code', 'Code'),
+            ('presentation', 'Presentation'),
+        ],
+        blank=True,
+        null=True,
+        help_text="Expected submission type for project events"
+    )
+
+    # Event Details
+    event_type = models.CharField(
+        max_length=20,
+        choices=EVENT_TYPES,
+        default='lesson',
+        help_text="Type of event"
+    )
+    start_time = models.DateTimeField(null=True, blank=True, help_text="Event start time")
+    end_time = models.DateTimeField(null=True, blank=True, help_text="Event end time")
+    
+    # Lesson Type (for lesson events)
+    lesson_type = models.CharField(
+        max_length=20,
+        choices=[
+            ('live', 'Live Lesson'),
+            ('text', 'Text Lesson'),
+            ('video', 'Video Lesson'),
+            ('audio', 'Audio Lesson'),
+            ('interactive', 'Interactive Lesson'),
+        ],
+        default='text',
+        blank=True,
+        null=True,
+        help_text="Type of lesson (live, text, video, audio, interactive)"
+    )
+    
+    # Meeting Details (for live classes)
+    meeting_platform = models.CharField(
+        max_length=20,
+        choices=MEETING_PLATFORMS,
+        blank=True,
+        null=True,
+        help_text="Platform for live class meetings"
+    )
+    meeting_link = models.URLField(
+        blank=True,
+        help_text="Meeting link for live classes (Google Meet, Zoom, etc.)"
+    )
+    meeting_id = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Meeting ID or room number"
+    )
+    meeting_password = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Meeting password if required"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'class_events'
+        ordering = ['start_time']
+        indexes = [
+            models.Index(fields=['class_instance', 'start_time']),
+            models.Index(fields=['event_type']),
+            models.Index(fields=['start_time']),
+        ]
+    
+    def __str__(self):
+        return f"{self.title} - {self.class_instance.name} ({self.start_time.strftime('%Y-%m-%d %H:%M')})"
+    
+    @property
+    def duration_minutes(self):
+        """Calculate event duration in minutes"""
+        if self.start_time and self.end_time:
+            delta = self.end_time - self.start_time
+            return int(delta.total_seconds() / 60)
+        return 0
+    
+    def clean(self):
+        """Validate event data"""
+        from django.core.exceptions import ValidationError
+        
+        # For non-project events, validate start_time and end_time
+        if self.event_type != 'project':
+            if self.start_time and self.end_time:
+                if self.end_time <= self.start_time:
+                    raise ValidationError("End time must be after start time")
+        
+        if self.event_type == 'lesson' and not self.lesson:
+            raise ValidationError("Lesson events must have an associated lesson")
+        
+        if self.event_type == 'project' and not self.project:
+            raise ValidationError("Project events must have an associated project")
+        
+        if self.event_type == 'project' and not self.project_platform:
+            raise ValidationError("Project events must specify a platform")
+        
+        # For project events, due_date is required
+        if self.event_type == 'project' and not self.due_date:
+            raise ValidationError("Due date is required for project events")
+        
+        # Validate project belongs to same course as class
+        if self.event_type == 'project' and self.project and self.class_instance:
+            if self.project.course != self.class_instance.course:
+                raise ValidationError("Project must belong to the same course as the class")
+        
+        # Validate project-specific fields
+        if self.event_type == 'project':
+            if self.due_date and self.start_time and self.due_date < self.start_time:
+                raise ValidationError("Due date cannot be before event start time")
+            
+            # If project_title is provided, it should not be empty
+            if self.project_title is not None and not self.project_title.strip():
+                raise ValidationError("Project title cannot be empty if provided")
+        
+        # Validate meeting details for live classes
+        if self.event_type == 'lesson' and self.lesson and self.lesson.type == 'live_class':
+            if self.meeting_link and not self.meeting_platform:
+                raise ValidationError("Meeting platform is required when meeting link is provided")
+    
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
+
+
+# CourseIntroduction model completely removed - all fields are now in Course model
+    
+
+
+
+class CourseReview(models.Model):
+    """
+    Individual course reviews and ratings
+    """
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name='reviews'
+    )
+    
+    # Student Information
+    student_name = models.CharField(
+        max_length=100,
+        help_text="Student's display name"
+    )
+    student_age = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(5), MaxValueValidator(18)],
+        help_text="Student's age when review was written"
+    )
+    parent_name = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Parent's name for testimonials (e.g., 'Sarah M.', 'Emily Chen')"
+    )
+    
+    # Review Content
+    rating = models.PositiveIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        help_text="Rating from 1 to 5 stars"
+    )
+    review_text = models.TextField(help_text="Review content")
+    
+    # Review Management
+    is_verified = models.BooleanField(
+        default=False,
+        help_text="Admin verified this is a real review"
+    )
+    is_featured = models.BooleanField(
+        default=False,
+        help_text="Show this review prominently on course details"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-is_featured', '-created_at']
+        indexes = [
+            models.Index(fields=['course', '-created_at']),
+            models.Index(fields=['course', 'is_featured']),
+            models.Index(fields=['rating']),
+        ]
+    
+    def __str__(self):
+        return f"Review by {self.student_name} for {self.course.title} ({self.rating}★)"
+    
+    @property
+    def display_name(self):
+        """Get display name with age if available"""
+        if self.student_age:
+            return f"{self.student_name}, Age {self.student_age}"
+        return self.student_name
+    
+    @property
+    def star_rating(self):
+        """Get star rating as list of booleans for template rendering"""
+        return [i < self.rating for i in range(5)]
+
+
+
+
+
+class ProjectSubmission(models.Model):
+    STATUS = [
+        ("ASSIGNED", "Assigned"),
+        ("SUBMITTED", "Submitted"),
+        ("RETURNED", "Returned"),
+        ("GRADED", "Graded"),
+    ]
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="submissions")
+    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name="project_submissions")
+
+    status = models.CharField(max_length=20, choices=STATUS, default="ASSIGNED")
+    content = models.TextField(blank=True, help_text="Submission content (text, notes, code)")
+    file_url = models.URLField(blank=True, help_text="URL to uploaded file in cloud storage")
+    reflection = models.TextField(blank=True)
+
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    graded_at = models.DateTimeField(null=True, blank=True)
+    grader = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name="graded_projects"
+    )
+
+    points_earned = models.FloatField(null=True, blank=True)
+    feedback = models.TextField(blank=True)
+    feedback_response = models.TextField(blank=True, help_text="Student's response to teacher feedback")
+    feedback_checked = models.BooleanField(default=False, help_text="Whether student has seen the feedback")
+    feedback_checked_at = models.DateTimeField(null=True, blank=True, help_text="When student last checked feedback")
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("project", "student")
+        ordering = ['-submitted_at', '-created_at']
+    
+    def __str__(self):
+        return f"{self.student} - {self.project.title} ({self.status})"

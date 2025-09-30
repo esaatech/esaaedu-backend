@@ -1877,19 +1877,39 @@ def class_events(request, class_id):
         )
     
     try:
-        from .models import ClassEvent
-        from .serializers import ClassEventListSerializer, ClassEventCreateUpdateSerializer, ClassEventDetailSerializer
+        from .models import ClassEvent, Project, ProjectPlatform, Lesson
+        from .serializers import ClassEventListSerializer, ClassEventCreateUpdateSerializer, ClassEventDetailSerializer, ProjectListSerializer, ProjectPlatformSerializer, LessonListSerializer
         
         # Verify the class belongs to the teacher
         class_instance = get_object_or_404(Class, id=class_id, teacher=request.user)
         
         if request.method == 'GET':
-            events = ClassEvent.objects.filter(class_instance=class_instance).select_related('lesson').order_by('start_time')
+            events = ClassEvent.objects.filter(class_instance=class_instance).select_related(
+                'lesson', 'project', 'project_platform'
+            ).order_by('start_time')
             serializer = ClassEventListSerializer(events, many=True)
+            
+            # Get available projects for this course
+            available_projects = Project.objects.filter(course=class_instance.course)
+            projects_serializer = ProjectListSerializer(available_projects, many=True)
+            
+            # Get available platforms
+            available_platforms = ProjectPlatform.objects.filter(is_active=True)
+            platforms_serializer = ProjectPlatformSerializer(available_platforms, many=True)
+            
+            # Get available lessons for this course
+            available_lessons = Lesson.objects.filter(course=class_instance.course).order_by('order')
+            lessons_serializer = LessonListSerializer(available_lessons, many=True)
+            
             return Response({
                 'class_id': class_id,
                 'class_name': class_instance.name,
-                'events': serializer.data
+                'course_id': str(class_instance.course.id),
+                'course_name': class_instance.course.title,
+                'events': serializer.data,
+                'available_projects': projects_serializer.data,
+                'available_platforms': platforms_serializer.data,
+                'available_lessons': lessons_serializer.data
             }, status=status.HTTP_200_OK)
         
         elif request.method == 'POST':
