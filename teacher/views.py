@@ -306,7 +306,9 @@ class TeacherScheduleAPIView(APIView):
             class_instance__course__teacher=teacher
         ).select_related(
             'class_instance__course',
-            'lesson'
+            'lesson',
+            'project',
+            'project_platform'
         ).order_by('start_time')
         
         return [
@@ -314,8 +316,8 @@ class TeacherScheduleAPIView(APIView):
                 'id': str(event.id),
                 'title': event.title,
                 'description': event.description,
-                'start_time': event.start_time.isoformat(),
-                'end_time': event.end_time.isoformat(),
+                'start_time': event.start_time.isoformat() if event.start_time else None,
+                'end_time': event.end_time.isoformat() if event.end_time else None,
                 'event_type': event.event_type,
                 'lesson_type': event.lesson_type,
                 'meeting_platform': event.meeting_platform,
@@ -326,6 +328,12 @@ class TeacherScheduleAPIView(APIView):
                 'course_title': event.class_instance.course.title,
                 'class_name': event.class_instance.name,
                 'lesson_title': event.lesson.title if event.lesson else None,
+                'project_id': str(event.project.id) if event.project else None,
+                'project_title': event.project_title or (event.project.title if event.project else None),
+                'project_platform_id': str(event.project_platform.id) if event.project_platform else None,
+                'project_platform_name': event.project_platform.display_name if event.project_platform else None,
+                'due_date': event.due_date.isoformat() if event.due_date else None,
+                'submission_type': event.submission_type,
                 'duration_minutes': event.duration_minutes,
                 'created_at': event.created_at.isoformat(),
             }
@@ -337,30 +345,41 @@ class TeacherScheduleAPIView(APIView):
         Get upcoming events (next 30 days)
         """
         from datetime import datetime, timedelta
+        from django.db.models import Q
         
         now = datetime.now()
         future_date = now + timedelta(days=30)
         
+        # For non-project events, filter by start_time
+        # For project events, filter by due_date
         events = ClassEvent.objects.filter(
-            class_instance__course__teacher=teacher,
-            start_time__gte=now,
-            start_time__lte=future_date
+            class_instance__course__teacher=teacher
+        ).filter(
+            Q(start_time__gte=now, start_time__lte=future_date) |  # Non-project events
+            Q(due_date__gte=now, due_date__lte=future_date)       # Project events
         ).select_related(
             'class_instance__course',
-            'lesson'
-        ).order_by('start_time')
+            'lesson',
+            'project',
+            'project_platform'
+        ).order_by('start_time', 'due_date')
         
         return [
             {
                 'id': str(event.id),
                 'title': event.title,
-                'start_time': event.start_time.isoformat(),
-                'end_time': event.end_time.isoformat(),
+                'start_time': event.start_time.isoformat() if event.start_time else None,
+                'end_time': event.end_time.isoformat() if event.end_time else None,
                 'event_type': event.event_type,
                 'course_title': event.class_instance.course.title,
                 'class_name': event.class_instance.name,
                 'meeting_link': event.meeting_link,
                 'meeting_platform': event.meeting_platform,
+                'project_id': str(event.project.id) if event.project else None,
+                'project_title': event.project_title or (event.project.title if event.project else None),
+                'project_platform_name': event.project_platform.display_name if event.project_platform else None,
+                'due_date': event.due_date.isoformat() if event.due_date else None,
+                'submission_type': event.submission_type,
             }
             for event in events
         ]
@@ -371,22 +390,33 @@ class TeacherScheduleAPIView(APIView):
         """
         events = ClassEvent.objects.filter(
             class_instance__course__teacher=teacher
-        ).select_related('class_instance__course')
+        ).select_related(
+            'class_instance__course',
+            'lesson',
+            'project',
+            'project_platform'
+        )
         
         events_by_type = {
             'lesson': [],
             'meeting': [],
-            'break': []
+            'break': [],
+            'project': []
         }
         
         for event in events:
             event_data = {
                 'id': str(event.id),
                 'title': event.title,
-                'start_time': event.start_time.isoformat(),
-                'end_time': event.end_time.isoformat(),
+                'start_time': event.start_time.isoformat() if event.start_time else None,
+                'end_time': event.end_time.isoformat() if event.end_time else None,
                 'course_title': event.class_instance.course.title,
                 'class_name': event.class_instance.name,
+                'project_id': str(event.project.id) if event.project else None,
+                'project_title': event.project_title or (event.project.title if event.project else None),
+                'project_platform_name': event.project_platform.display_name if event.project_platform else None,
+                'due_date': event.due_date.isoformat() if event.due_date else None,
+                'submission_type': event.submission_type,
             }
             events_by_type[event.event_type].append(event_data)
         
@@ -398,7 +428,12 @@ class TeacherScheduleAPIView(APIView):
         """
         events = ClassEvent.objects.filter(
             class_instance__course__teacher=teacher
-        ).select_related('class_instance__course')
+        ).select_related(
+            'class_instance__course',
+            'lesson',
+            'project',
+            'project_platform'
+        )
         
         events_by_course = {}
         
@@ -416,11 +451,16 @@ class TeacherScheduleAPIView(APIView):
             event_data = {
                 'id': str(event.id),
                 'title': event.title,
-                'start_time': event.start_time.isoformat(),
-                'end_time': event.end_time.isoformat(),
+                'start_time': event.start_time.isoformat() if event.start_time else None,
+                'end_time': event.end_time.isoformat() if event.end_time else None,
                 'event_type': event.event_type,
                 'lesson_type': event.lesson_type,
                 'class_name': event.class_instance.name,
+                'project_id': str(event.project.id) if event.project else None,
+                'project_title': event.project_title or (event.project.title if event.project else None),
+                'project_platform_name': event.project_platform.display_name if event.project_platform else None,
+                'due_date': event.due_date.isoformat() if event.due_date else None,
+                'submission_type': event.submission_type,
             }
             events_by_course[course_id]['events'].append(event_data)
         
@@ -431,6 +471,7 @@ class TeacherScheduleAPIView(APIView):
         Get schedule summary statistics
         """
         from datetime import datetime, timedelta
+        from django.db.models import Q
         
         now = datetime.now()
         today = now.date()
@@ -442,17 +483,20 @@ class TeacherScheduleAPIView(APIView):
             class_instance__course__teacher=teacher
         ).count()
         
-        # This week's events
+        # This week's events (non-project events by start_time, project events by due_date)
         this_week_events = ClassEvent.objects.filter(
-            class_instance__course__teacher=teacher,
-            start_time__date__gte=week_start,
-            start_time__date__lte=week_end
+            class_instance__course__teacher=teacher
+        ).filter(
+            Q(start_time__date__gte=week_start, start_time__date__lte=week_end) |  # Non-project events
+            Q(due_date__date__gte=week_start, due_date__date__lte=week_end)       # Project events
         ).count()
         
-        # Today's events
+        # Today's events (non-project events by start_time, project events by due_date)
         today_events = ClassEvent.objects.filter(
-            class_instance__course__teacher=teacher,
-            start_time__date=today
+            class_instance__course__teacher=teacher
+        ).filter(
+            Q(start_time__date=today) |  # Non-project events
+            Q(due_date__date=today)     # Project events
         ).count()
         
         # Upcoming live classes
@@ -463,11 +507,19 @@ class TeacherScheduleAPIView(APIView):
             start_time__gte=now
         ).count()
         
+        # Upcoming project deadlines
+        upcoming_project_deadlines = ClassEvent.objects.filter(
+            class_instance__course__teacher=teacher,
+            event_type='project',
+            due_date__gte=now
+        ).count()
+        
         return {
             'total_events': total_events,
             'this_week_events': this_week_events,
             'today_events': today_events,
             'upcoming_live_classes': upcoming_live_classes,
+            'upcoming_project_deadlines': upcoming_project_deadlines,
         }
 
 
