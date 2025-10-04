@@ -2432,3 +2432,182 @@ def class_events_contract(request):
     }
     
     return JsonResponse(contract, json_dumps_params={'indent': 2})
+
+@require_http_methods(["GET"])
+def teacher_student_record_contract(request):
+    """
+    Teacher Student Record API Contract
+    Returns detailed API contract for teacher student record management
+    """
+    
+    contract = {
+        "title": "Teacher Student Record API Contract",
+        "version": "1.0.0",
+        "description": "Complete student record management system for teachers - Comprehensive student data and performance tracking",
+        "base_url": "/api/student/teacher-student-record/{student_id}/",
+        "authentication": {
+            "type": "Firebase ID Token",
+            "header": "Authorization: Bearer <firebase_id_token>",
+            "description": "Firebase authentication token obtained from Firebase Auth",
+            "required_role": "teacher"
+        },
+        "overview": {
+            "purpose": "Enable teachers to access comprehensive student records including assessments, assignments, quizzes, and progress",
+            "key_features": [
+                "Complete student profile and enrollment information",
+                "Performance metrics and progress tracking",
+                "Teacher assessments and lesson assessments",
+                "Quiz attempts and scores",
+                "Assignment submissions and grades",
+                "Course progress and completion status"
+            ],
+            "data_consolidation": "Single API call provides all student data needed for teacher management"
+        },
+        "endpoints": {
+            "student_record": {
+                "base_url": "/api/student/teacher-student-record/{student_id}/",
+                "description": "Get comprehensive student record for teacher management",
+                "authentication": "Required (Teacher role)",
+                "methods": {
+                    "GET": {
+                        "url": "/api/student/teacher-student-record/{student_id}/",
+                        "description": "Retrieve complete student record with all assessment data",
+                        "path_parameters": {
+                            "student_id": "integer (required) - Student user ID"
+                        },
+                        "query_parameters": {
+                            "course_id": "uuid (optional) - Filter by specific course"
+                        },
+                        "response_structure": {
+                            "basic_info": {
+                                "id": "integer - Student user ID",
+                                "first_name": "string - Student first name",
+                                "last_name": "string - Student last name",
+                                "full_name": "string - Student full name",
+                                "email": "string - Student email",
+                                "grade_level": "string - Student grade level",
+                                "enrollment_date": "datetime - Course enrollment date",
+                                "child_first_name": "string - Child's first name (if parent account)",
+                                "child_last_name": "string - Child's last name (if parent account)"
+                            },
+                            "performance_metrics": {
+                                "progress_percentage": "decimal - Course completion percentage",
+                                "overall_grade": "decimal - Overall course grade",
+                                "average_quiz_score": "decimal - Average quiz performance",
+                                "is_at_risk": "boolean - Student risk status",
+                                "completed_lessons_count": "integer - Number of completed lessons",
+                                "total_lessons_count": "integer - Total lessons in course",
+                                "last_accessed": "datetime - Last course access time"
+                            },
+                            "teacher_assessments": [
+                                {
+                                    "id": "integer - Assessment ID",
+                                    "academic_performance": "string - Performance rating",
+                                    "participation_level": "string - Participation rating",
+                                    "strengths": "string - Student strengths",
+                                    "weaknesses": "string - Areas for improvement",
+                                    "recommendations": "string - Teacher recommendations",
+                                    "general_comments": "string - General feedback",
+                                    "course_title": "string - Course name",
+                                    "teacher_name": "string - Teacher full name",
+                                    "created_at": "datetime - Assessment creation date"
+                                }
+                            ],
+                            "lesson_assessments": [
+                                {
+                                    "id": "integer - Assessment ID",
+                                    "title": "string - Assessment title",
+                                    "content": "string - Assessment content",
+                                    "assessment_type": "string - Type of assessment",
+                                    "lesson_title": "string - Lesson name",
+                                    "course_title": "string - Course name",
+                                    "teacher_name": "string - Teacher full name",
+                                    "created_at": "datetime - Assessment creation date"
+                                }
+                            ],
+                            "quiz_overview": [
+                                {
+                                    "id": "integer - Quiz attempt ID",
+                                    "quiz_title": "string - Quiz name",
+                                    "lesson_title": "string - Lesson name",
+                                    "course_title": "string - Course name",
+                                    "score": "decimal - Quiz score",
+                                    "passed": "boolean - Pass/fail status",
+                                    "completed_at": "datetime - Completion date",
+                                    "attempt_number": "integer - Attempt number"
+                                }
+                            ],
+                            "assignment_records": [
+                                {
+                                    "id": "uuid - Assignment submission ID",
+                                    "assignment_title": "string - Assignment name",
+                                    "assignment_type": "string - Type (homework|quiz|exam|project|essay|practical)",
+                                    "lesson_title": "string - Lesson name",
+                                    "course_title": "string - Course name",
+                                    "due_date": "datetime - Assignment due date",
+                                    "submitted_at": "datetime - Submission date",
+                                    "attempt_number": "integer - Attempt number",
+                                    "is_graded": "boolean - Grading status",
+                                    "graded_at": "datetime - Grading completion date",
+                                    "graded_by": "string - Teacher name who graded",
+                                    "points_earned": "decimal - Points awarded",
+                                    "points_possible": "decimal - Total possible points",
+                                    "percentage": "decimal - Percentage score",
+                                    "passed": "boolean - Pass/fail status",
+                                    "instructor_feedback": "string - Teacher feedback",
+                                    "feedback_checked": "boolean - Student has seen feedback",
+                                    "feedback_checked_at": "datetime - Last feedback check",
+                                    "feedback_response": "string - Student response to feedback",
+                                    "graded_questions_count": "integer - Number of individually graded questions"
+                                }
+                            ],
+                            "course_progress": {
+                                "course_id": "uuid - Course ID",
+                                "course_title": "string - Course name",
+                                "current_lesson_id": "uuid - Current lesson ID",
+                                "current_lesson_title": "string - Current lesson name",
+                                "progress_percentage": "decimal - Course completion percentage",
+                                "completed_lessons_count": "integer - Completed lessons",
+                                "total_lessons_count": "integer - Total lessons"
+                            }
+                        },
+                        "use_cases": [
+                            "Display comprehensive student dashboard for teachers",
+                            "Track student progress across all course activities",
+                            "Review assignment submissions and grades",
+                            "Monitor quiz performance and attempts",
+                            "Access teacher and lesson assessments",
+                            "View student feedback interactions"
+                        ],
+                        "error_responses": {
+                            "403": "Forbidden - User is not a teacher",
+                            "404": "Not Found - Student not found or no enrollments",
+                            "500": "Internal Server Error - System error"
+                        }
+                    }
+                }
+            }
+        },
+        "data_relationships": {
+            "student_enrollment": "Student must be enrolled in teacher's courses",
+            "assignment_submissions": "Linked to EnrolledCourse for proper tracking",
+            "quiz_attempts": "Associated with course enrollment",
+            "assessments": "Created by teachers for enrolled students"
+        },
+        "example_requests": {
+            "get_student_record": {
+                "url": "GET /api/student/teacher-student-record/123/",
+                "description": "Get complete record for student ID 123"
+            },
+            "get_student_record_by_course": {
+                "url": "GET /api/student/teacher-student-record/123/?course_id=456e7890-e89b-12d3-a456-426614174000",
+                "description": "Get student record filtered by specific course"
+            }
+        },
+        "frontend_integration": {
+            "react_example": "const fetchStudentRecord = async (studentId, courseId = null) => { const url = courseId ? `/api/student/teacher-student-record/${studentId}/?course_id=${courseId}` : `/api/student/teacher-student-record/${studentId}/`; const response = await fetch(url, { headers: { 'Authorization': `Bearer ${firebaseToken}` } }); return response.json(); };",
+            "data_usage": "Use response data to populate student dashboard, progress charts, assignment tables, and assessment summaries"
+        }
+    }
+    
+    return JsonResponse(contract, json_dumps_params={'indent': 2})

@@ -960,6 +960,7 @@ class TeacherStudentRecord(APIView):
                 'teacher_assessments': self.get_teacher_assessments(enrollments),
                 'lesson_assessments': self.get_lesson_assessments(enrollments),
                 'quiz_overview': self.get_quiz_overview(enrollments),
+                'assignment_records': self.get_assignment_records(enrollments),
                 'course_progress': self.get_course_progress(enrollments.first())
             }
             
@@ -1059,6 +1060,39 @@ class TeacherStudentRecord(APIView):
             'completed_at': attempt.completed_at.isoformat(),
             'attempt_number': attempt.attempt_number
         } for attempt in attempts]
+    
+    def get_assignment_records(self, enrollments):
+        """Get assignment submission records for the student"""
+        from courses.models import AssignmentSubmission
+        
+        submissions = AssignmentSubmission.objects.filter(
+            enrollment__in=enrollments
+        ).select_related(
+            'assignment', 'assignment__lesson', 'graded_by'
+        ).order_by('-submitted_at')
+        
+        return [{
+            'id': str(submission.id),
+            'assignment_title': submission.assignment.title,
+            'assignment_type': submission.assignment.assignment_type,
+            'lesson_title': submission.assignment.lesson.title,
+            'course_title': submission.enrollment.course.title,
+            'due_date': submission.assignment.due_date.isoformat() if submission.assignment.due_date else None,
+            'submitted_at': submission.submitted_at.isoformat(),
+            'attempt_number': submission.attempt_number,
+            'is_graded': submission.is_graded,
+            'graded_at': submission.graded_at.isoformat() if submission.graded_at else None,
+            'graded_by': submission.graded_by.get_full_name() if submission.graded_by else None,
+            'points_earned': float(submission.points_earned) if submission.points_earned else None,
+            'points_possible': float(submission.points_possible) if submission.points_possible else None,
+            'percentage': float(submission.percentage) if submission.percentage else None,
+            'passed': submission.passed,
+            'instructor_feedback': submission.instructor_feedback,
+            'feedback_checked': submission.feedback_checked,
+            'feedback_checked_at': submission.feedback_checked_at.isoformat() if submission.feedback_checked_at else None,
+            'feedback_response': submission.feedback_response,
+            'graded_questions_count': len(submission.graded_questions) if submission.graded_questions else 0
+        } for submission in submissions]
     
     def get_course_progress(self, enrollment):
         """Get course progress for the student"""

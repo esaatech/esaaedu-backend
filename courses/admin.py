@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, Note
 
 
 @admin.register(Course)
@@ -316,10 +316,6 @@ class CourseCategoryAdmin(admin.ModelAdmin):
     fieldsets = (
         ('Basic Information', {
             'fields': ('name', 'description')
-        }),
-        ('Statistics', {
-            'fields': ('course_count',),
-            'classes': ('collapse',)
         }),
         ('Metadata', {
             'fields': ('id',),
@@ -675,3 +671,68 @@ class ProjectPlatformAdmin(admin.ModelAdmin):
         updated = queryset.update(is_featured=False)
         self.message_user(request, f'{updated} platforms were unfeatured.')
     unfeature_platforms.short_description = "Remove featured status from selected platforms"
+
+
+@admin.register(Note)
+class NoteAdmin(admin.ModelAdmin):
+    list_display = ['title', 'teacher', 'course', 'category', 'lesson', 'created_at', 'updated_at']
+    list_filter = ['category', 'course__category', 'created_at', 'updated_at']
+    search_fields = ['title', 'content', 'teacher__email', 'teacher__first_name', 'teacher__last_name', 'course__title', 'lesson__title']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    date_hierarchy = 'created_at'
+    
+    fieldsets = (
+        ('Note Information', {
+            'fields': ('title', 'content', 'category')
+        }),
+        ('Associations', {
+            'fields': ('course', 'teacher', 'lesson'),
+            'description': 'Course is required. Lesson is optional for lesson-specific notes.'
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        """Optimize queryset with select_related"""
+        return super().get_queryset(request).select_related('teacher', 'course', 'lesson')
+    
+    def save_model(self, request, obj, form, change):
+        """Automatically set teacher to current user if not set"""
+        if not obj.teacher_id:
+            obj.teacher = request.user
+        super().save_model(request, obj, form, change)
+    
+    actions = ['categorize_as_general', 'categorize_as_lesson', 'categorize_as_idea', 'categorize_as_reminder', 'categorize_as_issue']
+    
+    def categorize_as_general(self, request, queryset):
+        """Categorize selected notes as general"""
+        updated = queryset.update(category='general')
+        self.message_user(request, f'{updated} note(s) categorized as general.')
+    categorize_as_general.short_description = "Categorize as General"
+    
+    def categorize_as_lesson(self, request, queryset):
+        """Categorize selected notes as lesson-specific"""
+        updated = queryset.update(category='lesson')
+        self.message_user(request, f'{updated} note(s) categorized as lesson-specific.')
+    categorize_as_lesson.short_description = "Categorize as Lesson"
+    
+    def categorize_as_idea(self, request, queryset):
+        """Categorize selected notes as ideas"""
+        updated = queryset.update(category='idea')
+        self.message_user(request, f'{updated} note(s) categorized as ideas.')
+    categorize_as_idea.short_description = "Categorize as Ideas"
+    
+    def categorize_as_reminder(self, request, queryset):
+        """Categorize selected notes as reminders"""
+        updated = queryset.update(category='reminder')
+        self.message_user(request, f'{updated} note(s) categorized as reminders.')
+    categorize_as_reminder.short_description = "Categorize as Reminders"
+    
+    def categorize_as_issue(self, request, queryset):
+        """Categorize selected notes as issues"""
+        updated = queryset.update(category='issue')
+        self.message_user(request, f'{updated} note(s) categorized as issues.')
+    categorize_as_issue.short_description = "Categorize as Issues"

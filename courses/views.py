@@ -826,20 +826,26 @@ def reorder_lessons(request, course_id):
         if serializer.is_valid():
             lessons_data = serializer.validated_data['lessons']
             
-            # Update lesson orders
+            # Step 1: Set all lessons to temporary negative orders to avoid constraint violations
+            lessons_to_update = []
             for lesson_data in lessons_data:
                 lesson_id = lesson_data['id']
-                new_order = int(lesson_data['order'])
-                
                 try:
                     lesson = course.lessons.get(id=lesson_id)
-                    lesson.order = new_order
+                    lessons_to_update.append((lesson, lesson_data['order']))
+                    # Set temporary negative order to avoid constraint violations
+                    lesson.order = -(lesson.id.int % 1000000)  # Use negative ID-based temp order
                     lesson.save()
                 except Lesson.DoesNotExist:
                     return Response(
                         {'error': f'Lesson with id {lesson_id} not found in this course'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
+            
+            # Step 2: Now set the actual desired orders
+            for lesson, new_order in lessons_to_update:
+                lesson.order = new_order
+                lesson.save()
             
             # Return updated lessons
             lessons = course.lessons.all().order_by('order')
