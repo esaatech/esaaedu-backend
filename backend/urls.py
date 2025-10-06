@@ -18,7 +18,7 @@ from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
 from rest_framework.routers import DefaultRouter
-from api_docs import api_documentation, course_creation_contract, contact_contract, landing_page_contract, teacher_project_contract, teacher_assignment_contract, class_events_contract, teacher_student_record_contract
+from api_docs import api_documentation, course_creation_contract, contact_contract, landing_page_contract, teacher_project_contract, teacher_assignment_contract, class_events_contract, teacher_student_record_contract, student_lesson_detail_contract, student_assignment_submission_contract
 
 # Create API router
 router = DefaultRouter()
@@ -45,6 +45,8 @@ urlpatterns = [
     path("api/docs/teacher-assignments/", teacher_assignment_contract, name="teacher_assignment_contract"),
     path("api/docs/class-events/", class_events_contract, name="class_events_contract"),
     path("api/docs/teacher-student-record/", teacher_student_record_contract, name="teacher_student_record_contract"),
+    path("api/docs/student-lesson-detail/", student_lesson_detail_contract, name="student_lesson_detail_contract"),
+    path("api/docs/student-assignment-submission/", student_assignment_submission_contract, name="student_assignment_submission_contract"),
     
     # Health check endpoint
     path("health/", lambda request: JsonResponse({"status": "ok"})),

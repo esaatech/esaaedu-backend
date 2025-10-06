@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import uuid
 
 from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback
-from courses.models import Class, ClassEvent, Course, Lesson, Quiz, QuizAttempt, Question
+from courses.models import Class, ClassEvent, Course, Lesson, Quiz, QuizAttempt, Question, Assignment, AssignmentSubmission
 from settings.models import UserDashboardSettings
 from .serializers import (
     EnrolledCourseListSerializer, 
@@ -31,7 +31,10 @@ from .serializers import (
     TextLessonSerializer,
     InteractiveLessonSerializer,
     AchievementSerializer,
-    DashboardOverviewSerializer
+    DashboardOverviewSerializer,
+    # Assignment Submission Serializers
+    AssignmentSubmissionSerializer,
+    AssignmentSubmissionResponseSerializer
 )
 
 
@@ -960,7 +963,6 @@ class TeacherStudentRecord(APIView):
                 'teacher_assessments': self.get_teacher_assessments(enrollments),
                 'lesson_assessments': self.get_lesson_assessments(enrollments),
                 'quiz_overview': self.get_quiz_overview(enrollments),
-                'assignment_records': self.get_assignment_records(enrollments),
                 'course_progress': self.get_course_progress(enrollments.first())
             }
             
@@ -1060,39 +1062,6 @@ class TeacherStudentRecord(APIView):
             'completed_at': attempt.completed_at.isoformat(),
             'attempt_number': attempt.attempt_number
         } for attempt in attempts]
-    
-    def get_assignment_records(self, enrollments):
-        """Get assignment submission records for the student"""
-        from courses.models import AssignmentSubmission
-        
-        submissions = AssignmentSubmission.objects.filter(
-            enrollment__in=enrollments
-        ).select_related(
-            'assignment', 'assignment__lesson', 'graded_by'
-        ).order_by('-submitted_at')
-        
-        return [{
-            'id': str(submission.id),
-            'assignment_title': submission.assignment.title,
-            'assignment_type': submission.assignment.assignment_type,
-            'lesson_title': submission.assignment.lesson.title,
-            'course_title': submission.enrollment.course.title,
-            'due_date': submission.assignment.due_date.isoformat() if submission.assignment.due_date else None,
-            'submitted_at': submission.submitted_at.isoformat(),
-            'attempt_number': submission.attempt_number,
-            'is_graded': submission.is_graded,
-            'graded_at': submission.graded_at.isoformat() if submission.graded_at else None,
-            'graded_by': submission.graded_by.get_full_name() if submission.graded_by else None,
-            'points_earned': float(submission.points_earned) if submission.points_earned else None,
-            'points_possible': float(submission.points_possible) if submission.points_possible else None,
-            'percentage': float(submission.percentage) if submission.percentage else None,
-            'passed': submission.passed,
-            'instructor_feedback': submission.instructor_feedback,
-            'feedback_checked': submission.feedback_checked,
-            'feedback_checked_at': submission.feedback_checked_at.isoformat() if submission.feedback_checked_at else None,
-            'feedback_response': submission.feedback_response,
-            'graded_questions_count': len(submission.graded_questions) if submission.graded_questions else 0
-        } for submission in submissions]
     
     def get_course_progress(self, enrollment):
         """Get course progress for the student"""
@@ -2746,5 +2715,88 @@ class TeacherAssessmentDetailView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+
+class AssignmentSubmissionView(APIView):
+    """
+    Handle assignment submissions (both draft and final)
+    POST /api/assignments/{assignment_id}/submit/
+    """
+    permission_classes = [IsAuthenticated]
     
-     
+    def post(self, request, assignment_id):
+        try:
+            # Get assignment and validate
+            assignment = get_object_or_404(Assignment, id=assignment_id)
+            
+            # Validate request data
+            serializer = AssignmentSubmissionSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            validated_data = serializer.validated_data
+            is_draft = validated_data.get('is_draft', False)
+            
+            # Get student's enrollment in the course
+            try:
+                enrollment = EnrolledCourse.objects.get(
+                    student_profile__user=request.user,
+                    course=assignment.lesson.course,
+                    status='active'
+                )
+            except EnrolledCourse.DoesNotExist:
+                return Response(
+                    {'error': 'You are not enrolled in this course'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get or create submission
+            submission, created = AssignmentSubmission.objects.get_or_create(
+                student=request.user,
+                assignment=assignment,
+                defaults={
+                    'attempt_number': 1,
+                    'status': 'draft' if is_draft else 'submitted',
+                    'answers': validated_data.get('answers', {}),
+                    'enrollment': enrollment,
+                    'submitted_at': timezone.now()
+                }
+            )
+            
+            # Update existing submission if not created
+            if not created:
+                print(f"🔄 Updating existing submission. Current answers: {submission.answers}")
+                print(f"🔄 New answers received: {validated_data.get('answers', {})}")
+                
+                # Merge answers instead of replacing them completely
+                existing_answers = submission.answers or {}
+                new_answers = validated_data.get('answers', {})
+                
+                # Merge the answers (new answers override existing ones for same questions)
+                merged_answers = {**existing_answers, **new_answers}
+                
+                print(f"🔄 Merged answers: {merged_answers}")
+                
+                submission.answers = merged_answers
+                submission.status = 'draft' if is_draft else 'submitted'
+                submission.submitted_at = timezone.now()
+                submission.save()
+            
+            # Return response
+            response_serializer = AssignmentSubmissionResponseSerializer(submission)
+            response_data = {
+                'submission': response_serializer.data,
+                'message': 'Draft saved successfully' if is_draft else 'Assignment submitted successfully'
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Assignment.DoesNotExist:
+            return Response(
+                {'error': 'Assignment not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to submit assignment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

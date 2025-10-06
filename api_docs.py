@@ -2434,6 +2434,357 @@ def class_events_contract(request):
     return JsonResponse(contract, json_dumps_params={'indent': 2})
 
 @require_http_methods(["GET"])
+def student_lesson_detail_contract(request):
+    """
+    Student Lesson Detail API Contract
+    Returns detailed API contract for student lesson detail endpoint
+    """
+    
+    contract = {
+        "title": "Student Lesson Detail API Contract",
+        "version": "1.0.0",
+        "description": "Complete lesson detail system for students - Comprehensive lesson data including materials, quiz, assignments, and class events",
+        "base_url": "/api/courses/student/lessons/{lesson_id}/cbv/",
+        "authentication": {
+            "type": "Firebase ID Token",
+            "header": "Authorization: Bearer <firebase_id_token>",
+            "description": "Firebase authentication token obtained from Firebase Auth",
+            "required_role": "student"
+        },
+        "overview": {
+            "purpose": "Enable students to access comprehensive lesson details including all learning materials and activities",
+            "key_features": [
+                "Complete lesson content and materials",
+                "Quiz data with questions and student progress",
+                "Assignment data with questions and submission status",
+                "Class event information for live sessions",
+                "Prerequisites and course context",
+                "Teacher information and course details"
+            ],
+            "data_consolidation": "Single API call provides all lesson data needed for student learning experience"
+        },
+        "endpoints": {
+            "lesson_detail": {
+                "base_url": "/api/courses/student/lessons/{lesson_id}/cbv/",
+                "description": "Get comprehensive lesson details for student learning",
+                "authentication": "Required (Student role)",
+                "methods": {
+                    "GET": {
+                        "url": "/api/courses/student/lessons/{lesson_id}/cbv/",
+                        "description": "Retrieve complete lesson details with all associated data",
+                        "path_parameters": {
+                            "lesson_id": "uuid (required) - Lesson UUID identifier"
+                        },
+                        "response_structure": {
+                            "basic_info": {
+                                "id": "uuid - Lesson ID",
+                                "title": "string - Lesson title",
+                                "description": "string - Lesson description",
+                                "type": "string - Lesson type (live_class, video_audio, text_lesson)",
+                                "duration": "integer - Lesson duration in minutes",
+                                "order": "integer - Lesson order within course",
+                                "text_content": "string - Main lesson text content",
+                                "video_url": "string - Video URL (if applicable)",
+                                "audio_url": "string - Audio URL (if applicable)",
+                                "live_class_date": "datetime - Live class date (if applicable)",
+                                "live_class_status": "string - Live class status",
+                                "content": "string - Additional lesson content",
+                                "created_at": "datetime - Lesson creation date",
+                                "updated_at": "datetime - Lesson last update date"
+                            },
+                            "course_context": {
+                                "course_title": "string - Course title",
+                                "teacher_name": "string - Teacher full name"
+                            },
+                            "quiz_data": {
+                                "has_quiz": "boolean - Whether lesson has a quiz",
+                                "quiz": {
+                                    "id": "uuid - Quiz ID",
+                                    "title": "string - Quiz title",
+                                    "description": "string - Quiz description",
+                                    "time_limit": "integer - Time limit in minutes",
+                                    "passing_score": "integer - Minimum score to pass",
+                                    "max_attempts": "integer - Maximum attempts allowed",
+                                    "show_correct_answers": "boolean - Show answers after completion",
+                                    "randomize_questions": "boolean - Randomize question order",
+                                    "total_points": "integer - Total possible points",
+                                    "question_count": "integer - Number of questions",
+                                    "questions": [
+                                        {
+                                            "id": "uuid - Question ID",
+                                            "question_text": "string - Question text",
+                                            "type": "string - Question type (multiple_choice, true_false, etc.)",
+                                            "content": "object - Question content and options",
+                                            "points": "integer - Points for correct answer",
+                                            "explanation": "string - Answer explanation",
+                                            "order": "integer - Question order"
+                                        }
+                                    ],
+                                    "user_attempts_count": "integer - Student's attempt count",
+                                    "can_retake": "boolean - Whether student can retake",
+                                    "has_passed": "boolean - Whether student has passed",
+                                    "last_attempt": "decimal - Last attempt score",
+                                    "last_attempt_passed": "boolean - Whether last attempt passed"
+                                }
+                            },
+                            "assignment_data": {
+                                "has_assignment": "boolean - Whether lesson has an assignment",
+                                "assignment": {
+                                    "id": "uuid - Assignment ID",
+                                    "title": "string - Assignment title",
+                                    "description": "string - Assignment description",
+                                    "assignment_type": "string - Type (homework, quiz, exam, project, essay, practical)",
+                                    "due_date": "datetime - Assignment due date",
+                                    "passing_score": "integer - Minimum score to pass",
+                                    "max_attempts": "integer - Maximum attempts allowed",
+                                    "show_correct_answers": "boolean - Show answers after completion",
+                                    "randomize_questions": "boolean - Randomize question order",
+                                    "question_count": "integer - Number of questions",
+                                    "submission_count": "integer - Total submissions count",
+                                    "questions": [
+                                        {
+                                            "id": "uuid - Question ID",
+                                            "question_text": "string - Question text",
+                                            "type": "string - Question type (multiple_choice, true_false, etc.)",
+                                            "content": "object - Question content and options",
+                                            "points": "integer - Points for correct answer",
+                                            "explanation": "string - Answer explanation",
+                                            "order": "integer - Question order"
+                                        }
+                                    ],
+                                    "user_submissions_count": "integer - Student's submission count",
+                                    "can_submit": "boolean - Whether student can submit",
+                                    "has_passed": "boolean - Whether student has passed",
+                                    "last_submission": "datetime - Last submission date",
+                                    "last_submission_passed": "boolean - Whether last submission passed",
+                                    "submission": {
+                                        "id": "uuid - Submission ID (if exists)",
+                                        "attempt_number": "integer - Attempt number",
+                                        "status": "string - Submission status (draft, submitted, graded)",
+                                        "submitted_at": "datetime - Submission timestamp",
+                                        "answers": "object - Student answers for each question",
+                                        "is_graded": "boolean - Whether submission has been graded",
+                                        "points_earned": "decimal - Points earned (if graded)",
+                                        "points_possible": "decimal - Total possible points (if graded)",
+                                        "percentage": "decimal - Percentage score (if graded)",
+                                        "passed": "boolean - Whether submission passed (if graded)"
+                                    }
+                                }
+                            },
+                            "materials": [
+                                {
+                                    "id": "uuid - Material ID",
+                                    "title": "string - Material title",
+                                    "description": "string - Material description",
+                                    "material_type": "string - Type (document, video, audio, link, image, pdf)",
+                                    "file_url": "string - File URL",
+                                    "file_size": "integer - File size in bytes",
+                                    "file_size_mb": "decimal - File size in MB",
+                                    "file_extension": "string - File extension",
+                                    "is_required": "boolean - Whether material is required",
+                                    "is_downloadable": "boolean - Whether material can be downloaded",
+                                    "order": "integer - Material order",
+                                    "created_at": "datetime - Material creation date"
+                                }
+                            ],
+                            "class_event": {
+                                "id": "uuid - Class event ID",
+                                "title": "string - Event title",
+                                "description": "string - Event description",
+                                "start_time": "datetime - Event start time",
+                                "end_time": "datetime - Event end time",
+                                "platform": "string - Meeting platform",
+                                "meeting_url": "string - Meeting URL",
+                                "status": "string - Event status (upcoming, ongoing, completed)",
+                                "can_join_early": "boolean - Whether student can join early"
+                            },
+                            "prerequisites": "array - List of prerequisite lesson IDs"
+                        },
+                        "use_cases": [
+                            "Load complete lesson page for student learning",
+                            "Display lesson content and materials",
+                            "Show quiz with student progress",
+                            "Display assignment with submission status",
+                            "Show live class event information",
+                            "Access lesson prerequisites"
+                        ],
+                        "error_responses": {
+                            "404": "Not Found - Lesson not found",
+                            "500": "Internal Server Error - System error"
+                        }
+                    }
+                }
+            }
+        },
+        "data_relationships": {
+            "lesson_course": "Lesson belongs to a course",
+            "lesson_quiz": "One-to-one relationship with Quiz",
+            "lesson_assignment": "One-to-one relationship with Assignment",
+            "lesson_materials": "One-to-many relationship with LessonMaterial",
+            "lesson_class_events": "One-to-many relationship with ClassEvent",
+            "lesson_prerequisites": "Many-to-many relationship with other lessons"
+        },
+        "example_requests": {
+            "get_lesson_detail": {
+                "url": "GET /api/courses/student/lessons/d8802ef9-d07b-4cf3-86aa-5f18d9cb31e2/cbv/",
+                "description": "Get complete lesson details for lesson ID d8802ef9-d07b-4cf3-86aa-5f18d9cb31e2"
+            }
+        },
+        "frontend_integration": {
+            "react_example": "const fetchLessonDetail = async (lessonId) => { const response = await fetch(`/api/courses/student/lessons/${lessonId}/cbv/`, { headers: { 'Authorization': `Bearer ${firebaseToken}` } }); return response.json(); };",
+            "data_usage": "Use response data to populate lesson page, quiz interface, assignment interface, materials list, and class event information",
+            "conditional_rendering": "Use has_quiz and has_assignment flags to conditionally render quiz and assignment sections"
+        }
+    }
+    
+    return JsonResponse(contract, json_dumps_params={'indent': 2})
+
+
+@require_http_methods(["POST"])
+def student_assignment_submission_contract(request):
+    """
+    Student Assignment Submission API Contract
+    Returns detailed API contract for student assignment submission endpoint
+    """
+    
+    contract = {
+        "title": "Student Assignment Submission API Contract",
+        "version": "1.0.0",
+        "description": "Complete assignment submission system for students - Submit assignments with draft and final submission support",
+        "base_url": "/api/student/assignments/{assignment_id}/submit/",
+        "authentication": {
+            "type": "Firebase ID Token",
+            "header": "Authorization: Bearer <firebase_id_token>",
+            "description": "Firebase authentication token obtained from Firebase Auth",
+            "required_role": "student"
+        },
+        "overview": {
+            "purpose": "Enable students to submit assignment answers with support for both draft and final submissions",
+            "key_features": [
+                "Submit assignment answers with question-specific responses",
+                "Support for draft submissions (save progress)",
+                "Support for final submissions (complete assignment)",
+                "Automatic attempt tracking and numbering",
+                "Enrollment validation and course access control",
+                "Submission status tracking and response feedback"
+            ],
+            "data_consolidation": "Single API endpoint handles both draft saves and final submissions with comprehensive response data"
+        },
+        "endpoints": {
+            "assignment_submission": {
+                "base_url": "/api/student/assignments/{assignment_id}/submit/",
+                "description": "Submit assignment answers (draft or final)",
+                "authentication": "Required (Student role)",
+                "methods": {
+                    "POST": {
+                        "url": "/api/student/assignments/{assignment_id}/submit/",
+                        "description": "Submit assignment answers with support for draft and final submissions",
+                        "path_parameters": {
+                            "assignment_id": "uuid (required) - Assignment UUID identifier"
+                        },
+                        "request_body": {
+                            "answers": {
+                                "type": "object",
+                                "description": "Student answers for each question",
+                                "format": "JSON object with question IDs as keys",
+                                "example": {
+                                    "question-uuid-1": "Student answer for question 1",
+                                    "question-uuid-2": "Student answer for question 2",
+                                    "question-uuid-3": ["Answer option 1", "Answer option 2"]
+                                },
+                                "required": true
+                            },
+                            "is_draft": {
+                                "type": "boolean",
+                                "description": "Whether this is a draft submission (true) or final submission (false)",
+                                "default": false,
+                                "required": false
+                            },
+                            "submission_type": {
+                                "type": "string",
+                                "description": "Type of submission",
+                                "choices": ["draft", "completed"],
+                                "default": "draft",
+                                "required": false
+                            }
+                        },
+                        "response_structure": {
+                            "submission": {
+                                "id": "uuid - Submission ID",
+                                "attempt_number": "integer - Attempt number for this assignment",
+                                "status": "string - Submission status (draft, submitted, graded)",
+                                "submitted_at": "datetime - Submission timestamp",
+                                "answers": "object - Student answers for each question",
+                                "is_graded": "boolean - Whether submission has been graded by teacher",
+                                "points_earned": "decimal - Points earned (if graded)",
+                                "points_possible": "decimal - Total possible points (if graded)",
+                                "percentage": "decimal - Percentage score (if graded)",
+                                "passed": "boolean - Whether submission passed (if graded)"
+                            },
+                            "message": "string - Success message indicating submission type"
+                        },
+                        "use_cases": [
+                            "Save assignment progress as draft",
+                            "Submit final assignment answers",
+                            "Update existing submission with new answers",
+                            "Track assignment attempt numbers",
+                            "Validate student enrollment in course"
+                        ],
+                        "error_responses": {
+                            "400": "Bad Request - Invalid request data or validation errors",
+                            "403": "Forbidden - Student not enrolled in course",
+                            "404": "Not Found - Assignment not found",
+                            "500": "Internal Server Error - System error"
+                        }
+                    }
+                }
+            }
+        },
+        "data_relationships": {
+            "assignment_course": "Assignment belongs to a lesson which belongs to a course",
+            "student_enrollment": "Student must be enrolled in the course to submit",
+            "submission_attempts": "Each submission tracks attempt number for the assignment",
+            "question_answers": "Answers are mapped to specific question IDs"
+        },
+        "example_requests": {
+            "draft_submission": {
+                "url": "POST /api/student/assignments/40878a41-dd19-4953-9c85-1dfb2f9d467e/submit/",
+                "body": {
+                    "answers": {
+                        "question-uuid-1": "A noun is a word that names a person, place, or thing.",
+                        "question-uuid-2": "All of the above"
+                    },
+                    "is_draft": true,
+                    "submission_type": "draft"
+                },
+                "description": "Save assignment progress as draft"
+            },
+            "final_submission": {
+                "url": "POST /api/student/assignments/40878a41-dd19-4953-9c85-1dfb2f9d467e/submit/",
+                "body": {
+                    "answers": {
+                        "question-uuid-1": "A noun is a word that names a person, place, or thing.",
+                        "question-uuid-2": "All of the above",
+                        "question-uuid-3": "Additional answer for question 3"
+                    },
+                    "is_draft": false,
+                    "submission_type": "completed"
+                },
+                "description": "Submit final assignment answers"
+            }
+        },
+        "frontend_integration": {
+            "react_example": "const submitAssignment = async (assignmentId, answers, isDraft = false) => { const response = await fetch(`/api/student/assignments/${assignmentId}/submit/`, { method: 'POST', headers: { 'Authorization': `Bearer ${firebaseToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ answers, is_draft: isDraft, submission_type: isDraft ? 'draft' : 'completed' }) }); return response.json(); };",
+            "data_usage": "Use response data to show submission confirmation, track attempt numbers, and display submission status",
+            "draft_functionality": "Implement auto-save functionality using draft submissions to preserve student progress",
+            "validation": "Validate answers format before submission and handle validation errors appropriately"
+        }
+    }
+    
+    return JsonResponse(contract, json_dumps_params={'indent': 2})
+
+
+@require_http_methods(["GET"])
 def teacher_student_record_contract(request):
     """
     Teacher Student Record API Contract
@@ -2547,6 +2898,7 @@ def teacher_student_record_contract(request):
                                     "due_date": "datetime - Assignment due date",
                                     "submitted_at": "datetime - Submission date",
                                     "attempt_number": "integer - Attempt number",
+                                    "status": "string - Submission status (draft, submitted, graded)",
                                     "is_graded": "boolean - Grading status",
                                     "graded_at": "datetime - Grading completion date",
                                     "graded_by": "string - Teacher name who graded",

@@ -2895,6 +2895,85 @@ class StudentLessonDetailView(APIView):
                 import traceback
                 print(f"❌ Traceback: {traceback.format_exc()}")
             
+            # Pre-compute assignment data (similar to quiz data)
+            assignment_data = None
+            try:
+                from courses.models import Assignment, AssignmentQuestion
+                assignment = getattr(lesson, 'assignment', None)
+                print(f"🔍 Assignment found: {assignment.title if assignment else 'None'}")
+                
+                if assignment:
+                    # Get assignment questions
+                    questions = assignment.questions.all().order_by('order')
+                    print(f"🔍 Assignment questions count: {questions.count()}")
+                    
+                    # Get student submissions if available
+                    submissions = []
+                    submission_data = None
+                    if request.user.is_authenticated:
+                        from courses.models import AssignmentSubmission
+                        submissions = AssignmentSubmission.objects.filter(
+                            assignment=assignment,
+                            enrollment__student_profile__user=request.user
+                        ).order_by('-submitted_at')
+                        print(f"🔍 Student submissions found: {submissions.count()}")
+                        
+                        # Include the latest submission data
+                        if submissions:
+                            latest_submission = submissions[0]
+                            submission_data = {
+                                'id': str(latest_submission.id),
+                                'attempt_number': latest_submission.attempt_number,
+                                'status': latest_submission.status,
+                                'submitted_at': latest_submission.submitted_at.isoformat(),
+                                'answers': latest_submission.answers,
+                                'is_graded': latest_submission.is_graded,
+                                'points_earned': latest_submission.points_earned,
+                                'points_possible': latest_submission.points_possible,
+                                'percentage': latest_submission.percentage,
+                                'passed': latest_submission.passed,
+                            }
+                            print(f"🔍 Latest submission data: {submission_data}")
+                    
+                    # Build assignment data
+                    assignment_data = {
+                        'id': str(assignment.id),
+                        'title': assignment.title,
+                        'description': assignment.description or '',
+                        'assignment_type': assignment.assignment_type,
+                        'due_date': assignment.due_date.isoformat() if assignment.due_date else None,
+                        'passing_score': assignment.passing_score,
+                        'max_attempts': assignment.max_attempts,
+                        'show_correct_answers': assignment.show_correct_answers,
+                        'randomize_questions': assignment.randomize_questions,
+                        'question_count': assignment.question_count,
+                        'submission_count': assignment.submissions.count(),
+                        'questions': [
+                            {
+                                'id': str(q.id),
+                                'question_text': q.question_text,
+                                'type': q.type,
+                                'content': q.content,
+                                'points': q.points,
+                                'explanation': q.explanation or '',
+                                'order': q.order,
+                            } for q in questions
+                        ],
+                        'user_submissions_count': len(submissions),
+                        'can_submit': len(submissions) < assignment.max_attempts if submissions else True,
+                        'has_passed': any(submission.passed for submission in submissions),
+                        'last_submission': submissions[0].submitted_at.isoformat() if submissions else None,
+                        'last_submission_passed': submissions[0].passed if submissions else None,
+                        'submission': submission_data,  # Include the submission data
+                    }
+                    print(f"🔍 Assignment data prepared: {assignment_data}")
+                else:
+                    print(f"🔍 No assignment found for lesson")
+            except Exception as e:
+                print(f"❌ Error preparing assignment data: {e}")
+                import traceback
+                print(f"❌ Traceback: {traceback.format_exc()}")
+            
             # Pre-compute class event data (moved from serializer)
             class_event_data = None
             if lesson.type == 'live_class':
@@ -2983,6 +3062,7 @@ class StudentLessonDetailView(APIView):
             context = {
                 'request': request,
                 'quiz_data': quiz_data,
+                'assignment_data': assignment_data,
                 'class_event_data': class_event_data,
                 'materials_data': materials_data,
                 'teacher_name': teacher_name,

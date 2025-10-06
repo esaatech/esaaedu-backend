@@ -790,6 +790,12 @@ class AssignmentSubmission(models.Model):
     """
     Student submissions for assignments with grading and feedback
     """
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('submitted', 'Submitted'),
+        ('graded', 'Graded'),
+    ]
+    
     # Basic Information
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='assignment_submissions')
@@ -798,6 +804,12 @@ class AssignmentSubmission(models.Model):
     
     # Submission Details
     attempt_number = models.IntegerField(validators=[MinValueValidator(1)])
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='draft',
+        help_text="Submission status: draft, submitted, or graded"
+    )
     submitted_at = models.DateTimeField(auto_now_add=True)
     
     # Student Answers
@@ -897,12 +909,24 @@ class AssignmentSubmission(models.Model):
             else:
                 self.passed = False
         
+        # Backward compatibility: auto-set status based on is_graded
+        if hasattr(self, 'status'):
+            if self.is_graded and self.status != 'graded':
+                self.status = 'graded'
+            elif not self.is_graded and self.status not in ['draft', 'submitted']:
+                # If no status is set, default to 'submitted' for existing records
+                self.status = 'submitted'
+        
         super().save(*args, **kwargs)
     
     @property
     def display_status(self):
         """Return status for frontend display"""
-        if self.is_graded:
+        # Use new status field if available, otherwise fall back to old logic
+        if hasattr(self, 'status') and self.status:
+            return self.status
+        # Backward compatibility: use is_graded field
+        elif self.is_graded:
             return "graded"
         else:
             return "submitted"

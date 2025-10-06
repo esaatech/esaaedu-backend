@@ -563,15 +563,16 @@ class AssignmentQuestionAdmin(admin.ModelAdmin):
 
 @admin.register(AssignmentSubmission)
 class AssignmentSubmissionAdmin(admin.ModelAdmin):
-    list_display = ['student_name', 'assignment_title', 'attempt_number', 'points_earned', 'points_possible', 'percentage', 'passed', 'is_graded', 'submitted_at']
-    list_filter = ['is_graded', 'passed', 'attempt_number', 'assignment__assignment_type', 'submitted_at', 'graded_at']
+    list_display = ['student_name', 'assignment_title', 'attempt_number', 'status', 'points_earned', 'points_possible', 'percentage', 'passed', 'is_graded', 'submitted_at']
+    list_filter = ['status', 'is_graded', 'passed', 'attempt_number', 'assignment__assignment_type', 'submitted_at', 'graded_at']
     search_fields = ['student__email', 'student__first_name', 'student__last_name', 'assignment__title', 'assignment__lesson__title']
     readonly_fields = ['id', 'submitted_at', 'graded_at', 'percentage', 'passed']
     date_hierarchy = 'submitted_at'
+    actions = ['mark_as_draft', 'mark_as_submitted', 'mark_as_graded']
     
     fieldsets = (
         ('Submission Information', {
-            'fields': ('student', 'assignment', 'enrollment', 'attempt_number', 'answers', 'submitted_at')
+            'fields': ('student', 'assignment', 'enrollment', 'attempt_number', 'status', 'answers', 'submitted_at')
         }),
         ('Grading', {
             'fields': ('is_graded', 'points_earned', 'points_possible', 'percentage', 'passed', 'graded_by', 'graded_at', 'graded_questions')
@@ -598,6 +599,25 @@ class AssignmentSubmissionAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related(
             'student', 'assignment', 'assignment__lesson', 'assignment__lesson__course', 'graded_by', 'enrollment'
         )
+    
+    def mark_as_draft(self, request, queryset):
+        """Action to mark submissions as draft"""
+        updated = queryset.update(status='draft')
+        self.message_user(request, f'{updated} submissions were marked as draft.')
+    mark_as_draft.short_description = "Mark selected submissions as draft"
+    
+    def mark_as_submitted(self, request, queryset):
+        """Action to mark submissions as submitted"""
+        updated = queryset.update(status='submitted')
+        self.message_user(request, f'{updated} submissions were marked as submitted.')
+    mark_as_submitted.short_description = "Mark selected submissions as submitted"
+    
+    def mark_as_graded(self, request, queryset):
+        """Action to mark submissions as graded"""
+        from django.utils import timezone
+        updated = queryset.update(status='graded', is_graded=True, graded_at=timezone.now(), graded_by=request.user)
+        self.message_user(request, f'{updated} submissions were marked as graded.')
+    mark_as_graded.short_description = "Mark selected submissions as graded"
 
 
 @admin.register(ProjectPlatform)

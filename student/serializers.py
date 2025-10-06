@@ -5,6 +5,7 @@ from .models import (
     StudentBehavior, StudentNote, StudentCommunication,
     QuizQuestionFeedback, QuizAttemptFeedback
 )
+from courses.models import AssignmentSubmission
 
 User = get_user_model()
 
@@ -621,3 +622,48 @@ class DashboardOverviewSerializer(serializers.Serializer):
     text_lessons = TextLessonSerializer(many=True)
     interactive_lessons = InteractiveLessonSerializer(many=True)
     recent_achievements = AchievementSerializer(many=True)
+
+
+# ===== ASSIGNMENT SUBMISSION SERIALIZERS =====
+
+class AssignmentSubmissionSerializer(serializers.Serializer):
+    """Serializer for assignment submission requests"""
+    answers = serializers.JSONField(help_text="Student answers for each question")
+    is_draft = serializers.BooleanField(default=False, help_text="Whether this is a draft submission")
+    submission_type = serializers.ChoiceField(
+        choices=['draft', 'completed'],
+        default='draft',
+        help_text="Type of submission"
+    )
+    
+    def validate_answers(self, value):
+        """Validate that answers is a dictionary"""
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Answers must be a dictionary")
+        return value
+    
+    def validate(self, data):
+        """Cross-field validation"""
+        is_draft = data.get('is_draft', False)
+        submission_type = data.get('submission_type', 'draft')
+        
+        # Ensure consistency between is_draft and submission_type
+        if is_draft and submission_type != 'draft':
+            raise serializers.ValidationError("Draft submissions must have submission_type='draft'")
+        elif not is_draft and submission_type != 'completed':
+            raise serializers.ValidationError("Final submissions must have submission_type='completed'")
+        
+        return data
+
+
+class AssignmentSubmissionResponseSerializer(serializers.ModelSerializer):
+    """Serializer for assignment submission responses"""
+    
+    class Meta:
+        model = AssignmentSubmission
+        fields = [
+            'id', 'attempt_number', 'status', 'submitted_at', 
+            'answers', 'is_graded', 'points_earned', 'points_possible', 
+            'percentage', 'passed'
+        ]
+        read_only_fields = fields

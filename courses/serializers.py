@@ -65,10 +65,12 @@ class LessonListSerializer(serializers.ModelSerializer):
 class LessonDetailSerializer(serializers.ModelSerializer):
     """
     Comprehensive serializer for individual lesson details (second API call)
-    Returns full lesson data including materials, quiz, and class events
+    Returns full lesson data including materials, quiz, assignments, and class events
     """
     materials = serializers.SerializerMethodField()
     quiz = serializers.SerializerMethodField()
+    assignment = serializers.SerializerMethodField()
+    has_assignment = serializers.SerializerMethodField()
     class_event = serializers.SerializerMethodField()
     teacher_name = serializers.SerializerMethodField()
     course_title = serializers.CharField(source='course.title', read_only=True)
@@ -80,7 +82,7 @@ class LessonDetailSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'type', 'duration', 'order',
             'text_content', 'video_url', 'audio_url', 'live_class_date', 
             'live_class_status', 'content', 'materials', 'prerequisites',
-            'quiz', 'class_event', 'teacher_name', 'course_title',
+            'quiz', 'assignment', 'has_assignment', 'class_event', 'teacher_name', 'course_title',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -88,6 +90,15 @@ class LessonDetailSerializer(serializers.ModelSerializer):
     def get_quiz(self, obj):
         """Get pre-computed quiz data from context"""
         return self.context.get('quiz_data')
+    
+    def get_assignment(self, obj):
+        """Get pre-computed assignment data from context"""
+        return self.context.get('assignment_data')
+    
+    def get_has_assignment(self, obj):
+        """Check if lesson has an assignment"""
+        assignment_data = self.context.get('assignment_data')
+        return assignment_data is not None
     
     def get_class_event(self, obj):
         """Get pre-computed class event data from context"""
