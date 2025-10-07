@@ -2521,6 +2521,20 @@ def student_lesson_detail_contract(request):
                                         }
                                     ],
                                     "user_attempts_count": "integer - Student's attempt count",
+                                    "user_attempts": [
+                                        {
+                                            "id": "uuid - Attempt ID",
+                                            "attempt_number": "integer - Attempt number (1, 2, 3, etc.)",
+                                            "score": "decimal - Score as percentage (null if not completed)",
+                                            "points_earned": "integer - Points earned",
+                                            "passed": "boolean - Whether attempt passed",
+                                            "answers": "object - Student answers for each question",
+                                            "started_at": "datetime - When attempt was started",
+                                            "completed_at": "datetime - When attempt was completed (null if not completed)",
+                                            "is_teacher_graded": "boolean - Whether teacher has manually graded this attempt",
+                                            "display_status": "string - Status for display (auto_graded, teacher_enhanced, ungraded)"
+                                        }
+                                    ],
                                     "can_retake": "boolean - Whether student can retake",
                                     "has_passed": "boolean - Whether student has passed",
                                     "last_attempt": "decimal - Last attempt score",

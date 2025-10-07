@@ -2881,21 +2881,7 @@ class StudentLessonDetailView(APIView):
                                 'order': q.order,
                             } for q in questions
                         ],
-                        "user_attempts_count": len(attempts),
-                        "user_attempts": [
-                            {
-                                "id": str(attempt.id),
-                                "attempt_number": attempt.attempt_number,
-                                "score": float(attempt.score) if attempt.score else None,
-                                "points_earned": attempt.points_earned,
-                                "passed": attempt.passed,
-                                "answers": attempt.answers,
-                                "started_at": attempt.started_at.isoformat(),
-                                "completed_at": attempt.completed_at.isoformat() if attempt.completed_at else None,
-                                "is_teacher_graded": attempt.is_teacher_graded,
-                                "display_status": attempt.display_status
-                            } for attempt in attempts
-                        ],
+                        'user_attempts_count': len(attempts),
                         'can_retake': len(attempts) < quiz.max_attempts if attempts else True,
                         'has_passed': any(attempt.passed for attempt in attempts),
                         'last_attempt': attempts[0].score if attempts else None,
