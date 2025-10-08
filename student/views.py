@@ -1001,9 +1001,12 @@ class TeacherStudentRecord(APIView):
             return {}
         
         return {
-            'progress_percentage': float(enrollment.progress_percentage),
+            'progress_percentage': round(float(enrollment.progress_percentage), 2),
             'overall_grade': enrollment.overall_grade,
-            'average_quiz_score': float(enrollment.average_quiz_score) if enrollment.average_quiz_score else None,
+            'average_quiz_score': round(float(enrollment.average_quiz_score), 2) if enrollment.average_quiz_score else None,
+            'average_assignment_score': round(float(enrollment.average_assignment_score), 2) if enrollment.average_assignment_score else None,
+            'quiz_completion_rate': round(float(enrollment.quiz_completion_rate), 2) if enrollment.quiz_completion_rate else None,
+            'assignment_completion_rate': round(float(enrollment.assignment_completion_rate), 2) if enrollment.assignment_completion_rate else None,
             'is_at_risk': enrollment.is_at_risk,
             'completed_lessons_count': enrollment.completed_lessons_count,
             'total_lessons_count': enrollment.total_lessons_count,
@@ -2838,6 +2841,31 @@ class AssignmentSubmissionView(APIView):
                 submission.status = 'draft' if is_draft else 'submitted'
                 submission.submitted_at = timezone.now()
                 submission.save()
+            
+            # Update assignment completion counters (only for submitted assignments, not drafts)
+            if not is_draft:
+                try:
+                    # Count total questions in this assignment
+                    total_questions = assignment.questions.count()
+                    
+                    # Count questions the student completed (answered)
+                    completed_questions = len([answer for answer in submission.answers.values() if answer])
+                    
+                    # Update enrollment counters
+                    enrollment.total_assignments_assigned += total_questions
+                    enrollment.total_assignments_completed += completed_questions
+                    enrollment.save()
+                    
+                    print(f"📊 Assignment completion updated:")
+                    print(f"   - Total questions: {total_questions}")
+                    print(f"   - Completed questions: {completed_questions}")
+                    print(f"   - Cumulative assigned: {enrollment.total_assignments_assigned}")
+                    print(f"   - Cumulative completed: {enrollment.total_assignments_completed}")
+                    print(f"   - Completion rate: {enrollment.assignment_completion_rate:.2f}%")
+                    
+                except Exception as e:
+                    print(f"❌ Error updating assignment completion counters: {e}")
+                    # Don't fail the request if counter update fails
             
             # Return response
             response_serializer = AssignmentSubmissionResponseSerializer(submission)

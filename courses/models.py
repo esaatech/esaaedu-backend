@@ -899,6 +899,20 @@ class AssignmentSubmission(models.Model):
         return f"{self.student.get_full_name()} - {self.assignment.title} (Attempt {self.attempt_number})"
     
     def save(self, *args, **kwargs):
+        # Track if this is a new submission or status change
+        is_new_submission = self.pk is None
+        was_submitted = False
+        
+        if not is_new_submission:
+            # Check if status changed to 'submitted'
+            try:
+                old_submission = AssignmentSubmission.objects.get(pk=self.pk)
+                was_submitted = (old_submission.status != 'submitted' and self.status == 'submitted')
+            except AssignmentSubmission.DoesNotExist:
+                was_submitted = (self.status == 'submitted')
+        else:
+            was_submitted = (self.status == 'submitted')
+        
         # Auto-calculate percentage if points are provided
         if self.points_earned is not None and self.points_possible is not None and self.points_possible > 0:
             self.percentage = (self.points_earned / self.points_possible) * 100
@@ -920,6 +934,15 @@ class AssignmentSubmission(models.Model):
                 self.status = 'submitted'
         
         super().save(*args, **kwargs)
+        
+        # Update assignment completion metrics
+        if was_submitted and self.enrollment:
+            try:
+                # Increment completed assignments count
+                self.enrollment.total_assignments_completed += 1
+                self.enrollment.save()
+            except Exception as e:
+                print(f"Error updating assignment completion metrics: {e}")
     
     @property
     def display_status(self):

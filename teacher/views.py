@@ -1901,11 +1901,34 @@ class AssignmentGradingView(APIView):
             if serializer.is_valid():
                 # Only set grader and grading timestamp if it's actually graded
                 save_kwargs = {}
-                if serializer.validated_data.get('is_graded', False):
+                is_graded = serializer.validated_data.get('is_graded', False)
+                if is_graded:
                     save_kwargs['graded_by'] = request.user
                     save_kwargs['graded_at'] = timezone.now()
                 
                 updated_submission = serializer.save(**save_kwargs)
+                
+                # Update assignment performance metrics
+                try:
+                    # Get the student's enrollment for this course
+                    from student.models import EnrolledCourse
+                    enrollment = EnrolledCourse.objects.get(
+                        student_profile__user=submission.student,
+                        course=assignment.lesson.course
+                    )
+                    
+                    # Calculate assignment score percentage
+                    if updated_submission.points_possible > 0:
+                        assignment_score = (updated_submission.points_earned / updated_submission.points_possible) * 100
+                    else:
+                        assignment_score = 0
+                    
+                    # Update performance metrics
+                    enrollment.update_assignment_performance(assignment_score, is_graded)
+                    
+                except Exception as e:
+                    print(f"Error updating assignment performance metrics: {e}")
+                    # Don't fail the request if metrics update fails
                 
                 response_serializer = AssignmentSubmissionSerializer(updated_submission)
                 return Response({

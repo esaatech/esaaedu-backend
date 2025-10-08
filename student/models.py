@@ -90,8 +90,15 @@ class EnrolledCourse(models.Model):
         null=True, 
         blank=True
     )
-    total_assignments_completed = models.PositiveIntegerField(default=0)
+    average_assignment_score = models.DecimalField(
+        max_digits=5, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Average assignment score percentage"
+    )
     total_assignments_assigned = models.PositiveIntegerField(default=0)
+    total_assignments_completed = models.PositiveIntegerField(default=0)
     
     # Engagement Analytics
     total_study_time = models.DurationField(
@@ -273,6 +280,13 @@ class EnrolledCourse(models.Model):
         return (self.total_assignments_completed / self.total_assignments_assigned) * 100
     
     @property
+    def quiz_completion_rate(self):
+        """Calculate quiz completion rate"""
+        if self.total_quizzes_taken == 0:
+            return 0
+        return (self.total_quizzes_passed / self.total_quizzes_taken) * 100
+    
+    @property
     def is_at_risk(self):
         """Determine if student is at risk based on engagement metrics"""
         if self.days_since_last_access and self.days_since_last_access > 7:
@@ -421,6 +435,55 @@ class EnrolledCourse(models.Model):
             
         except Exception as e:
             print(f"Error updating quiz performance: {e}")
+            return False
+    
+    def update_assignment_performance(self, assignment_score, is_graded=False):
+        """
+        Update assignment performance metrics when an assignment is graded
+        
+        Args:
+            assignment_score (float): Assignment score percentage (0-100)
+            is_graded (bool): Whether the assignment is fully graded (not draft)
+        """
+        try:
+            # Only update metrics if assignment is fully graded (not draft)
+            if is_graded:
+                # Calculate average assignment score dynamically
+                from courses.models import AssignmentSubmission
+                
+                graded_submissions = AssignmentSubmission.objects.filter(
+                    enrollment=self,
+                    is_graded=True,
+                    points_earned__isnull=False,
+                    points_possible__isnull=False,
+                    points_possible__gt=0
+                )
+                
+                if graded_submissions.exists():
+                    total_score = 0
+                    for submission in graded_submissions:
+                        score_percentage = (submission.points_earned / submission.points_possible) * 100
+                        total_score += score_percentage
+                    
+                    self.average_assignment_score = total_score / graded_submissions.count()
+                else:
+                    self.average_assignment_score = assignment_score
+                
+                # Update last access time
+                self.last_accessed = timezone.now()
+                
+                # Save all changes
+                self.save()
+                
+                return True
+            else:
+                # For draft saves, just update last access time
+                self.last_accessed = timezone.now()
+                self.save()
+                return True
+            
+        except Exception as e:
+            print(f"Error updating assignment performance: {e}")
             return False
     
     @classmethod
