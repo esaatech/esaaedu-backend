@@ -1069,28 +1069,57 @@ class TeacherStudentRecord(APIView):
         from courses.models import AssignmentSubmission
         submissions = AssignmentSubmission.objects.filter(
             enrollment__in=enrollments
-        ).select_related('assignment', 'assignment__lesson').order_by('-submitted_at')
+        ).select_related('assignment', 'assignment__lesson').prefetch_related(
+            'assignment__questions'
+        ).order_by('-submitted_at')
         
-        return [{
-            'id': submission.id,
-            'assignment_title': submission.assignment.title,
-            'lesson_title': submission.assignment.lesson.title,
-            'course_title': submission.enrollment.course.title,
-            'assignment_type': submission.assignment.assignment_type,
-            'due_date': submission.assignment.due_date.isoformat() if submission.assignment.due_date else None,
-            'status': submission.status,  # draft, submitted, graded
-            'submitted_at': submission.submitted_at.isoformat() if submission.submitted_at else None,
-            'points_earned': float(submission.points_earned) if submission.points_earned else None,
-            'points_possible': float(submission.points_possible) if submission.points_possible else None,
-            'percentage': float(submission.percentage) if submission.percentage else None,
-            'passed': submission.passed,
-            'is_graded': submission.is_graded,
-            'attempt_number': submission.attempt_number,
-            'graded_at': submission.graded_at.isoformat() if submission.graded_at else None,
-            'graded_by': submission.grader_name if submission.graded_by else None,
-            'instructor_feedback': submission.instructor_feedback,
-            'feedback_checked': submission.feedback_checked
-        } for submission in submissions]
+        assignment_data = []
+        for submission in submissions:
+            # Get assignment questions
+            questions = []
+            for question in submission.assignment.questions.all().order_by('order'):
+                questions.append({
+                    'id': str(question.id),
+                    'question_text': question.question_text,
+                    'question_type': question.type,
+                    'points_possible': float(question.points),
+                    'order': question.order,
+                    'content': question.content,
+                    'explanation': question.explanation,
+                    'correct_answer': question.content.get('correct_answer') if question.content else None
+                })
+            
+            # Get student answers for this submission
+            student_answers = submission.answers or {}
+            
+            assignment_data.append({
+                'id': submission.id,  # submission ID
+                'assignment_id': str(submission.assignment.id),  # assignment ID
+                'assignment_title': submission.assignment.title,
+                'lesson_title': submission.assignment.lesson.title,
+                'course_title': submission.enrollment.course.title,
+                'assignment_type': submission.assignment.assignment_type,
+                'due_date': submission.assignment.due_date.isoformat() if submission.assignment.due_date else None,
+                'status': submission.status,  # draft, submitted, graded
+                'submitted_at': submission.submitted_at.isoformat() if submission.submitted_at else None,
+                'points_earned': float(submission.points_earned) if submission.points_earned else None,
+                'points_possible': float(submission.points_possible) if submission.points_possible else None,
+                'percentage': float(submission.percentage) if submission.percentage else None,
+                'passed': submission.passed,
+                'is_graded': submission.is_graded,
+                'attempt_number': submission.attempt_number,
+                'graded_at': submission.graded_at.isoformat() if submission.graded_at else None,
+                'graded_by': submission.grader_name if submission.graded_by else None,
+                'instructor_feedback': submission.instructor_feedback,
+                'feedback_checked': submission.feedback_checked,
+                # Add detailed grading data
+                'questions': questions,
+                'student_answers': student_answers,
+                'total_points_possible': sum(q['points_possible'] for q in questions),
+                'graded_questions': submission.graded_questions or []
+            })
+        
+        return assignment_data
     
     def get_course_progress(self, enrollment):
         """Get course progress for the student"""

@@ -333,8 +333,8 @@ class AssignmentSubmissionSerializer(serializers.ModelSerializer):
     """
     student_name = serializers.CharField(source='student.get_full_name', read_only=True)
     student_email = serializers.CharField(source='student.email', read_only=True)
-    grader_name = serializers.CharField(source='grader_name', read_only=True)
-    display_status = serializers.CharField(source='display_status', read_only=True)
+    grader_name = serializers.CharField(read_only=True)
+    display_status = serializers.CharField(read_only=True)
     
     class Meta:
         model = AssignmentSubmission
@@ -343,12 +343,12 @@ class AssignmentSubmissionSerializer(serializers.ModelSerializer):
             'submitted_at', 'answers', 'is_graded', 'graded_at', 'graded_by',
             'grader_name', 'points_earned', 'points_possible', 'percentage',
             'passed', 'instructor_feedback', 'feedback_checked', 'feedback_checked_at',
-            'feedback_response', 'graded_questions', 'display_status', 'created_at'
+            'feedback_response', 'graded_questions', 'display_status'
         ]
         read_only_fields = [
             'id', 'student', 'student_name', 'student_email', 'attempt_number',
             'submitted_at', 'graded_at', 'grader_name', 'percentage', 'passed',
-            'feedback_checked', 'feedback_checked_at', 'display_status', 'created_at'
+            'feedback_checked', 'feedback_checked_at', 'display_status'
         ]
     
     def validate_points_earned(self, value):
@@ -375,7 +375,7 @@ class AssignmentGradingSerializer(serializers.ModelSerializer):
     class Meta:
         model = AssignmentSubmission
         fields = [
-            'is_graded', 'points_earned', 'points_possible', 'instructor_feedback',
+            'status', 'is_graded', 'points_earned', 'points_possible', 'instructor_feedback',
             'graded_questions'
         ]
     

@@ -1899,11 +1899,13 @@ class AssignmentGradingView(APIView):
             )
             
             if serializer.is_valid():
-                # Set grader and grading timestamp
-                updated_submission = serializer.save(
-                    graded_by=request.user,
-                    graded_at=timezone.now()
-                )
+                # Only set grader and grading timestamp if it's actually graded
+                save_kwargs = {}
+                if serializer.validated_data.get('is_graded', False):
+                    save_kwargs['graded_by'] = request.user
+                    save_kwargs['graded_at'] = timezone.now()
+                
+                updated_submission = serializer.save(**save_kwargs)
                 
                 response_serializer = AssignmentSubmissionSerializer(updated_submission)
                 return Response({

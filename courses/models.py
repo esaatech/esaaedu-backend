@@ -910,8 +910,10 @@ class AssignmentSubmission(models.Model):
                 self.passed = False
         
         # Backward compatibility: auto-set status based on is_graded
+        # Only auto-set status if it's not explicitly provided or is invalid
         if hasattr(self, 'status'):
-            if self.is_graded and self.status != 'graded':
+            if self.is_graded and self.status not in ['graded', 'draft', 'submitted']:
+                # Only auto-set to 'graded' if status is not explicitly set
                 self.status = 'graded'
             elif not self.is_graded and self.status not in ['draft', 'submitted']:
                 # If no status is set, default to 'submitted' for existing records
