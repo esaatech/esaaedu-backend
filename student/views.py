@@ -2842,30 +2842,9 @@ class AssignmentSubmissionView(APIView):
                 submission.submitted_at = timezone.now()
                 submission.save()
             
-            # Update assignment completion counters (only for submitted assignments, not drafts)
-            if not is_draft:
-                try:
-                    # Count total questions in this assignment
-                    total_questions = assignment.questions.count()
-                    
-                    # Count questions the student completed (answered)
-                    completed_questions = len([answer for answer in submission.answers.values() if answer])
-                    
-                    # Update enrollment counters
-                    enrollment.total_assignments_assigned += total_questions
-                    enrollment.total_assignments_completed += completed_questions
-                    enrollment.save()
-                    
-                    print(f"📊 Assignment completion updated:")
-                    print(f"   - Total questions: {total_questions}")
-                    print(f"   - Completed questions: {completed_questions}")
-                    print(f"   - Cumulative assigned: {enrollment.total_assignments_assigned}")
-                    print(f"   - Cumulative completed: {enrollment.total_assignments_completed}")
-                    print(f"   - Completion rate: {enrollment.assignment_completion_rate:.2f}%")
-                    
-                except Exception as e:
-                    print(f"❌ Error updating assignment completion counters: {e}")
-                    # Don't fail the request if counter update fails
+            # Assignment submission completed successfully
+            # Note: Assignment completion tracking has been removed from UI
+            # The fields remain in the model for potential future use
             
             # Return response
             response_serializer = AssignmentSubmissionResponseSerializer(submission)

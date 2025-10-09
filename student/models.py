@@ -275,6 +275,7 @@ class EnrolledCourse(models.Model):
     @property
     def assignment_completion_rate(self):
         """Calculate assignment completion rate"""
+        # Note: This property is currently unused in the UI but kept for potential future use
         if self.total_assignments_assigned == 0:
             return 0
         return (self.total_assignments_completed / self.total_assignments_assigned) * 100
