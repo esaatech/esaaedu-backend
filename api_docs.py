@@ -2914,6 +2914,7 @@ def teacher_student_record_contract(request):
                                     "attempt_number": "integer - Attempt number",
                                     "status": "string - Submission status (draft, submitted, graded)",
                                     "is_graded": "boolean - Grading status",
+                                    "is_teacher_draft": "boolean - Teacher is working on grading this submission",
                                     "graded_at": "datetime - Grading completion date",
                                     "graded_by": "string - Teacher name who graded",
                                     "points_earned": "decimal - Points awarded",

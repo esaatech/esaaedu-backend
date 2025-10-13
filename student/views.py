@@ -2798,12 +2798,12 @@ class AssignmentSubmissionView(APIView):
             validated_data = serializer.validated_data
             is_draft = validated_data.get('is_draft', False)
             
-            # Get student's enrollment in the course
+            # Get student's enrollment in the course (allow both active and completed like quizzes)
             try:
                 enrollment = EnrolledCourse.objects.get(
                     student_profile__user=request.user,
                     course=assignment.lesson.course,
-                    status='active'
+                    status__in=['active', 'completed']
                 )
             except EnrolledCourse.DoesNotExist:
                 return Response(
