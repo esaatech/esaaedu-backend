@@ -340,7 +340,7 @@ class AssignmentSubmissionSerializer(serializers.ModelSerializer):
         model = AssignmentSubmission
         fields = [
             'id', 'student', 'student_name', 'student_email', 'attempt_number',
-            'submitted_at', 'answers', 'is_graded', 'graded_at', 'graded_by',
+            'submitted_at', 'answers', 'is_graded', 'is_teacher_draft', 'graded_at', 'graded_by',
             'grader_name', 'points_earned', 'points_possible', 'percentage',
             'passed', 'instructor_feedback', 'feedback_checked', 'feedback_checked_at',
             'feedback_response', 'graded_questions', 'display_status'
@@ -375,7 +375,7 @@ class AssignmentGradingSerializer(serializers.ModelSerializer):
     class Meta:
         model = AssignmentSubmission
         fields = [
-            'status', 'is_graded', 'points_earned', 'points_possible', 'instructor_feedback',
+            'status', 'is_graded', 'is_teacher_draft', 'points_earned', 'points_possible', 'instructor_feedback',
             'graded_questions'
         ]
     

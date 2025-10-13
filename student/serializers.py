@@ -663,7 +663,7 @@ class AssignmentSubmissionResponseSerializer(serializers.ModelSerializer):
         model = AssignmentSubmission
         fields = [
             'id', 'attempt_number', 'status', 'submitted_at', 
-            'answers', 'is_graded', 'points_earned', 'points_possible', 
+            'answers', 'is_graded', 'is_teacher_draft', 'points_earned', 'points_possible', 
             'percentage', 'passed'
         ]
         read_only_fields = fields

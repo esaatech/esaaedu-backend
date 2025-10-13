@@ -820,6 +820,7 @@ class AssignmentSubmission(models.Model):
     
     # Teacher Grading
     is_graded = models.BooleanField(default=False, help_text="Has teacher graded this submission?")
+    is_teacher_draft = models.BooleanField(default=False, help_text="Is teacher currently working on grading this submission?")
     graded_at = models.DateTimeField(null=True, blank=True)
     graded_by = models.ForeignKey(
         User, 

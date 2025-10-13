@@ -1110,6 +1110,7 @@ class TeacherStudentRecord(APIView):
                 'percentage': float(submission.percentage) if submission.percentage else None,
                 'passed': submission.passed,
                 'is_graded': submission.is_graded,
+                'is_teacher_draft': submission.is_teacher_draft,  # Add the missing field
                 'attempt_number': submission.attempt_number,
                 'graded_at': submission.graded_at.isoformat() if submission.graded_at else None,
                 'graded_by': submission.grader_name if submission.graded_by else None,

@@ -14,7 +14,7 @@ This guide will help you set up Slack notifications for contact form submissions
 1. Go to [https://api.slack.com/apps](https://api.slack.com/apps)
 2. Click **"Create New App"**
 3. Choose **"From scratch"**
-4. Enter app name: `EsaaEdu Contact Notifications`
+4. Enter app name: `SBTY contant Notification `
 5. Select your workspace
 6. Click **"Create App"**
 
