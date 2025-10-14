@@ -1072,7 +1072,7 @@ class TeacherStudentRecord(APIView):
         from courses.models import AssignmentSubmission
         submissions = AssignmentSubmission.objects.filter(
             enrollment__in=enrollments
-        ).select_related('assignment', 'assignment__lesson').prefetch_related(
+        ).exclude(status='draft').select_related('assignment', 'assignment__lesson').prefetch_related(
             'assignment__questions'
         ).order_by('-submitted_at')
         
