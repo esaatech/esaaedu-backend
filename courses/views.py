@@ -2,6 +2,7 @@ from multiprocessing import parent_process
 from django.shortcuts import get_object_or_404
 from django.db import models
 from rest_framework import status, permissions
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -3907,3 +3908,483 @@ class StudentCourseDashboardView(APIView):
                 "enrollment_date": None,
                 "status": None
             }
+
+
+class LessonMaterial(APIView):
+    """
+    Lesson material management
+    
+    GET: List materials for a lesson
+    POST: Create material for a lesson
+    PUT: Update specific material
+    DELETE: Delete specific material
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, lesson_id):
+        """
+        GET: Retrieve materials for a specific lesson
+        """
+        try:
+            lesson = get_object_or_404(Lesson, id=lesson_id)
+            
+            # Check if user has access to this lesson
+            if not self._user_has_access(request.user, lesson):
+                return Response(
+                    {'error': 'You do not have permission to access this lesson'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get materials for this lesson
+            materials = lesson.lesson_materials.all().order_by('order')
+            
+            materials_data = [{
+                'id': str(material.id),
+                'title': material.title,
+                'description': material.description,
+                'material_type': material.material_type,
+                'file_url': material.file_url,
+                'file_size': material.file_size,
+                'file_size_mb': material.file_size_mb,
+                'file_extension': material.file_extension,
+                'is_required': material.is_required,
+                'is_downloadable': material.is_downloadable,
+                'order': material.order,
+                'created_at': material.created_at.isoformat(),
+                'updated_at': material.updated_at.isoformat()
+            } for material in materials]
+            
+            return Response({
+                'lesson_id': str(lesson.id),
+                'lesson_title': lesson.title,
+                'materials': materials_data,
+                'total_count': materials.count()
+            }, status=status.HTTP_200_OK)
+            
+        except Lesson.DoesNotExist:
+            return Response(
+                {'error': 'Lesson not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to retrieve materials: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, lesson_id):
+        """
+        POST: Create material for a lesson
+        """
+        try:
+            lesson = get_object_or_404(Lesson, id=lesson_id)
+            
+            # Check if user has permission to modify this lesson
+            if not self._user_can_modify(request.user, lesson):
+                return Response(
+                    {'error': 'You do not have permission to modify this lesson'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Validate and create material using serializer
+            from .serializers import LessonMaterialCreateSerializer
+            serializer = LessonMaterialCreateSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            material = serializer.save()
+            material.lessons.add(lesson)
+            
+            return Response({
+                'message': 'Material created successfully',
+                'material': {
+                    'id': str(material.id),
+                    'title': material.title,
+                    'description': material.description,
+                    'material_type': material.material_type,
+                    'file_url': material.file_url,
+                    'file_size': material.file_size,
+                    'file_size_mb': material.file_size_mb,
+                    'file_extension': material.file_extension,
+                    'is_required': material.is_required,
+                    'is_downloadable': material.is_downloadable,
+                    'order': material.order,
+                    'created_at': material.created_at.isoformat()
+                }
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to create material: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, material_id):
+        """
+        PUT: Update specific material
+        """
+        try:
+            material = get_object_or_404(LessonMaterial, id=material_id)
+            
+            # Check if user can modify (check if user teaches any of the lessons this material belongs to)
+            can_modify = any(self._user_can_modify(request.user, lesson) for lesson in material.lessons.all())
+            if not can_modify:
+                return Response(
+                    {'error': 'You do not have permission to modify this material'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Validate and update material using serializer
+            from .serializers import LessonMaterialUpdateSerializer
+            serializer = LessonMaterialUpdateSerializer(material, data=request.data, partial=True)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            material = serializer.save()
+            
+            return Response({
+                'message': 'Material updated successfully',
+                'material': {
+                    'id': str(material.id),
+                    'title': material.title,
+                    'description': material.description,
+                    'material_type': material.material_type,
+                    'file_url': material.file_url,
+                    'file_size': material.file_size,
+                    'file_size_mb': material.file_size_mb,
+                    'file_extension': material.file_extension,
+                    'is_required': material.is_required,
+                    'is_downloadable': material.is_downloadable,
+                    'order': material.order,
+                    'updated_at': material.updated_at.isoformat()
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except LessonMaterial.DoesNotExist:
+            return Response(
+                {'error': 'Material not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to update material: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def delete(self, request, material_id):
+        """
+        DELETE: Delete specific material
+        """
+        try:
+            material = get_object_or_404(LessonMaterial, id=material_id)
+            
+            # Check if user has permission to modify this lesson
+            if not self._user_can_modify(request.user, material.lesson):
+                return Response(
+                    {'error': 'You do not have permission to delete this material'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            material.delete()
+            
+            return Response({
+                'message': 'Material deleted successfully'
+            }, status=status.HTTP_200_OK)
+            
+        except LessonMaterial.DoesNotExist:
+            return Response(
+                {'error': 'Material not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to delete material: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _user_has_access(self, user, lesson):
+        """Check if user has access to view this lesson"""
+        # Teachers can access lessons they created
+        if user.role == 'teacher' and lesson.course.teacher == user:
+            return True
+        
+        # Students can access lessons in courses they're enrolled in
+        if user.role == 'student':
+            from student.models import EnrolledCourse
+            return EnrolledCourse.objects.filter(
+                student_profile__user=user,
+                course=lesson.course,
+                status__in=['active', 'completed']
+            ).exists()
+        
+        return False
+    
+    def _user_can_modify(self, user, lesson):
+        """Check if user can modify this lesson"""
+        return user.role == 'teacher' and lesson.course.teacher == user
+
+
+class BookPageView(APIView):
+    """
+    Book page management with pagination support
+    
+    GET: Get specific page or paginated book content
+    POST: Create new page (for new books)
+    PUT: Update existing page (for existing books)
+    DELETE: Delete page
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, material_id, page_number=None):
+        """
+        GET: Retrieve book page(s)
+        - If page_number provided: Get specific page
+        - If no page_number: Get paginated list of pages
+        """
+        try:
+            # Get book material
+            book_material = get_object_or_404(
+                LessonMaterial, 
+                id=material_id, 
+                material_type='book'
+            )
+            
+            # Check access permissions (check if user has access to any lesson this material belongs to)
+            has_access = any(self._user_has_access(request.user, lesson) for lesson in book_material.lessons.all())
+            if not has_access:
+                return Response(
+                    {'error': 'You do not have permission to access this book'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            if page_number:
+                # Get specific page
+                return self._get_specific_page(book_material, page_number)
+            else:
+                # Get paginated pages
+                return self._get_paginated_pages(request, book_material)
+                
+        except LessonMaterial.DoesNotExist:
+            return Response(
+                {'error': 'Book material not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to retrieve book pages: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, material_id):
+        """
+        POST: Create new page for book
+        """
+        try:
+            book_material = get_object_or_404(
+                LessonMaterial, 
+                id=material_id, 
+                material_type='book'
+            )
+            
+            # Check if user can modify
+            can_modify = any(self._user_can_modify(request.user, lesson) for lesson in book_material.lessons.all())
+            if not can_modify:
+                return Response(
+                    {'error': 'You do not have permission to modify this book'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get next page number
+            last_page = book_material.book_pages.order_by('-page_number').first()
+            next_page_number = (last_page.page_number + 1) if last_page else 1
+            
+            # Validate and create page using serializer
+            from .serializers import BookPageCreateSerializer
+            serializer = BookPageCreateSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            page = serializer.save(book_material=book_material, page_number=next_page_number)
+            
+            return Response({
+                'message': 'Page created successfully',
+                'page': {
+                    'id': str(page.id),
+                    'page_number': page.page_number,
+                    'title': page.title,
+                    'content': page.content,
+                    'image_url': page.image_url,
+                    'audio_url': page.audio_url,
+                    'is_required': page.is_required,
+                    'created_at': page.created_at.isoformat()
+                }
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to create page: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, material_id, page_number):
+        """
+        PUT: Update existing page
+        """
+        try:
+            book_material = get_object_or_404(
+                LessonMaterial, 
+                id=material_id, 
+                material_type='book'
+            )
+            
+            page = get_object_or_404(
+                BookPage,
+                book_material=book_material,
+                page_number=page_number
+            )
+            
+            # Check if user can modify
+            can_modify = any(self._user_can_modify(request.user, lesson) for lesson in book_material.lessons.all())
+            if not can_modify:
+                return Response(
+                    {'error': 'You do not have permission to modify this page'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Validate and update page using serializer
+            from .serializers import BookPageUpdateSerializer
+            serializer = BookPageUpdateSerializer(page, data=request.data, partial=True)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            page = serializer.save()
+            
+            return Response({
+                'message': 'Page updated successfully',
+                'page': {
+                    'id': str(page.id),
+                    'page_number': page.page_number,
+                    'title': page.title,
+                    'content': page.content,
+                    'image_url': page.image_url,
+                    'audio_url': page.audio_url,
+                    'is_required': page.is_required,
+                    'updated_at': page.updated_at.isoformat()
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to update page: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _get_specific_page(self, book_material, page_number):
+        """Get specific page with navigation info"""
+        try:
+            page = BookPage.objects.get(
+                book_material=book_material,
+                page_number=page_number
+            )
+            
+            # Get navigation info
+            total_pages = book_material.book_pages.count()
+            has_next = BookPage.objects.filter(
+                book_material=book_material,
+                page_number=page_number + 1
+            ).exists()
+            has_previous = BookPage.objects.filter(
+                book_material=book_material,
+                page_number=page_number - 1
+            ).exists()
+            
+            return Response({
+                'book': {
+                    'id': str(book_material.id),
+                    'title': book_material.title,
+                    'total_pages': total_pages
+                },
+                'page': {
+                    'id': str(page.id),
+                    'page_number': page.page_number,
+                    'title': page.title,
+                    'content': page.content,
+                    'image_url': page.image_url,
+                    'audio_url': page.audio_url,
+                    'is_required': page.is_required,
+                    'created_at': page.created_at.isoformat(),
+                    'updated_at': page.updated_at.isoformat()
+                },
+                'navigation': {
+                    'current_page': page_number,
+                    'total_pages': total_pages,
+                    'has_next': has_next,
+                    'has_previous': has_previous,
+                    'next_page': page_number + 1 if has_next else None,
+                    'previous_page': page_number - 1 if has_previous else None
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except BookPage.DoesNotExist:
+            return Response(
+                {'error': f'Page {page_number} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    def _get_paginated_pages(self, request, book_material):
+        """Get paginated list of pages"""
+        from django.core.paginator import Paginator
+        
+        page_number = int(request.GET.get('page', 1))
+        per_page = int(request.GET.get('per_page', 10))
+        
+        pages = book_material.book_pages.all().order_by('page_number')
+        paginator = Paginator(pages, per_page)
+        page_obj = paginator.get_page(page_number)
+        
+        pages_data = [{
+            'id': str(page.id),
+            'page_number': page.page_number,
+            'title': page.title,
+            'content': page.content[:200] + '...' if len(page.content) > 200 else page.content,
+            'image_url': page.image_url,
+            'audio_url': page.audio_url,
+            'is_required': page.is_required,
+            'created_at': page.created_at.isoformat()
+        } for page in page_obj]
+        
+        return Response({
+            'book': {
+                'id': str(book_material.id),
+                'title': book_material.title,
+                'description': book_material.description
+            },
+            'pages': pages_data,
+            'pagination': {
+                'current_page': page_obj.number,
+                'total_pages': paginator.num_pages,
+                'total_count': paginator.count,
+                'has_next': page_obj.has_next(),
+                'has_previous': page_obj.has_previous(),
+                'per_page': per_page
+            }
+        }, status=status.HTTP_200_OK)
+    
+    def _user_has_access(self, user, lesson):
+        """Check if user has access to view this lesson"""
+        if user.role == 'teacher' and lesson.course.teacher == user:
+            return True
+        
+        if user.role == 'student':
+            from student.models import EnrolledCourse
+            return EnrolledCourse.objects.filter(
+                student_profile__user=user,
+                course=lesson.course,
+                status__in=['active', 'completed']
+            ).exists()
+        
+        return False
+    
+    def _user_can_modify(self, user, lesson):
+        """Check if user can modify this lesson"""
+        return user.role == 'teacher' and lesson.course.teacher == user

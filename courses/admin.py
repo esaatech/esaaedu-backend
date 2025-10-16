@@ -77,14 +77,20 @@ class LessonAdmin(admin.ModelAdmin):
 
 @admin.register(LessonMaterial)
 class LessonMaterialAdmin(admin.ModelAdmin):
-    list_display = ['title', 'lesson', 'material_type', 'is_required', 'order', 'created_at']
+    list_display = ['title', 'get_lessons', 'material_type', 'is_required', 'order', 'created_at']
     list_filter = ['material_type', 'is_required', 'is_downloadable', 'created_at']
-    search_fields = ['title', 'description', 'lesson__title', 'lesson__course__title']
+    search_fields = ['title', 'description', 'lessons__title', 'lessons__course__title']
     readonly_fields = ['id', 'created_at', 'updated_at']
+    filter_horizontal = ['lessons']
+    
+    def get_lessons(self, obj):
+        """Display lessons as a comma-separated list"""
+        return ", ".join([lesson.title for lesson in obj.lessons.all()])
+    get_lessons.short_description = 'Lessons'
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('lesson', 'title', 'description', 'material_type')
+            'fields': ('lessons', 'title', 'description', 'material_type')
         }),
         ('File/Resource', {
             'fields': ('file_url', 'file_size', 'file_extension')

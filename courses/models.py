@@ -336,12 +336,13 @@ class LessonMaterial(models.Model):
         ('pdf', 'PDF'),
         ('presentation', 'Presentation'),
         ('worksheet', 'Worksheet'),
+        ('book', 'Book'),
         ('other', 'Other'),
     ]
     
     # Basic Information
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    lesson = models.ForeignKey(Lesson, on_delete=models.CASCADE, related_name='lesson_materials')
+    lessons = models.ManyToManyField(Lesson, related_name='lesson_materials', blank=True)
     title = models.CharField(max_length=200, help_text="Material title")
     description = models.TextField(blank=True, help_text="Material description")
     material_type = models.CharField(max_length=20, choices=MATERIAL_TYPES)
@@ -361,15 +362,15 @@ class LessonMaterial(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        ordering = ['lesson', 'order']
-        unique_together = ['lesson', 'order']
+        ordering = ['order', 'created_at']
         indexes = [
-            models.Index(fields=['lesson', 'material_type']),
+            models.Index(fields=['material_type']),
             models.Index(fields=['is_required']),
         ]
     
     def __str__(self):
-        return f"{self.lesson.title} - {self.title}"
+        lesson_names = ", ".join([lesson.title for lesson in self.lessons.all()])
+        return f"{lesson_names} - {self.title}" if lesson_names else self.title
     
     @property
     def file_size_mb(self):
@@ -377,6 +378,56 @@ class LessonMaterial(models.Model):
         if self.file_size:
             return round(self.file_size / (1024 * 1024), 2)
         return None
+
+
+class BookPage(models.Model):
+    """
+    Individual pages for book materials
+    Allows pagination through book content
+    """
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    book_material = models.ForeignKey(
+        LessonMaterial, 
+        on_delete=models.CASCADE, 
+        related_name='book_pages',
+        limit_choices_to={'material_type': 'book'}
+    )
+    page_number = models.PositiveIntegerField(help_text="Page number within the book")
+    title = models.CharField(max_length=200, blank=True, help_text="Page title (optional)")
+    content = models.TextField(help_text="Page content")
+    
+    # Page Resources
+    image_url = models.URLField(blank=True, null=True, help_text="Page image URL")
+    audio_url = models.URLField(blank=True, null=True, help_text="Page audio URL")
+    
+    # Page Settings
+    is_required = models.BooleanField(default=True, help_text="Is this page required reading?")
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['book_material', 'page_number']
+        unique_together = ['book_material', 'page_number']
+        indexes = [
+            models.Index(fields=['book_material', 'page_number']),
+            models.Index(fields=['is_required']),
+        ]
+    
+    def __str__(self):
+        return f"{self.book_material.title} - Page {self.page_number}"
+    
+    @property
+    def next_page_number(self):
+        """Get the next page number"""
+        return self.page_number + 1
+    
+    @property
+    def previous_page_number(self):
+        """Get the previous page number"""
+        return self.page_number - 1 if self.page_number > 1 else None
 
 
 class Project(models.Model):

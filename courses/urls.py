@@ -21,7 +21,13 @@ urlpatterns = [
     # Lesson management endpoints
     path('<uuid:course_id>/lessons/', views.course_lessons, name='course_lessons'),
     path('lessons/<uuid:lesson_id>/', views.lesson_detail, name='lesson_detail'),
+    path('lessons/<uuid:lesson_id>/materials/', views.LessonMaterial.as_view(), name='lesson_materials'),
+    path('materials/<uuid:material_id>/', views.LessonMaterial.as_view(), name='material_detail'),
     path('<uuid:course_id>/lessons/reorder/', views.reorder_lessons, name='reorder_lessons'),
+    
+    # Book page management endpoints
+    path('books/<uuid:material_id>/pages/', views.BookPageView.as_view(), name='book_pages'),
+    path('books/<uuid:material_id>/pages/<int:page_number>/', views.BookPageView.as_view(), name='book_page_detail'),
     
     # Quiz management endpoints
     path('lessons/<uuid:lesson_id>/quiz/', views.lesson_quiz, name='lesson_quiz'),

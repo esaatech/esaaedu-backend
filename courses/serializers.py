@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage
 
 User = get_user_model()
 
@@ -1334,3 +1334,98 @@ class ClassEventCreateUpdateSerializer(serializers.ModelSerializer):
         
         validated_data['class_instance'] = class_instance
         return super().create(validated_data)
+
+
+# ===== LESSON MATERIAL SERIALIZERS =====
+
+class LessonMaterialCreateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for creating lesson materials
+    """
+    class Meta:
+        model = LessonMaterial
+        fields = [
+            'title', 'description', 'material_type', 'file_url', 
+            'file_size', 'file_extension', 'is_required', 
+            'is_downloadable', 'order'
+        ]
+    
+    def validate_material_type(self, value):
+        """Validate material type"""
+        valid_types = [choice[0] for choice in LessonMaterial.MATERIAL_TYPES]
+        if value not in valid_types:
+            raise serializers.ValidationError(f"Invalid material type. Must be one of: {valid_types}")
+        return value
+    
+    def validate_file_size(self, value):
+        """Validate file size"""
+        if value is not None and value < 0:
+            raise serializers.ValidationError("File size cannot be negative")
+        return value
+
+
+class LessonMaterialUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for updating lesson materials
+    """
+    class Meta:
+        model = LessonMaterial
+        fields = [
+            'title', 'description', 'material_type', 'file_url', 
+            'file_size', 'file_extension', 'is_required', 
+            'is_downloadable', 'order'
+        ]
+        extra_kwargs = {
+            'title': {'required': False},
+            'description': {'required': False},
+            'material_type': {'required': False},
+            'file_url': {'required': False},
+            'file_size': {'required': False},
+            'file_extension': {'required': False},
+            'is_required': {'required': False},
+            'is_downloadable': {'required': False},
+            'order': {'required': False},
+        }
+
+
+# ===== BOOK PAGE SERIALIZERS =====
+
+class BookPageCreateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for creating book pages
+    """
+    class Meta:
+        model = BookPage
+        fields = [
+            'title', 'content', 'image_url', 'audio_url', 'is_required'
+        ]
+    
+    def validate_content(self, value):
+        """Validate content is not empty"""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Page content cannot be empty")
+        return value
+
+
+class BookPageUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for updating book pages
+    """
+    class Meta:
+        model = BookPage
+        fields = [
+            'title', 'content', 'image_url', 'audio_url', 'is_required'
+        ]
+        extra_kwargs = {
+            'title': {'required': False},
+            'content': {'required': False},
+            'image_url': {'required': False},
+            'audio_url': {'required': False},
+            'is_required': {'required': False},
+        }
+    
+    def validate_content(self, value):
+        """Validate content is not empty if provided"""
+        if value is not None and not value.strip():
+            raise serializers.ValidationError("Page content cannot be empty")
+        return value

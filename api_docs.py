@@ -2978,3 +2978,821 @@ def teacher_student_record_contract(request):
     }
     
     return JsonResponse(contract, json_dumps_params={'indent': 2})
+
+
+# ===== LESSON MATERIALS API CONTRACT =====
+
+@require_http_methods(["GET"])
+def lesson_materials_api_contract(request):
+    """
+    API Contract for Lesson Materials
+    """
+    
+    contract = {
+        "title": "Lesson Materials API Contract",
+        "version": "1.0.0",
+        "description": "API endpoints for managing lesson materials (documents, videos, books, etc.)",
+        
+        "lesson_materials": {
+            "description": "CRUD operations for lesson materials (documents, videos, books, etc.)",
+            "base_url": "/api/courses/lessons/{lesson_id}/materials/",
+            
+            "endpoints": {
+                "list_materials": {
+                    "method": "GET",
+                    "url": "/api/courses/lessons/{lesson_id}/materials/",
+                    "description": "Get all materials for a specific lesson",
+                    "authentication": "Required",
+                    "permissions": "Teacher (modify) or Student (view)",
+                    
+                    "parameters": {
+                        "lesson_id": {
+                            "type": "UUID",
+                            "required": True,
+                            "description": "UUID of the lesson",
+                            "example": "123e4567-e89b-12d3-a456-426614174000"
+                        }
+                    },
+                    
+                    "response": {
+                        "status": 200,
+                        "body": {
+                            "lesson_id": "string (UUID)",
+                            "lesson_title": "string",
+                            "materials": [
+                                {
+                                    "id": "string (UUID)",
+                                    "title": "string",
+                                    "description": "string",
+                                    "material_type": "string (document|video|audio|link|image|pdf|presentation|worksheet|book|other)",
+                                    "file_url": "string (URL)",
+                                    "file_size": "integer (bytes)",
+                                    "file_size_mb": "float",
+                                    "file_extension": "string",
+                                    "is_required": "boolean",
+                                    "is_downloadable": "boolean",
+                                    "order": "integer",
+                                    "lessons": [
+                                        {
+                                            "id": "string (UUID)",
+                                            "title": "string",
+                                            "course_title": "string"
+                                        }
+                                    ],
+                                    "created_at": "string (ISO datetime)",
+                                    "updated_at": "string (ISO datetime)"
+                                }
+                            ],
+                            "total_count": "integer"
+                        }
+                    }
+                },
+                
+                "create_material": {
+                    "method": "POST",
+                    "url": "/api/courses/lessons/{lesson_id}/materials/",
+                    "description": "Create a new material for a lesson",
+                    "authentication": "Required",
+                    "permissions": "Teacher only",
+                    
+                    "parameters": {
+                        "lesson_id": {
+                            "type": "UUID",
+                            "required": True,
+                            "description": "UUID of the lesson"
+                        }
+                    },
+                    
+                    "request_body": {
+                        "title": {
+                            "type": "string",
+                            "required": True,
+                            "description": "Material title",
+                            "max_length": 200
+                        },
+                        "description": {
+                            "type": "string",
+                            "required": False,
+                            "description": "Material description",
+                            "default": ""
+                        },
+                        "material_type": {
+                            "type": "string",
+                            "required": True,
+                            "description": "Type of material",
+                            "choices": ["document", "video", "audio", "link", "image", "pdf", "presentation", "worksheet", "book", "other"]
+                        },
+                        "file_url": {
+                            "type": "string (URL)",
+                            "required": False,
+                            "description": "URL to the material file"
+                        },
+                        "file_size": {
+                            "type": "integer",
+                            "required": False,
+                            "description": "File size in bytes",
+                            "validation": "Must be >= 0"
+                        },
+                        "file_extension": {
+                            "type": "string",
+                            "required": False,
+                            "description": "File extension (e.g., pdf, docx)",
+                            "max_length": 10
+                        },
+                        "is_required": {
+                            "type": "boolean",
+                            "required": False,
+                            "description": "Whether this material is required",
+                            "default": False
+                        },
+                        "is_downloadable": {
+                            "type": "boolean",
+                            "required": False,
+                            "description": "Whether students can download this material",
+                            "default": True
+                        },
+                        "order": {
+                            "type": "integer",
+                            "required": False,
+                            "description": "Display order of materials",
+                            "default": 0
+                        }
+                    },
+                    
+                    "response": {
+                        "status": 201,
+                        "body": {
+                            "message": "Material created successfully",
+                            "material": {
+                                "id": "string (UUID)",
+                                "title": "string",
+                                "description": "string",
+                                "material_type": "string",
+                                "file_url": "string (URL)",
+                                "file_size": "integer",
+                                "file_size_mb": "float",
+                                "file_extension": "string",
+                                "is_required": "boolean",
+                                "is_downloadable": "boolean",
+                                "order": "integer",
+                                "lessons": [
+                                    {
+                                        "id": "string (UUID)",
+                                        "title": "string",
+                                        "course_title": "string"
+                                    }
+                                ],
+                                "created_at": "string (ISO datetime)"
+                            }
+                        }
+                    }
+                },
+                
+                "update_material": {
+                    "method": "PUT",
+                    "url": "/api/courses/materials/{material_id}/",
+                    "description": "Update an existing material",
+                    "authentication": "Required",
+                    "permissions": "Teacher only",
+                    
+                    "parameters": {
+                        "material_id": {
+                            "type": "UUID",
+                            "required": True,
+                            "description": "UUID of the material to update"
+                        }
+                    },
+                    
+                    "request_body": {
+                        "description": "All fields are optional (partial update)",
+                        "fields": "Same as create_material request_body"
+                    },
+                    
+                    "response": {
+                        "status": 200,
+                        "body": {
+                            "message": "Material updated successfully",
+                            "material": {
+                                "id": "string (UUID)",
+                                "title": "string",
+                                "description": "string",
+                                "material_type": "string",
+                                "file_url": "string (URL)",
+                                "file_size": "integer",
+                                "file_size_mb": "float",
+                                "file_extension": "string",
+                                "is_required": "boolean",
+                                "is_downloadable": "boolean",
+                                "order": "integer",
+                                "lessons": [
+                                    {
+                                        "id": "string (UUID)",
+                                        "title": "string",
+                                        "course_title": "string"
+                                    }
+                                ],
+                                "updated_at": "string (ISO datetime)"
+                            }
+                        }
+                    }
+                },
+                
+                "delete_material": {
+                    "method": "DELETE",
+                    "url": "/api/courses/materials/{material_id}/",
+                    "description": "Delete a material",
+                    "authentication": "Required",
+                    "permissions": "Teacher only",
+                    
+                    "parameters": {
+                        "material_id": {
+                            "type": "UUID",
+                            "required": True,
+                            "description": "UUID of the material to delete"
+                        }
+                    },
+                    
+                    "response": {
+                        "status": 200,
+                        "body": {
+                            "message": "Material deleted successfully"
+                        }
+                    }
+                },
+                
+                "add_lesson_to_material": {
+                    "method": "POST",
+                    "url": "/api/courses/materials/{material_id}/lessons/",
+                    "description": "Add a lesson to an existing material (for sharing across lessons)",
+                    "authentication": "Required",
+                    "permissions": "Teacher only",
+                    
+                    "parameters": {
+                        "material_id": {
+                            "type": "UUID",
+                            "required": True,
+                            "description": "UUID of the material"
+                        }
+                    },
+                    
+                    "request_body": {
+                        "lesson_id": {
+                            "type": "UUID",
+                            "required": True,
+                            "description": "UUID of the lesson to add to this material"
+                        }
+                    },
+                    
+                    "response": {
+                        "status": 200,
+                        "body": {
+                            "message": "Lesson added to material successfully",
+                            "material": {
+                                "id": "string (UUID)",
+                                "title": "string",
+                                "lessons": [
+                                    {
+                                        "id": "string (UUID)",
+                                        "title": "string",
+                                        "course_title": "string"
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                },
+                
+                "remove_lesson_from_material": {
+                    "method": "DELETE",
+                    "url": "/api/courses/materials/{material_id}/lessons/{lesson_id}/",
+                    "description": "Remove a lesson from a material",
+                    "authentication": "Required",
+                    "permissions": "Teacher only",
+                    
+                    "parameters": {
+                        "material_id": {
+                            "type": "UUID",
+                            "required": True,
+                            "description": "UUID of the material"
+                        },
+                        "lesson_id": {
+                            "type": "UUID",
+                            "required": True,
+                            "description": "UUID of the lesson to remove"
+                        }
+                    },
+                    
+                    "response": {
+                        "status": 200,
+                        "body": {
+                            "message": "Lesson removed from material successfully"
+                        }
+                    }
+                }
+            }
+        },
+        
+        
+        "error_responses": {
+            "400": {
+                "description": "Bad Request - Validation errors",
+                "body": {
+                    "field_name": ["Error message"],
+                    "example": {
+                        "title": ["This field is required."],
+                        "material_type": ["Invalid material type. Must be one of: document, video, audio, link, image, pdf, presentation, worksheet, book, other"],
+                        "content": ["Page content cannot be empty"]
+                    }
+                }
+            },
+            "403": {
+                "description": "Forbidden - Insufficient permissions",
+                "body": {
+                    "error": "You do not have permission to modify this lesson"
+                }
+            },
+            "404": {
+                "description": "Not Found - Resource doesn't exist",
+                "body": {
+                    "error": "Lesson not found"
+                }
+            },
+            "500": {
+                "description": "Internal Server Error",
+                "body": {
+                    "error": "Failed to create material: <error_details>"
+                }
+            }
+        },
+        
+        "usage_examples": {
+            "create_book_material": {
+                "description": "Create a book material first",
+                "request": {
+                    "method": "POST",
+                    "url": "/api/courses/lessons/123e4567-e89b-12d3-a456-426614174000/materials/",
+                    "body": {
+                        "title": "Python Fundamentals",
+                        "description": "Learn Python programming basics",
+                        "material_type": "book",
+                        "is_required": True
+                    }
+                }
+            },
+            "share_book_across_lessons": {
+                "description": "Share the same book across multiple lessons",
+                "request": {
+                    "method": "POST",
+                    "url": "/api/courses/materials/456e7890-e89b-12d3-a456-426614174001/lessons/",
+                    "body": {
+                        "lesson_id": "789e0123-e89b-12d3-a456-426614174002"
+                    }
+                }
+            },
+            "add_first_page": {
+                "description": "Add the first page to the book",
+                "request": {
+                    "method": "POST",
+                    "url": "/api/courses/books/456e7890-e89b-12d3-a456-426614174001/pages/",
+                    "body": {
+                        "title": "Introduction",
+                        "content": "Welcome to Python programming! In this book, you will learn...",
+                        "is_required": True
+                    }
+                }
+            },
+            "navigate_pages": {
+                "description": "Navigate through book pages",
+                "request": {
+                    "method": "GET",
+                    "url": "/api/courses/books/456e7890-e89b-12d3-a456-426614174001/pages/2/"
+                }
+            },
+            "update_existing_page": {
+                "description": "Update content of existing page",
+                "request": {
+                    "method": "PUT",
+                    "url": "/api/courses/books/456e7890-e89b-12d3-a456-426614174001/pages/2/",
+                    "body": {
+                        "title": "Updated: Variables and Data Types",
+                        "content": "Updated content here..."
+                    }
+                }
+            }
+        },
+        
+        "frontend_integration": {
+            "book_reader_component": {
+                "description": "Example React component for book reading",
+                "code": """
+class BookReader extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = {
+      currentPage: 1,
+      book: null,
+      page: null,
+      navigation: null
+    };
+  }
+  
+  async loadPage(pageNumber) {
+    const response = await fetch(`/api/courses/books/${this.props.bookId}/pages/${pageNumber}/`);
+    const data = await response.json();
+    
+    this.setState({
+      book: data.book,
+      page: data.page,
+      navigation: data.navigation,
+      currentPage: pageNumber
+    });
+  }
+  
+  async nextPage() {
+    if (this.state.navigation?.has_next) {
+      await this.loadPage(this.state.navigation.next_page);
+    }
+  }
+  
+  async previousPage() {
+    if (this.state.navigation?.has_previous) {
+      await this.loadPage(this.state.navigation.previous_page);
+    }
+  }
+  
+  async addNewPage(content) {
+    const response = await fetch(`/api/courses/books/${this.props.bookId}/pages/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(content)
+    });
+    
+    const newPage = await response.json();
+    return newPage.page.page_number;
+  }
+}
+                """
+            }
+        }
+    }
+    
+    return JsonResponse(contract, json_dumps_params={'indent': 2})
+
+
+# ===== BOOK PAGES API CONTRACT =====
+
+@require_http_methods(["GET"])
+def book_pages_api_contract(request):
+    """
+    API Contract for Book Pages with Pagination Support
+    """
+    
+    contract = {
+        "title": "Book Pages API Contract",
+        "version": "1.0.0",
+        "description": "API endpoints for managing book pages with pagination support",
+        
+        "book_pages": {
+            "description": "CRUD operations for book pages with pagination support",
+            "base_url": "/api/courses/books/{material_id}/pages/",
+            
+            "endpoints": {
+                "get_specific_page": {
+                    "method": "GET",
+                    "url": "/api/courses/books/{material_id}/pages/{page_number}/",
+                    "description": "Get a specific page with navigation info",
+                    "authentication": "Required",
+                    "permissions": "Teacher (modify) or Student (view)",
+                    
+                    "parameters": {
+                        "material_id": {
+                            "type": "UUID",
+                            "required": True,
+                            "description": "UUID of the book material (material_type='book')"
+                        },
+                        "page_number": {
+                            "type": "integer",
+                            "required": True,
+                            "description": "Page number to retrieve"
+                        }
+                    },
+                    
+                    "response": {
+                        "status": 200,
+                        "body": {
+                            "book": {
+                                "id": "string (UUID)",
+                                "title": "string",
+                                "total_pages": "integer"
+                            },
+                            "page": {
+                                "id": "string (UUID)",
+                                "page_number": "integer",
+                                "title": "string",
+                                "content": "string",
+                                "image_url": "string (URL)",
+                                "audio_url": "string (URL)",
+                                "is_required": "boolean",
+                                "created_at": "string (ISO datetime)",
+                                "updated_at": "string (ISO datetime)"
+                            },
+                            "navigation": {
+                                "current_page": "integer",
+                                "total_pages": "integer",
+                                "has_next": "boolean",
+                                "has_previous": "boolean",
+                                "next_page": "integer|null",
+                                "previous_page": "integer|null"
+                            }
+                        }
+                    }
+                },
+                
+                "get_paginated_pages": {
+                    "method": "GET",
+                    "url": "/api/courses/books/{material_id}/pages/",
+                    "description": "Get paginated list of all pages",
+                    "authentication": "Required",
+                    "permissions": "Teacher (modify) or Student (view)",
+                    
+                    "parameters": {
+                        "material_id": {
+                            "type": "UUID",
+                            "required": True,
+                            "description": "UUID of the book material"
+                        },
+                        "page": {
+                            "type": "integer",
+                            "required": False,
+                            "description": "Page number for pagination",
+                            "default": 1
+                        },
+                        "per_page": {
+                            "type": "integer",
+                            "required": False,
+                            "description": "Number of pages per page",
+                            "default": 10
+                        }
+                    },
+                    
+                    "response": {
+                        "status": 200,
+                        "body": {
+                            "book": {
+                                "id": "string (UUID)",
+                                "title": "string",
+                                "description": "string"
+                            },
+                            "pages": [
+                                {
+                                    "id": "string (UUID)",
+                                    "page_number": "integer",
+                                    "title": "string",
+                                    "content": "string (truncated to 200 chars)",
+                                    "image_url": "string (URL)",
+                                    "audio_url": "string (URL)",
+                                    "is_required": "boolean",
+                                    "created_at": "string (ISO datetime)"
+                                }
+                            ],
+                            "pagination": {
+                                "current_page": "integer",
+                                "total_pages": "integer",
+                                "total_count": "integer",
+                                "has_next": "boolean",
+                                "has_previous": "boolean",
+                                "per_page": "integer"
+                            }
+                        }
+                    }
+                },
+                
+                "create_page": {
+                    "method": "POST",
+                    "url": "/api/courses/books/{material_id}/pages/",
+                    "description": "Create a new page (automatically gets next page number)",
+                    "authentication": "Required",
+                    "permissions": "Teacher only",
+                    
+                    "parameters": {
+                        "material_id": {
+                            "type": "UUID",
+                            "required": True,
+                            "description": "UUID of the book material"
+                        }
+                    },
+                    
+                    "request_body": {
+                        "title": {
+                            "type": "string",
+                            "required": False,
+                            "description": "Page title",
+                            "max_length": 200,
+                            "default": ""
+                        },
+                        "content": {
+                            "type": "string",
+                            "required": True,
+                            "description": "Page content",
+                            "validation": "Cannot be empty"
+                        },
+                        "image_url": {
+                            "type": "string (URL)",
+                            "required": False,
+                            "description": "Page image URL"
+                        },
+                        "audio_url": {
+                            "type": "string (URL)",
+                            "required": False,
+                            "description": "Page audio URL"
+                        },
+                        "is_required": {
+                            "type": "boolean",
+                            "required": False,
+                            "description": "Is this page required reading",
+                            "default": True
+                        }
+                    },
+                    
+                    "response": {
+                        "status": 201,
+                        "body": {
+                            "message": "Page created successfully",
+                            "page": {
+                                "id": "string (UUID)",
+                                "page_number": "integer",
+                                "title": "string",
+                                "content": "string",
+                                "image_url": "string (URL)",
+                                "audio_url": "string (URL)",
+                                "is_required": "boolean",
+                                "created_at": "string (ISO datetime)"
+                            }
+                        }
+                    }
+                },
+                
+                "update_page": {
+                    "method": "PUT",
+                    "url": "/api/courses/books/{material_id}/pages/{page_number}/",
+                    "description": "Update an existing page",
+                    "authentication": "Required",
+                    "permissions": "Teacher only",
+                    
+                    "parameters": {
+                        "material_id": {
+                            "type": "UUID",
+                            "required": True,
+                            "description": "UUID of the book material"
+                        },
+                        "page_number": {
+                            "type": "integer",
+                            "required": True,
+                            "description": "Page number to update"
+                        }
+                    },
+                    
+                    "request_body": {
+                        "description": "All fields are optional (partial update)",
+                        "fields": "Same as create_page request_body"
+                    },
+                    
+                    "response": {
+                        "status": 200,
+                        "body": {
+                            "message": "Page updated successfully",
+                            "page": {
+                                "id": "string (UUID)",
+                                "page_number": "integer",
+                                "title": "string",
+                                "content": "string",
+                                "image_url": "string (URL)",
+                                "audio_url": "string (URL)",
+                                "is_required": "boolean",
+                                "updated_at": "string (ISO datetime)"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        
+        "error_responses": {
+            "400": {
+                "description": "Bad Request - Validation errors",
+                "body": {
+                    "field_name": ["Error message"],
+                    "example": {
+                        "content": ["Page content cannot be empty"]
+                    }
+                }
+            },
+            "403": {
+                "description": "Forbidden - Insufficient permissions",
+                "body": {
+                    "error": "You do not have permission to modify this book"
+                }
+            },
+            "404": {
+                "description": "Not Found - Resource doesn't exist",
+                "body": {
+                    "error": "Book material not found"
+                }
+            },
+            "500": {
+                "description": "Internal Server Error",
+                "body": {
+                    "error": "Failed to create page: <error_details>"
+                }
+            }
+        },
+        
+        "usage_examples": {
+            "add_first_page": {
+                "description": "Add the first page to a book",
+                "request": {
+                    "method": "POST",
+                    "url": "/api/courses/books/456e7890-e89b-12d3-a456-426614174001/pages/",
+                    "body": {
+                        "title": "Introduction",
+                        "content": "Welcome to Python programming! In this book, you will learn...",
+                        "is_required": True
+                    }
+                }
+            },
+            "navigate_pages": {
+                "description": "Navigate through book pages",
+                "request": {
+                    "method": "GET",
+                    "url": "/api/courses/books/456e7890-e89b-12d3-a456-426614174001/pages/2/"
+                }
+            },
+            "update_existing_page": {
+                "description": "Update content of existing page",
+                "request": {
+                    "method": "PUT",
+                    "url": "/api/courses/books/456e7890-e89b-12d3-a456-426614174001/pages/2/",
+                    "body": {
+                        "title": "Updated: Variables and Data Types",
+                        "content": "Updated content here..."
+                    }
+                }
+            }
+        },
+        
+        "frontend_integration": {
+            "book_reader_component": {
+                "description": "Example React component for book reading",
+                "code": """
+class BookReader extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = {
+      currentPage: 1,
+      book: null,
+      page: null,
+      navigation: null
+    };
+  }
+  
+  async loadPage(pageNumber) {
+    const response = await fetch(`/api/courses/books/${this.props.bookId}/pages/${pageNumber}/`);
+    const data = await response.json();
+    
+    this.setState({
+      book: data.book,
+      page: data.page,
+      navigation: data.navigation,
+      currentPage: pageNumber
+    });
+  }
+  
+  async nextPage() {
+    if (this.state.navigation?.has_next) {
+      await this.loadPage(this.state.navigation.next_page);
+    }
+  }
+  
+  async previousPage() {
+    if (this.state.navigation?.has_previous) {
+      await this.loadPage(this.state.navigation.previous_page);
+    }
+  }
+  
+  async addNewPage(content) {
+    const response = await fetch(`/api/courses/books/${this.props.bookId}/pages/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(content)
+    });
+    
+    const newPage = await response.json();
+    return newPage.page.page_number;
+  }
+}
+                """
+            }
+        }
+    }
+    
+    return JsonResponse(contract, json_dumps_params={'indent': 2})
