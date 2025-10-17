@@ -3030,30 +3030,37 @@ class StudentLessonDetailView(APIView):
             
             # Pre-compute materials data (moved from serializer)
             materials_data = []
+            is_material_available = False
             try:
                 from courses.models import LessonMaterial
-                materials = LessonMaterialModel.objects.filter(lesson=lesson)
+                # Use the many-to-many relationship properly
+                materials = lesson.lesson_materials.all()
                 print(f"🔍 Materials found: {materials.count()}")
                 
-                materials_data = [
-                    {
-                        'id': str(m.id),
-                        'title': m.title,
-                        'description': m.description,
-                        'material_type': m.material_type,
-                        'file_url': m.file_url,
-                        'file_size': m.file_size,
-                        'file_size_mb': m.file_size_mb,
-                        'file_extension': m.file_extension,
-                        'is_required': m.is_required,
-                        'is_downloadable': m.is_downloadable,
-                        'order': m.order,
-                        'created_at': m.created_at,
-                    } for m in materials
-                ]
-                
-                for material in materials:
-                    print(f"🔍 Material: {material.title} - {material.material_type}")
+                # Only include materials for live classes
+                if lesson.type == 'live_class' and materials.exists():
+                    is_material_available = True
+                    materials_data = [
+                        {
+                            'id': str(m.id),
+                            'title': m.title,
+                            'description': m.description,
+                            'material_type': m.material_type,
+                            'file_url': m.file_url,
+                            'file_size': m.file_size,
+                            'file_size_mb': m.file_size_mb,
+                            'file_extension': m.file_extension,
+                            'order': m.order,
+                            'created_at': m.created_at,
+                            # Book-specific fields
+                            'total_pages': m.book_pages.count() if m.material_type == 'book' else None,
+                        } for m in materials
+                    ]
+                    
+                    for material in materials:
+                        print(f"🔍 Material: {material.title} - {material.material_type}")
+                else:
+                    print(f"🔍 No materials for non-live class or no materials found")
             except Exception as e:
                 print(f"❌ Error preparing materials data: {e}")
             
@@ -3080,6 +3087,7 @@ class StudentLessonDetailView(APIView):
                 'assignment_data': assignment_data,
                 'class_event_data': class_event_data,
                 'materials_data': materials_data,
+                'is_material_available': is_material_available,
                 'teacher_name': teacher_name,
                 'prerequisites_data': prerequisites_data,
             }
@@ -3175,6 +3183,100 @@ class StudentLessonDetailView(APIView):
             print(f"❌ Traceback: {traceback.format_exc()}")
             return Response(
                 {'error': f'Failed to mark lesson complete: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class MaterialContentView(APIView):
+    """
+    Class-based view for material content
+    Returns full material content based on material type
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, material_id):
+        """
+        Get full material content for a specific material
+        Returns complete material data including pages, content, etc.
+        """
+        try:
+            # Get the material
+            material = get_object_or_404(LessonMaterialModel, id=material_id)
+            print(f"🔍 Material found: {material.title} - {material.material_type}")
+            
+            # Check if user has access to this material (enrolled in any lesson that uses this material)
+            user_enrollments = EnrolledCourse.objects.filter(
+                student_profile__user=request.user,
+                status__in=['active', 'completed']
+            )
+            
+            # Check if material belongs to any lesson in user's enrolled courses
+            has_access = False
+            for enrollment in user_enrollments:
+                if material.lessons.filter(course=enrollment.course).exists():
+                    has_access = True
+                    break
+            
+            if not has_access:
+                return Response(
+                    {'error': 'You do not have access to this material'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Build response based on material type
+            response_data = {
+                'id': str(material.id),
+                'title': material.title,
+                'description': material.description,
+                'material_type': material.material_type,
+                'file_url': material.file_url,
+                'file_size': material.file_size,
+                'file_size_mb': material.file_size_mb,
+                'file_extension': material.file_extension,
+                'order': material.order,
+                'created_at': material.created_at.isoformat(),
+            }
+            
+            # Add type-specific content
+            if material.material_type == 'book':
+                # Get all pages for the book
+                pages = BookPage.objects.filter(book_material=material).order_by('page_number')
+                response_data['total_pages'] = pages.count()
+                response_data['pages'] = [
+                    {
+                        'id': str(page.id),
+                        'page_number': page.page_number,
+                        'title': page.title,
+                        'content': page.content,
+                        'is_required': page.is_required,
+                        'created_at': page.created_at.isoformat()
+                    } for page in pages
+                ]
+                print(f"🔍 Book pages loaded: {pages.count()}")
+                
+            elif material.material_type == 'note':
+                # For notes, use description as content
+                response_data['content'] = material.description or ''
+                print(f"🔍 Note content loaded")
+                
+            else:
+                # For other types, include basic file info
+                response_data['content'] = material.description or ''
+                print(f"🔍 Default content loaded for {material.material_type}")
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except LessonMaterialModel.DoesNotExist:
+            return Response(
+                {'error': 'Material not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            print(f"❌ ERROR in MaterialContentView.get: {str(e)}")
+            import traceback
+            print(f"❌ Traceback: {traceback.format_exc()}")
+            return Response(
+                {'error': f'Failed to get material content: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

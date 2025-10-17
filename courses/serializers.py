@@ -38,8 +38,7 @@ class LessonMaterialSerializer(serializers.ModelSerializer):
         model = LessonMaterial
         fields = [
             'id', 'title', 'description', 'material_type', 'file_url', 
-            'file_size', 'file_size_mb', 'file_extension', 'is_required', 
-            'is_downloadable', 'order', 'created_at'
+            'file_size', 'file_size_mb', 'file_extension', 'order', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']
 
@@ -75,6 +74,7 @@ class LessonDetailSerializer(serializers.ModelSerializer):
     teacher_name = serializers.SerializerMethodField()
     course_title = serializers.CharField(source='course.title', read_only=True)
     prerequisites = serializers.SerializerMethodField()
+    is_material_available = serializers.SerializerMethodField()
     
     class Meta:
         model = Lesson
@@ -83,7 +83,7 @@ class LessonDetailSerializer(serializers.ModelSerializer):
             'text_content', 'video_url', 'audio_url', 'live_class_date', 
             'live_class_status', 'content', 'materials', 'prerequisites',
             'quiz', 'assignment', 'has_assignment', 'class_event', 'teacher_name', 'course_title',
-            'created_at', 'updated_at'
+            'is_material_available', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
@@ -115,6 +115,10 @@ class LessonDetailSerializer(serializers.ModelSerializer):
     def get_prerequisites(self, obj):
         """Get pre-computed prerequisites data from context"""
         return self.context.get('prerequisites_data', [])
+    
+    def get_is_material_available(self, obj):
+        """Get material availability flag from context"""
+        return self.context.get('is_material_available', False)
 
 
 # ===== COURSE WITH LESSONS SERIALIZER (FIRST API CALL) =====
