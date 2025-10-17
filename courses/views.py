@@ -9,9 +9,9 @@ from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview
+from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage
 from student.models import EnrolledCourse
-from django.db.models import Sum
+from django.db.models import F, Sum
 from courses.models import ClassEvent
 from .serializers import (
     CourseListSerializer, CourseDetailSerializer, CourseCreateUpdateSerializer,
@@ -2824,7 +2824,7 @@ class StudentLessonDetailView(APIView):
             # Check if lesson has materials
             try:
                 from courses.models import LessonMaterial
-                materials = LessonMaterial.objects.filter(lesson=lesson)
+                materials = LessonMaterialModel.objects.filter(lesson=lesson)
                 print(f"🔍 Materials found: {materials.count()}")
                 for material in materials:
                     print(f"🔍 Material: {material.title} - {material.material_type}")
@@ -3032,7 +3032,7 @@ class StudentLessonDetailView(APIView):
             materials_data = []
             try:
                 from courses.models import LessonMaterial
-                materials = LessonMaterial.objects.filter(lesson=lesson)
+                materials = LessonMaterialModel.objects.filter(lesson=lesson)
                 print(f"🔍 Materials found: {materials.count()}")
                 
                 materials_data = [
@@ -3924,6 +3924,10 @@ class LessonMaterial(APIView):
     def get(self, request, lesson_id):
         """
         GET: Retrieve materials for a specific lesson
+        
+        Query Parameters:
+        - lightweight=true: Returns only metadata (names, types, IDs) - faster
+        - lightweight=false: Returns full material data (default)
         """
         try:
             lesson = get_object_or_404(Lesson, id=lesson_id)
@@ -3935,30 +3939,66 @@ class LessonMaterial(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
+            # Check if lightweight mode is requested
+            lightweight = request.GET.get('lightweight', 'false').lower() == 'true'
+            
             # Get materials for this lesson
             materials = lesson.lesson_materials.all().order_by('order')
             
-            materials_data = [{
-                'id': str(material.id),
-                'title': material.title,
-                'description': material.description,
-                'material_type': material.material_type,
-                'file_url': material.file_url,
-                'file_size': material.file_size,
-                'file_size_mb': material.file_size_mb,
-                'file_extension': material.file_extension,
-                'is_required': material.is_required,
-                'is_downloadable': material.is_downloadable,
-                'order': material.order,
-                'created_at': material.created_at.isoformat(),
-                'updated_at': material.updated_at.isoformat()
-            } for material in materials]
+            if lightweight:
+                # Return only metadata for fast loading
+                materials_data = []
+                for material in materials:
+                    material_data = {
+                        'id': str(material.id),
+                        'title': material.title,
+                        'description': material.description,
+                        'material_type': material.material_type,
+                        'is_required': material.is_required,
+                        'is_downloadable': material.is_downloadable,
+                        'order': material.order,
+                        'created_at': material.created_at.isoformat(),
+                    }
+                    
+                    # Add type-specific metadata
+                    if material.material_type == 'book':
+                        # Get book page count without loading full content
+                        page_count = BookPage.objects.filter(book_material=material).count()
+                        material_data['total_pages'] = page_count
+                        material_data['has_pages'] = page_count > 0
+                    elif material.material_type == 'note':
+                        # For notes, we might want to show if content exists
+                        material_data['has_content'] = bool(material.content)
+                    elif material.material_type in ['document', 'pdf', 'presentation']:
+                        # For files, show file info
+                        material_data['file_size_mb'] = material.file_size_mb
+                        material_data['file_extension'] = material.file_extension
+                    
+                    materials_data.append(material_data)
+            else:
+                # Return full material data (existing behavior)
+                materials_data = [{
+                    'id': str(material.id),
+                    'title': material.title,
+                    'description': material.description,
+                    'material_type': material.material_type,
+                    'file_url': material.file_url,
+                    'file_size': material.file_size,
+                    'file_size_mb': material.file_size_mb,
+                    'file_extension': material.file_extension,
+                    'is_required': material.is_required,
+                    'is_downloadable': material.is_downloadable,
+                    'order': material.order,
+                    'created_at': material.created_at.isoformat(),
+                    'updated_at': material.updated_at.isoformat()
+                } for material in materials]
             
             return Response({
                 'lesson_id': str(lesson.id),
                 'lesson_title': lesson.title,
                 'materials': materials_data,
-                'total_count': materials.count()
+                'total_count': materials.count(),
+                'lightweight': lightweight
             }, status=status.HTTP_200_OK)
             
         except Lesson.DoesNotExist:
@@ -3986,14 +4026,56 @@ class LessonMaterial(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            # Validate and create material using serializer
-            from .serializers import LessonMaterialCreateSerializer
-            serializer = LessonMaterialCreateSerializer(data=request.data)
-            if not serializer.is_valid():
-                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            # Check if this is a book creation (with pages)
+            material_type = request.data.get('material_type', '')
+            pages_data = request.data.get('pages', [])
             
-            material = serializer.save()
-            material.lessons.add(lesson)
+            if material_type == 'book' and pages_data:
+                # Use BookCreationSerializer for complete book creation
+                from .serializers import BookCreationSerializer
+                serializer = BookCreationSerializer(data=request.data)
+                if not serializer.is_valid():
+                    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                
+                material = serializer.save()
+                material.lessons.add(lesson)
+                
+                # Return book with pages
+                return Response({
+                    'message': 'Book created successfully',
+                    'material': {
+                        'id': str(material.id),
+                        'title': material.title,
+                        'description': material.description,
+                        'material_type': material.material_type,
+                        'file_url': material.file_url,
+                        'file_size': material.file_size,
+                        'file_size_mb': material.file_size_mb,
+                        'file_extension': material.file_extension,
+                        'is_required': material.is_required,
+                        'is_downloadable': material.is_downloadable,
+                        'order': material.order,
+                        'created_at': material.created_at.isoformat(),
+                        'total_pages': len(material.created_pages),
+                        'pages': [{
+                            'id': str(page.id),
+                            'page_number': page.page_number,
+                            'title': page.title,
+                            'content': page.content,
+                            'is_required': page.is_required,
+                            'created_at': page.created_at.isoformat()
+                        } for page in material.created_pages]
+                    }
+                }, status=status.HTTP_201_CREATED)
+            else:
+                # Use regular LessonMaterialCreateSerializer for other materials
+                from .serializers import LessonMaterialCreateSerializer
+                serializer = LessonMaterialCreateSerializer(data=request.data)
+                if not serializer.is_valid():
+                    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                
+                material = serializer.save()
+                material.lessons.add(lesson)
             
             return Response({
                 'message': 'Material created successfully',
@@ -4024,7 +4106,13 @@ class LessonMaterial(APIView):
         PUT: Update specific material
         """
         try:
-            material = get_object_or_404(LessonMaterial, id=material_id)
+            try:
+                material = LessonMaterialModel.objects.get(id=material_id)
+            except LessonMaterialModel.DoesNotExist:
+                return Response(
+                    {'error': 'Material not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             
             # Check if user can modify (check if user teaches any of the lessons this material belongs to)
             can_modify = any(self._user_can_modify(request.user, lesson) for lesson in material.lessons.all())
@@ -4060,7 +4148,7 @@ class LessonMaterial(APIView):
                 }
             }, status=status.HTTP_200_OK)
             
-        except LessonMaterial.DoesNotExist:
+        except LessonMaterialModel.DoesNotExist:
             return Response(
                 {'error': 'Material not found'},
                 status=status.HTTP_404_NOT_FOUND
@@ -4076,10 +4164,17 @@ class LessonMaterial(APIView):
         DELETE: Delete specific material
         """
         try:
-            material = get_object_or_404(LessonMaterial, id=material_id)
+            try:
+                material = LessonMaterialModel.objects.get(id=material_id)
+            except LessonMaterialModel.DoesNotExist:
+                return Response(
+                    {'error': 'Material not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             
-            # Check if user has permission to modify this lesson
-            if not self._user_can_modify(request.user, material.lesson):
+            # Check if user has permission to modify any lesson this material belongs to
+            can_modify = any(self._user_can_modify(request.user, lesson) for lesson in material.lessons.all())
+            if not can_modify:
                 return Response(
                     {'error': 'You do not have permission to delete this material'},
                     status=status.HTTP_403_FORBIDDEN
@@ -4091,7 +4186,7 @@ class LessonMaterial(APIView):
                 'message': 'Material deleted successfully'
             }, status=status.HTTP_200_OK)
             
-        except LessonMaterial.DoesNotExist:
+        except LessonMaterialModel.DoesNotExist:
             return Response(
                 {'error': 'Material not found'},
                 status=status.HTTP_404_NOT_FOUND
@@ -4139,15 +4234,20 @@ class BookPageView(APIView):
         """
         GET: Retrieve book page(s)
         - If page_number provided: Get specific page
-        - If no page_number: Get paginated list of pages
+        - If no page_number: Get all pages at once
         """
         try:
             # Get book material
-            book_material = get_object_or_404(
-                LessonMaterial, 
-                id=material_id, 
-                material_type='book'
-            )
+            try:
+                book_material = LessonMaterialModel.objects.get(
+                    id=material_id, 
+                    material_type='book'
+                )
+            except Exception as e:
+                return Response(
+                    {'error': 'Book material not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             
             # Check access permissions (check if user has access to any lesson this material belongs to)
             has_access = any(self._user_has_access(request.user, lesson) for lesson in book_material.lessons.all())
@@ -4161,14 +4261,36 @@ class BookPageView(APIView):
                 # Get specific page
                 return self._get_specific_page(book_material, page_number)
             else:
-                # Get paginated pages
-                return self._get_paginated_pages(request, book_material)
+                # Get all pages at once - using direct query to avoid related_name issues
+                try:
+                    pages = BookPage.objects.filter(book_material=book_material).order_by('page_number')
+                    pages_data = []
+                    for page in pages:
+                        pages_data.append({
+                            'id': str(page.id),
+                            'page_number': page.page_number,
+                            'title': page.title,
+                            'content': page.content,
+                            'is_required': page.is_required,
+                            'created_at': page.created_at.isoformat(),
+                            'updated_at': page.updated_at.isoformat()
+                        })
+                    
+                    return Response({
+                        'book_id': str(book_material.id),
+                        'book_title': book_material.title,
+                        'total_pages': len(pages_data),
+                        'pages': pages_data
+                    }, status=status.HTTP_200_OK)
+                except Exception as page_error:
+                    return Response({
+                        'error': f'Failed to retrieve pages: {str(page_error)}',
+                        'book_id': str(book_material.id),
+                        'book_title': book_material.title,
+                        'total_pages': 0,
+                        'pages': []
+                    }, status=status.HTTP_200_OK)
                 
-        except LessonMaterial.DoesNotExist:
-            return Response(
-                {'error': 'Book material not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
         except Exception as e:
             return Response(
                 {'error': f'Failed to retrieve book pages: {str(e)}'},
@@ -4180,11 +4302,16 @@ class BookPageView(APIView):
         POST: Create new page for book
         """
         try:
-            book_material = get_object_or_404(
-                LessonMaterial, 
-                id=material_id, 
-                material_type='book'
-            )
+            try:
+                book_material = LessonMaterialModel.objects.get(
+                    id=material_id, 
+                    material_type='book'
+                )
+            except LessonMaterialModel.DoesNotExist:
+                return Response(
+                    {'error': 'Book material not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             
             # Check if user can modify
             can_modify = any(self._user_can_modify(request.user, lesson) for lesson in book_material.lessons.all())
@@ -4195,16 +4322,22 @@ class BookPageView(APIView):
                 )
             
             # Get next page number
-            last_page = book_material.book_pages.order_by('-page_number').first()
+            last_page = BookPage.objects.filter(book_material=book_material).order_by('-page_number').first()
             next_page_number = (last_page.page_number + 1) if last_page else 1
             
             # Validate and create page using serializer
             from .serializers import BookPageCreateSerializer
-            serializer = BookPageCreateSerializer(data=request.data)
+            serializer = BookPageCreateSerializer(
+                data=request.data,
+                context={
+                    'book_material': book_material,
+                    'page_number': next_page_number
+                }
+            )
             if not serializer.is_valid():
                 return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
             
-            page = serializer.save(book_material=book_material, page_number=next_page_number)
+            page = serializer.save()
             
             return Response({
                 'message': 'Page created successfully',
@@ -4213,8 +4346,6 @@ class BookPageView(APIView):
                     'page_number': page.page_number,
                     'title': page.title,
                     'content': page.content,
-                    'image_url': page.image_url,
-                    'audio_url': page.audio_url,
                     'is_required': page.is_required,
                     'created_at': page.created_at.isoformat()
                 }
@@ -4231,17 +4362,27 @@ class BookPageView(APIView):
         PUT: Update existing page
         """
         try:
-            book_material = get_object_or_404(
-                LessonMaterial, 
-                id=material_id, 
-                material_type='book'
-            )
+            try:
+                book_material = LessonMaterialModel.objects.get(
+                    id=material_id, 
+                    material_type='book'
+                )
+            except LessonMaterialModel.DoesNotExist:
+                return Response(
+                    {'error': 'Book material not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             
-            page = get_object_or_404(
-                BookPage,
-                book_material=book_material,
-                page_number=page_number
-            )
+            try:
+                page = BookPage.objects.get(
+                    book_material=book_material,
+                    page_number=page_number
+                )
+            except BookPage.DoesNotExist:
+                return Response(
+                    {'error': f'Page {page_number} not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             
             # Check if user can modify
             can_modify = any(self._user_can_modify(request.user, lesson) for lesson in book_material.lessons.all())
@@ -4288,7 +4429,7 @@ class BookPageView(APIView):
             )
             
             # Get navigation info
-            total_pages = book_material.book_pages.count()
+            total_pages = BookPage.objects.filter(book_material=book_material).count()
             has_next = BookPage.objects.filter(
                 book_material=book_material,
                 page_number=page_number + 1
@@ -4338,9 +4479,16 @@ class BookPageView(APIView):
         page_number = int(request.GET.get('page', 1))
         per_page = int(request.GET.get('per_page', 10))
         
-        pages = book_material.book_pages.all().order_by('page_number')
-        paginator = Paginator(pages, per_page)
-        page_obj = paginator.get_page(page_number)
+        try:
+            # Get pages for this book material
+            pages = BookPage.objects.filter(book_material=book_material).order_by('page_number')
+            paginator = Paginator(pages, per_page)
+            page_obj = paginator.get_page(page_number)
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to paginate pages: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
         
         pages_data = [{
             'id': str(page.id),
@@ -4377,13 +4525,62 @@ class BookPageView(APIView):
         
         if user.role == 'student':
             from student.models import EnrolledCourse
-            return EnrolledCourse.objects.filter(
+            enrolled = EnrolledCourse.objects.filter(
                 student_profile__user=user,
                 course=lesson.course,
                 status__in=['active', 'completed']
             ).exists()
+            return enrolled
         
         return False
+    
+    def delete(self, request, material_id, page_number):
+        """
+        DELETE: Delete specific page
+        """
+        try:
+            try:
+                book_material = LessonMaterialModel.objects.get(
+                    id=material_id, 
+                    material_type='book'
+                )
+            except LessonMaterialModel.DoesNotExist:
+                return Response(
+                    {'error': 'Book material not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            try:
+                page = BookPage.objects.get(
+                    book_material=book_material,
+                    page_number=page_number
+                )
+            except BookPage.DoesNotExist:
+                return Response(
+                    {'error': f'Page {page_number} not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if user can modify
+            can_modify = any(self._user_can_modify(request.user, lesson) for lesson in book_material.lessons.all())
+            if not can_modify:
+                return Response(
+                    {'error': 'You do not have permission to delete this page'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Delete the page
+            page.delete()
+            
+            return Response({
+                'message': f'Page {page_number} deleted successfully'
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to delete page: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     def _user_can_modify(self, user, lesson):
         """Check if user can modify this lesson"""

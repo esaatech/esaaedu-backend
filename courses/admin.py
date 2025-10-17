@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, Note
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, Note, BookPage
 
 
 @admin.register(Course)
@@ -105,7 +105,7 @@ class LessonMaterialAdmin(admin.ModelAdmin):
     )
     
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related('lesson', 'lesson__course')
+        return super().get_queryset(request).prefetch_related('lessons', 'lessons__course')
 
 
 @admin.register(Quiz)
@@ -762,3 +762,36 @@ class NoteAdmin(admin.ModelAdmin):
         updated = queryset.update(category='issue')
         self.message_user(request, f'{updated} note(s) categorized as issues.')
     categorize_as_issue.short_description = "Categorize as Issues"
+
+
+@admin.register(BookPage)
+class BookPageAdmin(admin.ModelAdmin):
+    list_display = ['get_book_title', 'page_number', 'title', 'is_required', 'created_at']
+    list_filter = ['is_required', 'created_at', 'book_material__material_type']
+    search_fields = ['title', 'content', 'book_material__title', 'book_material__lessons__title']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_book_title(self, obj):
+        """Display the book title"""
+        return obj.book_material.title
+    get_book_title.short_description = 'Book'
+    get_book_title.admin_order_field = 'book_material__title'
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('book_material', 'page_number', 'title', 'content')
+        }),
+        ('Resources', {
+            'fields': ('image_url', 'audio_url')
+        }),
+        ('Settings', {
+            'fields': ('is_required',)
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('book_material').prefetch_related('book_material__lessons')

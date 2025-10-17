@@ -1388,6 +1388,68 @@ class LessonMaterialUpdateSerializer(serializers.ModelSerializer):
         }
 
 
+# ===== BOOK CREATION SERIALIZER (Single API Call) =====
+
+class BookPageNestedSerializer(serializers.ModelSerializer):
+    """
+    Nested serializer for book pages within book creation
+    """
+    class Meta:
+        model = BookPage
+        fields = ['title', 'content', 'is_required']
+    
+    def validate_content(self, value):
+        """Validate content is not empty"""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Page content cannot be empty")
+        return value
+
+
+class BookCreationSerializer(serializers.ModelSerializer):
+    """
+    Serializer for creating a complete book with pages in a single API call
+    """
+    pages = BookPageNestedSerializer(many=True, write_only=True)
+    
+    class Meta:
+        model = LessonMaterial
+        fields = [
+            'title', 'description', 'material_type', 'is_required', 
+            'is_downloadable', 'order', 'pages'
+        ]
+        extra_kwargs = {
+            'material_type': {'default': 'book'},
+            'order': {'default': 0}
+        }
+    
+    def validate_pages(self, value):
+        """Validate that at least one page is provided"""
+        if not value or len(value) == 0:
+            raise serializers.ValidationError("At least one page is required")
+        return value
+    
+    def create(self, validated_data):
+        """Create book material and all pages in a single transaction"""
+        pages_data = validated_data.pop('pages')
+        
+        # Create the book material
+        book_material = LessonMaterial.objects.create(**validated_data)
+        
+        # Create all pages
+        created_pages = []
+        for i, page_data in enumerate(pages_data, 1):
+            page = BookPage.objects.create(
+                book_material=book_material,
+                page_number=i,
+                **page_data
+            )
+            created_pages.append(page)
+        
+        # Add pages to the material for response
+        book_material.created_pages = created_pages
+        return book_material
+
+
 # ===== BOOK PAGE SERIALIZERS =====
 
 class BookPageCreateSerializer(serializers.ModelSerializer):
@@ -1397,7 +1459,7 @@ class BookPageCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = BookPage
         fields = [
-            'title', 'content', 'image_url', 'audio_url', 'is_required'
+            'title', 'content', 'is_required'
         ]
     
     def validate_content(self, value):
@@ -1405,6 +1467,22 @@ class BookPageCreateSerializer(serializers.ModelSerializer):
         if not value or not value.strip():
             raise serializers.ValidationError("Page content cannot be empty")
         return value
+    
+    def create(self, validated_data):
+        """Create a new book page with the provided book_material and page_number"""
+        book_material = self.context.get('book_material')
+        page_number = self.context.get('page_number')
+        
+        if not book_material:
+            raise serializers.ValidationError("book_material is required")
+        if not page_number:
+            raise serializers.ValidationError("page_number is required")
+        
+        return BookPage.objects.create(
+            book_material=book_material,
+            page_number=page_number,
+            **validated_data
+        )
 
 
 class BookPageUpdateSerializer(serializers.ModelSerializer):
@@ -1414,14 +1492,12 @@ class BookPageUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = BookPage
         fields = [
-            'title', 'content', 'image_url', 'audio_url', 'is_required'
+            'title', 'content', 'is_required'
         ]
         extra_kwargs = {
             'title': {'required': False},
             'content': {'required': False},
-            'image_url': {'required': False},
-            'audio_url': {'required': False},
-            'is_required': {'required': False},
+            'is_required': {'required': False}
         }
     
     def validate_content(self, value):

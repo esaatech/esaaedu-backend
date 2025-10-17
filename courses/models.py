@@ -337,6 +337,7 @@ class LessonMaterial(models.Model):
         ('presentation', 'Presentation'),
         ('worksheet', 'Worksheet'),
         ('book', 'Book'),
+        ('note', 'Note'),
         ('other', 'Other'),
     ]
     
