@@ -199,9 +199,78 @@ class ProjectSubmissionFeedbackSerializer(serializers.ModelSerializer):
 
 # ===== ASSIGNMENT SERIALIZERS =====
 
+class AssignmentQuestionCreateUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for creating and updating assignment questions
+    Handles content object format from frontend
+    """
+    # Content field that contains all question data
+    content = serializers.JSONField(required=False, allow_null=True)
+    
+    class Meta:
+        model = AssignmentQuestion
+        fields = [
+            'question_text', 'type', 'content', 'explanation', 'points', 'order'
+        ]
+        extra_kwargs = {
+            'question_text': {'required': True},
+            'type': {'required': True},
+            'points': {'required': True},
+            'order': {'required': True}
+        }
+    
+    def create(self, validated_data):
+        """Create assignment question with content from frontend"""
+        # Content is already structured by frontend
+        content = validated_data.get('content', {})
+        validated_data['content'] = content
+        return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        """Update assignment question with content from frontend"""
+        # Content is already structured by frontend
+        content = validated_data.get('content', {})
+        validated_data['content'] = content
+        return super().update(instance, validated_data)
+
+
+class AssignmentQuestionDetailSerializer(serializers.ModelSerializer):
+    """
+    Serializer for assignment question details
+    Returns both legacy and new format data
+    """
+    # Legacy fields extracted from content
+    options = serializers.SerializerMethodField()
+    correct_answer = serializers.SerializerMethodField()
+    
+    # New field for rich options with explanations
+    full_options = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = AssignmentQuestion
+        fields = [
+            'id', 'question_text', 'type', 'options', 'correct_answer',
+            'explanation', 'points', 'order', 'created_at', 'updated_at', 'full_options'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_options(self, obj):
+        """Extract options from content JSONField"""
+        return obj.content.get('options', []) if obj.content else []
+    
+    def get_correct_answer(self, obj):
+        """Extract correct_answer from content JSONField"""
+        return obj.content.get('correct_answer', '') if obj.content else ''
+    
+    def get_full_options(self, obj):
+        """Extract full_options from content JSONField"""
+        full_options = obj.content.get('full_options', None) if obj.content else None
+        return full_options
+
+
 class AssignmentQuestionSerializer(serializers.ModelSerializer):
     """
-    Serializer for assignment questions
+    Legacy serializer for assignment questions (kept for backward compatibility)
     """
     class Meta:
         model = AssignmentQuestion
@@ -265,7 +334,7 @@ class AssignmentDetailSerializer(serializers.ModelSerializer):
     """
     lesson_title = serializers.CharField(source='lesson.title', read_only=True)
     course_title = serializers.CharField(source='lesson.course.title', read_only=True)
-    questions = AssignmentQuestionSerializer(many=True, read_only=True)
+    questions = AssignmentQuestionDetailSerializer(many=True, read_only=True)
     question_count = serializers.SerializerMethodField()
     submission_count = serializers.SerializerMethodField()
     graded_count = serializers.SerializerMethodField()

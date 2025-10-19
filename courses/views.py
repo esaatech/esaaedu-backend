@@ -3202,7 +3202,6 @@ class MaterialContentView(APIView):
         try:
             # Get the material
             material = get_object_or_404(LessonMaterialModel, id=material_id)
-            print(f"🔍 Material found: {material.title} - {material.material_type}")
             
             # Check if user has access to this material (enrolled in any lesson that uses this material)
             user_enrollments = EnrolledCourse.objects.filter(
@@ -3252,17 +3251,14 @@ class MaterialContentView(APIView):
                         'created_at': page.created_at.isoformat()
                     } for page in pages
                 ]
-                print(f"🔍 Book pages loaded: {pages.count()}")
                 
             elif material.material_type == 'note':
                 # For notes, use description as content
                 response_data['content'] = material.description or ''
-                print(f"🔍 Note content loaded")
                 
             else:
                 # For other types, include basic file info
                 response_data['content'] = material.description or ''
-                print(f"🔍 Default content loaded for {material.material_type}")
             
             return Response(response_data, status=status.HTTP_200_OK)
             

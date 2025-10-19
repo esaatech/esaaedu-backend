@@ -760,13 +760,14 @@ class QuestionDetailSerializer(serializers.ModelSerializer):
     question_type = serializers.CharField(source='type', read_only=True)
     options = serializers.SerializerMethodField()
     correct_answer = serializers.SerializerMethodField()
+    full_options = serializers.SerializerMethodField()
     
     class Meta:
         model = Question
         fields = [
             'id', 'quiz_id', 'quiz_title', 'question_text', 'question_type',
             'options', 'correct_answer', 'explanation', 'points', 'order',
-            'created_at', 'updated_at'
+            'created_at', 'updated_at', 'full_options'
         ]
         read_only_fields = ['id', 'quiz_id', 'quiz_title', 'created_at', 'updated_at']
     
@@ -775,6 +776,9 @@ class QuestionDetailSerializer(serializers.ModelSerializer):
     
     def get_correct_answer(self, obj):
         return obj.content.get('correct_answer', '') if obj.content else ''
+    
+    def get_full_options(self, obj):
+        return obj.content.get('full_options', None) if obj.content else None
 
 
 class QuestionCreateUpdateSerializer(serializers.ModelSerializer):
@@ -790,11 +794,14 @@ class QuestionCreateUpdateSerializer(serializers.ModelSerializer):
     options = serializers.ListField(required=False, allow_empty=True, allow_null=True)
     correct_answer = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     
+    # New field for rich options with explanations
+    full_options = serializers.JSONField(required=False, allow_null=True)
+    
     class Meta:
         model = Question
         fields = [
             'question_text', 'question_type', 'type', 'options', 'correct_answer',
-            'explanation', 'points', 'order'
+            'explanation', 'points', 'order', 'full_options'
         ]
         extra_kwargs = {
             'order': {'required': False}
@@ -843,6 +850,7 @@ class QuestionCreateUpdateSerializer(serializers.ModelSerializer):
         # Extract virtual fields
         options = validated_data.pop('options', None)
         correct_answer = validated_data.pop('correct_answer', None)
+        full_options = validated_data.pop('full_options', None)
         question_type = validated_data.pop('question_type', None)
         type_field = validated_data.pop('type', None)
         
@@ -859,6 +867,8 @@ class QuestionCreateUpdateSerializer(serializers.ModelSerializer):
             content['options'] = options
         if correct_answer is not None and correct_answer != '':
             content['correct_answer'] = correct_answer
+        if full_options is not None:
+            content['full_options'] = full_options
             
         validated_data['content'] = content
         return super().create(validated_data)
@@ -867,6 +877,7 @@ class QuestionCreateUpdateSerializer(serializers.ModelSerializer):
         # Extract virtual fields
         options = validated_data.pop('options', None)
         correct_answer = validated_data.pop('correct_answer', None)
+        full_options = validated_data.pop('full_options', None)
         question_type = validated_data.pop('question_type', None)
         type_field = validated_data.pop('type', None)
         
@@ -883,6 +894,8 @@ class QuestionCreateUpdateSerializer(serializers.ModelSerializer):
             content['options'] = options
         if correct_answer is not None and correct_answer != '':
             content['correct_answer'] = correct_answer
+        if full_options is not None:
+            content['full_options'] = full_options
             
         validated_data['content'] = content
         return super().update(instance, validated_data)
