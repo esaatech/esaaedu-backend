@@ -2036,9 +2036,10 @@ class AssessmentView(APIView):
         )['avg_score'] or 0
         
         # Assignment assessment counts
-        assignment_count = LessonAssessment.objects.filter(
+        from courses.models import AssignmentSubmission
+        assignment_count = AssignmentSubmission.objects.filter(
             enrollment__in=enrollments,
-            quiz_attempt__isnull=True
+            status__in=['submitted', 'graded']  # Only count submitted and graded assignments
         ).count()
         
         # Instructor assessment counts
@@ -2052,11 +2053,15 @@ class AssessmentView(APIView):
         week_ago = timezone.now() - timedelta(days=7)
         
         recent_quiz = quiz_attempts.filter(completed_at__gte=week_ago).count()
-        recent_assignment = LessonAssessment.objects.filter(
+        
+        # Calculate recent assignments using AssignmentSubmission model
+        from courses.models import AssignmentSubmission
+        recent_assignment = AssignmentSubmission.objects.filter(
             enrollment__in=enrollments,
-            quiz_attempt__isnull=True,
-            created_at__gte=week_ago
+            status__in=['submitted', 'graded'],  # Only count submitted and graded assignments
+            submitted_at__gte=week_ago
         ).count()
+        
         recent_instructor = TeacherAssessment.objects.filter(
             enrollment__in=enrollments,
             created_at__gte=week_ago
@@ -2440,7 +2445,8 @@ class DashboardAssessmentView(APIView):
             avg_score = quiz_attempts.aggregate(avg=Avg('score'))['avg'] or 0
             
             # Recent week quizzes (last 7 days)
-            week_ago = datetime.now() - timedelta(days=7)
+            from django.utils import timezone
+            week_ago = timezone.now() - timedelta(days=7)
             recent_quizzes = quiz_attempts.filter(completed_at__gte=week_ago).count()
             
             # Quiz assessments list (last attempts only)
@@ -2460,8 +2466,40 @@ class DashboardAssessmentView(APIView):
                     'has_teacher_feedback': attempt.is_teacher_graded
                 })
             
-            # Assignment assessments (placeholder - implement based on your models)
+            # Assignment assessments (top-level summary similar to quizzes)
+            assignment_submissions_qs = AssignmentSubmission.objects.filter(
+                student=request.user,
+                status__in=['submitted', 'graded']  # Only show submitted and graded assignments
+            ).select_related(
+                'assignment__lesson__course',
+                'graded_by'
+            )
+
+            total_assignments = assignment_submissions_qs.count()
+            # Use passed flag; if not graded yet, passed defaults False per model
+            passed_assignments = assignment_submissions_qs.filter(passed=True).count()
+            avg_assignment_score = assignment_submissions_qs.aggregate(avg=Avg('percentage'))['avg'] or 0
+            recent_assignments = assignment_submissions_qs.filter(submitted_at__gte=week_ago).count()
+
             assignment_assessments = []
+            for sub in assignment_submissions_qs.order_by('-submitted_at')[:10]:
+                # Determine if assignment is graded
+                is_graded = sub.status == 'graded' and sub.is_graded
+                
+                assignment_assessments.append({
+                    'assignment_attempt_id': str(sub.id),
+                    'assignment_title': sub.assignment.title,
+                    'lesson_title': sub.assignment.lesson.title if sub.assignment and sub.assignment.lesson else 'N/A',
+                    'course_title': sub.assignment.lesson.course.title if sub.assignment and sub.assignment.lesson else 'N/A',
+                    'student_name': f"{student_profile.child_first_name} {student_profile.child_last_name}",
+                    'score_percentage': float(sub.percentage) if sub.percentage is not None and is_graded else None,
+                    'passed': bool(sub.passed) if is_graded else None,  # Only show pass/fail if graded
+                    'is_graded': is_graded,
+                    'attempt_number': sub.attempt_number,
+                    'submitted_at': sub.submitted_at.isoformat() if sub.submitted_at else None,
+                    'graded_at': sub.graded_at.isoformat() if sub.graded_at else None,
+                    'has_teacher_feedback': bool(sub.instructor_feedback)
+                })
             
             # Teacher assessments - get all assessments for this student
             teacher_assessments = TeacherAssessment.objects.filter(
@@ -2524,8 +2562,10 @@ class DashboardAssessmentView(APIView):
                         'recent_week': recent_quizzes
                     },
                     'assignment_assessments': {
-                        'total': 0,
-                        'recent_week': 0
+                        'total': total_assignments,
+                        'passed': passed_assignments,
+                        'average_score': round(avg_assignment_score, 1),
+                        'recent_week': recent_assignments
                     },
                     'instructor_assessments': {
                         'total': total_teacher_assessments,
@@ -2533,9 +2573,9 @@ class DashboardAssessmentView(APIView):
                         'recent_week': recent_teacher_assessments
                     },
                     'overview': {
-                        'total_assessments': total_quizzes,
+                        'total_assessments': total_quizzes + total_assignments,
                         'total_courses': 0,
-                        'recent_activity': recent_quizzes
+                        'recent_activity': recent_quizzes + recent_assignments
                     }
                 },
                 'quiz_assessments': quiz_assessments,
@@ -2543,9 +2583,9 @@ class DashboardAssessmentView(APIView):
                 'instructor_assessments': instructor_assessments,
                 'teacher_assessment_groups': teacher_assessment_groups,
                 'summary': {
-                    'total_assessments': total_quizzes,
+                    'total_assessments': total_quizzes + total_assignments,
                     'quiz_count': total_quizzes,
-                    'assignment_count': 0,
+                    'assignment_count': total_assignments,
                     'instructor_count': 0
                 }
             }
@@ -2603,6 +2643,7 @@ class QuizDetailView(APIView):
                 content = question.content or {}
                 correct_answer = content.get('correct_answer', '')
                 options = content.get('options', [])
+                full_options = content.get('full_options', None)
                 
                 # Calculate if answer is correct
                 is_correct = student_answer.lower().strip() == correct_answer.lower().strip() if correct_answer else False
@@ -2614,6 +2655,7 @@ class QuizDetailView(APIView):
                     'student_answer': student_answer,
                     'correct_answer': correct_answer,
                     'options': options,  # Add options for multiple choice questions
+                    'full_options': full_options,  # Add full_options with explanations
                     'points_earned': float(question_feedback.points_earned) if question_feedback and question_feedback.points_earned else (question.points if is_correct else 0),
                     'points_possible': float(question_feedback.points_possible) if question_feedback and question_feedback.points_possible else question.points,
                     'explanation': question.explanation or '',
@@ -2864,5 +2906,135 @@ class AssignmentSubmissionView(APIView):
         except Exception as e:
             return Response(
                 {'error': f'Failed to submit assignment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AssignmentSubmissionDetailView(APIView):
+    """
+    GET: Retrieve full assignment submission details for student view
+    POST: Submit student feedback response and mark feedback as checked
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, submission_id):
+        try:
+            # Get the assignment submission
+            submission = AssignmentSubmission.objects.select_related(
+                'assignment__lesson__course',
+                'graded_by'
+            ).prefetch_related(
+                'assignment__questions'
+            ).get(
+                id=submission_id,
+                student=request.user
+            )
+            
+            # Get assignment with questions
+            assignment = submission.assignment
+            questions = assignment.questions.all().order_by('order')
+            
+            # Build questions data
+            questions_data = []
+            for question in questions:
+                questions_data.append({
+                    'id': str(question.id),
+                    'question_text': question.question_text,
+                    'order': question.order,
+                    'points': question.points,
+                    'type': question.type,
+                    'content': question.content,
+                    'explanation': question.explanation,
+                })
+            
+            # Build graded questions data
+            graded_questions_data = []
+            for graded_q in submission.graded_questions:
+                graded_questions_data.append({
+                    'question_id': graded_q.get('question_id'),
+                    'points_earned': graded_q.get('points_earned', 0),
+                    'points_possible': graded_q.get('points_possible'),
+                    'feedback': graded_q.get('feedback', ''),
+                    'is_correct': graded_q.get('is_correct'),
+                })
+            
+            # Build submission data
+            submission_data = {
+                'id': str(submission.id),
+                'status': submission.status,
+                'is_graded': submission.is_graded,
+                'answers': submission.answers,
+                'graded_questions': graded_questions_data,
+                'instructor_feedback': submission.instructor_feedback,
+                'feedback_response': submission.feedback_response,
+                'feedback_checked': submission.feedback_checked,
+                'feedback_checked_at': submission.feedback_checked_at.isoformat() if submission.feedback_checked_at else None,
+                'points_earned': float(submission.points_earned) if submission.points_earned else None,
+                'points_possible': float(submission.points_possible) if submission.points_possible else None,
+                'percentage': float(submission.percentage) if submission.percentage else None,
+                'passed': submission.passed,
+                'submitted_at': submission.submitted_at.isoformat(),
+                'graded_at': submission.graded_at.isoformat() if submission.graded_at else None,
+                'graded_by': submission.graded_by.get_full_name() if submission.graded_by else None,
+            }
+            
+            # Build assignment data
+            assignment_data = {
+                'id': str(assignment.id),
+                'title': assignment.title,
+                'description': assignment.description,
+                'assignment_type': assignment.assignment_type,
+                'passing_score': assignment.passing_score,
+                'questions': questions_data,
+            }
+            
+            return Response({
+                'assignment': assignment_data,
+                'submission': submission_data,
+            })
+            
+        except AssignmentSubmission.DoesNotExist:
+            return Response(
+                {'error': 'Assignment submission not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to retrieve assignment submission: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, submission_id):
+        try:
+            # Get the assignment submission
+            submission = AssignmentSubmission.objects.get(
+                id=submission_id,
+                student=request.user
+            )
+            
+            # Get feedback response from request
+            feedback_response = request.data.get('feedback_response', '')
+            
+            # Update submission
+            submission.feedback_response = feedback_response
+            submission.feedback_checked = True
+            submission.feedback_checked_at = timezone.now()
+            submission.save()
+            
+            return Response({
+                'message': 'Feedback response submitted successfully',
+                'feedback_response': submission.feedback_response,
+                'feedback_checked': submission.feedback_checked,
+                'feedback_checked_at': submission.feedback_checked_at.isoformat(),
+            })
+            
+        except AssignmentSubmission.DoesNotExist:
+            return Response(
+                {'error': 'Assignment submission not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to submit feedback response: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

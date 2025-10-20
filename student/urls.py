@@ -42,6 +42,7 @@ urlpatterns = [
     
     # Assignment Submission
     path('assignments/<uuid:assignment_id>/submit/', views.AssignmentSubmissionView.as_view(), name='assignment_submit'),
+    path('assignment-submissions/<uuid:submission_id>/', views.AssignmentSubmissionDetailView.as_view(), name='assignment_submission_detail'),
     
     # TODO: Add other student-related endpoints as needed
     # path('attendance/', views.student_attendance, name='student_attendance'),
