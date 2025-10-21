@@ -3459,6 +3459,8 @@ class TeacherDashboardAPIView(APIView):
             'header_data': self.get_header_data(teacher),
             'upcoming_classes': self.get_upcoming_classes(teacher),
             'recent_activity': self.get_recent_activity(teacher),
+            'course_count': self.get_course_count(teacher),
+            'teacher_settings': self.get_teacher_settings(teacher),
         })
 
 
@@ -3468,6 +3470,7 @@ class TeacherDashboardAPIView(APIView):
             'teacher_name': teacher.get_full_name() or teacher.first_name,
             'total_students': self.get_total_students(teacher),
             'active_courses': self.get_active_courses(teacher),
+            'total_enrollments': self.get_total_enrollments(teacher),
             'monthly_revenue': self.get_monthly_revenue(teacher),
         }
 
@@ -3493,6 +3496,18 @@ class TeacherDashboardAPIView(APIView):
             teacher=teacher,
             status='published'
         ).count()
+
+    def get_total_enrollments(self, teacher):
+        """Count total enrollments across all teacher's courses"""
+        from student.models import EnrolledCourse
+        
+        # Get all enrollments for this teacher's courses
+        enrollments = EnrolledCourse.objects.filter(course__teacher=teacher)
+        
+        # Debug: Check enrollments
+        print(f"DEBUG TOTAL ENROLLMENTS: Teacher {teacher.email} has {enrollments.count()} total enrollments")
+        
+        return enrollments.count()
 
     def get_monthly_revenue(self, teacher):
         """Calculate revenue for current month from course enrollments"""
@@ -3666,6 +3681,40 @@ class TeacherDashboardAPIView(APIView):
                 return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
             else:
                 return "Just now"
+
+    def get_course_count(self, teacher):
+        """Get total course count for teacher"""
+        return Course.objects.filter(teacher=teacher).count()
+
+    def get_teacher_settings(self, teacher):
+        """Get teacher settings from UserDashboardSettings"""
+        from settings.models import UserDashboardSettings
+        
+        try:
+            settings = UserDashboardSettings.get_or_create_settings(teacher)
+            return {
+                'default_quiz_points': settings.default_quiz_points,
+                'default_assignment_points': settings.default_assignment_points,
+                'default_course_passing_score': settings.default_course_passing_score,
+                'default_quiz_time_limit': settings.default_quiz_time_limit,
+                'auto_grade_multiple_choice': settings.auto_grade_multiple_choice,
+                'show_correct_answers_by_default': settings.show_correct_answers_by_default,
+                'theme_preference': settings.theme_preference,
+                'notifications_enabled': settings.notifications_enabled,
+            }
+        except Exception as e:
+            print(f"Error getting teacher settings: {e}")
+            # Return default values if settings fail
+            return {
+                'default_quiz_points': 1,
+                'default_assignment_points': 5,
+                'default_course_passing_score': 70,
+                'default_quiz_time_limit': 10,
+                'auto_grade_multiple_choice': False,
+                'show_correct_answers_by_default': True,
+                'theme_preference': 'system',
+                'notifications_enabled': True,
+            }
 
 
 # ===== COMPREHENSIVE STUDENT DASHBOARD =====

@@ -110,6 +110,19 @@ class UserDashboardSettings(models.Model):
         related_name='dashboard_settings'
     )
     
+    # User Type - determines which settings are applicable
+    USER_TYPE_CHOICES = [
+        ('student', 'Student'),
+        ('teacher', 'Teacher'),
+    ]
+    
+    user_type = models.CharField(
+        max_length=10,
+        choices=USER_TYPE_CHOICES,
+        default='student',
+        help_text="Type of user - determines which settings are applicable"
+    )
+    
     # Dashboard Display Settings
     live_lessons_limit = models.PositiveIntegerField(
         default=3,
@@ -132,15 +145,47 @@ class UserDashboardSettings(models.Model):
         choices=[
             ('light', 'Light Theme'),
             ('dark', 'Dark Theme'),
-            ('auto', 'Auto (System)'),
+            ('system', 'System'),
         ],
-        default='auto',
+        default='system',
         help_text="Dashboard theme preference"
     )
     
     notifications_enabled = models.BooleanField(
         default=True,
         help_text="Enable dashboard notifications"
+    )
+    
+    # Teacher-specific Settings
+    default_quiz_points = models.PositiveIntegerField(
+        default=1,
+        help_text="Default points for new quiz questions (teachers only)"
+    )
+    
+    default_assignment_points = models.PositiveIntegerField(
+        default=5,
+        help_text="Default points for new assignment questions (teachers only)"
+    )
+    
+    default_course_passing_score = models.PositiveIntegerField(
+        default=70,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Default passing score percentage for courses and quizzes (teachers only)"
+    )
+    
+    default_quiz_time_limit = models.PositiveIntegerField(
+        default=10,
+        help_text="Default time limit in minutes for new quizzes (teachers only)"
+    )
+    
+    auto_grade_multiple_choice = models.BooleanField(
+        default=False,
+        help_text="Automatically grade multiple choice questions when students submit (teachers only)"
+    )
+    
+    show_correct_answers_by_default = models.BooleanField(
+        default=True,
+        help_text="Show correct answers to students after quiz completion by default (teachers only)"
     )
     
     # Timestamps
@@ -161,26 +206,63 @@ class UserDashboardSettings(models.Model):
         Get or create dashboard settings for a user
         Returns the settings object
         """
+        # Determine user type based on user role
+        user_type = 'teacher' if hasattr(user, 'role') and user.role == 'teacher' else 'student'
+        
+        # Set defaults based on user type
+        defaults = {
+            'live_lessons_limit': 3,
+            'continue_learning_limit': 25,
+            'show_today_only': True,
+            'theme_preference': 'system',
+            'notifications_enabled': True,
+            'user_type': user_type,
+        }
+        
+        # Add teacher-specific defaults
+        if user_type == 'teacher':
+            defaults.update({
+                'default_quiz_points': 1,
+                'default_assignment_points': 5,
+                'default_course_passing_score': 70,
+                'default_quiz_time_limit': 10,
+                'auto_grade_multiple_choice': False,
+                'show_correct_answers_by_default': True,
+            })
+        
         settings, created = cls.objects.get_or_create(
             user=user,
-            defaults={
-                'live_lessons_limit': 3,
-                'continue_learning_limit': 25,
-                'show_today_only': True,
-                'theme_preference': 'auto',
-                'notifications_enabled': True,
-            }
+            defaults=defaults
         )
+        
+        # Update user_type if it was changed
+        if settings.user_type != user_type:
+            settings.user_type = user_type
+            settings.save()
+        
         return settings
     
     def get_dashboard_config(self):
         """
         Return dashboard configuration as a dictionary
         """
-        return {
+        config = {
             'live_lessons_limit': self.live_lessons_limit,
             'continue_learning_limit': self.continue_learning_limit,
             'show_today_only': self.show_today_only,
             'theme_preference': self.theme_preference,
             'notifications_enabled': self.notifications_enabled,
         }
+        
+        # Add teacher-specific config if user is a teacher
+        if self.user_type == 'teacher':
+            config.update({
+                'default_quiz_points': self.default_quiz_points,
+                'default_assignment_points': self.default_assignment_points,
+                'default_course_passing_score': self.default_course_passing_score,
+                'default_quiz_time_limit': self.default_quiz_time_limit,
+                'auto_grade_multiple_choice': self.auto_grade_multiple_choice,
+                'show_correct_answers_by_default': self.show_correct_answers_by_default,
+            })
+        
+        return config

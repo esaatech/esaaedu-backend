@@ -13,6 +13,8 @@ class UserDashboardSettingsSerializer(serializers.ModelSerializer):
         model = UserDashboardSettings
         fields = [
             'id',
+            'user',
+            'user_type',
             'user_email',
             'user_role',
             'live_lessons_limit',
@@ -20,10 +22,17 @@ class UserDashboardSettingsSerializer(serializers.ModelSerializer):
             'show_today_only',
             'theme_preference',
             'notifications_enabled',
+            # Teacher-specific fields
+            'default_quiz_points',
+            'default_assignment_points',
+            'default_course_passing_score',
+            'default_quiz_time_limit',
+            'auto_grade_multiple_choice',
+            'show_correct_answers_by_default',
             'created_at',
             'updated_at'
         ]
-        read_only_fields = ['id', 'user_email', 'user_role', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'user', 'user_email', 'user_role', 'created_at', 'updated_at']
     
     def validate_live_lessons_limit(self, value):
         """Validate live lessons limit"""
@@ -35,6 +44,30 @@ class UserDashboardSettingsSerializer(serializers.ModelSerializer):
         """Validate continue learning limit"""
         if value < 1 or value > 100:
             raise serializers.ValidationError("Continue learning limit must be between 1 and 100")
+        return value
+    
+    def validate_default_quiz_points(self, value):
+        """Validate default quiz points"""
+        if value < 1 or value > 100:
+            raise serializers.ValidationError("Default quiz points must be between 1 and 100")
+        return value
+    
+    def validate_default_assignment_points(self, value):
+        """Validate default assignment points"""
+        if value < 1 or value > 100:
+            raise serializers.ValidationError("Default assignment points must be between 1 and 100")
+        return value
+    
+    def validate_default_course_passing_score(self, value):
+        """Validate default course passing score"""
+        if value < 0 or value > 100:
+            raise serializers.ValidationError("Default course passing score must be between 0 and 100")
+        return value
+    
+    def validate_default_quiz_time_limit(self, value):
+        """Validate default quiz time limit"""
+        if value < 1 or value > 180:
+            raise serializers.ValidationError("Default quiz time limit must be between 1 and 180 minutes")
         return value
 
 
@@ -48,3 +81,10 @@ class DashboardConfigSerializer(serializers.Serializer):
     show_today_only = serializers.BooleanField()
     theme_preference = serializers.CharField()
     notifications_enabled = serializers.BooleanField()
+    # Teacher-specific fields
+    default_quiz_points = serializers.IntegerField(required=False)
+    default_assignment_points = serializers.IntegerField(required=False)
+    default_course_passing_score = serializers.IntegerField(required=False)
+    default_quiz_time_limit = serializers.IntegerField(required=False)
+    auto_grade_multiple_choice = serializers.BooleanField(required=False)
+    show_correct_answers_by_default = serializers.BooleanField(required=False)
