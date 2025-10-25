@@ -3332,11 +3332,12 @@ def submit_quiz_attempt(request, lesson_id):
         for question in questions:
             user_answer = answers.get(str(question.id))
             if user_answer:
-                # Handle case-insensitive comparison for true/false questions
-                if question.type == 'true_false':
-                    is_correct = user_answer.lower() == question.content.get('correct_answer', '').lower()
-                else:
-                    is_correct = user_answer == question.content.get('correct_answer', '')
+                # 🔧 FIX: Normalize both answers by trimming whitespace and converting to lowercase
+                normalized_user_answer = str(user_answer).strip().lower()
+                normalized_correct_answer = str(question.content.get('correct_answer', '')).strip().lower()
+                
+                # Compare normalized answers
+                is_correct = normalized_user_answer == normalized_correct_answer
                 
                 if is_correct:
                     correct_answers += 1

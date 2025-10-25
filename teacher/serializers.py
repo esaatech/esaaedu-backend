@@ -223,6 +223,10 @@ class AssignmentQuestionCreateUpdateSerializer(serializers.ModelSerializer):
         """Create assignment question with content from frontend"""
         # Content is already structured by frontend
         content = validated_data.get('content', {})
+        
+        # 🔧 FIX: Trim whitespace from options and correct_answer before saving
+        content = self._trim_content_whitespace(content)
+        
         validated_data['content'] = content
         return super().create(validated_data)
     
@@ -230,8 +234,48 @@ class AssignmentQuestionCreateUpdateSerializer(serializers.ModelSerializer):
         """Update assignment question with content from frontend"""
         # Content is already structured by frontend
         content = validated_data.get('content', {})
+        
+        # 🔧 FIX: Trim whitespace from options and correct_answer before saving
+        content = self._trim_content_whitespace(content)
+        
         validated_data['content'] = content
         return super().update(instance, validated_data)
+    
+    def _trim_content_whitespace(self, content):
+        """
+        Trim whitespace from content structure
+        """
+        if not content:
+            return content
+        
+        # Trim correct_answer
+        if 'correct_answer' in content and content['correct_answer']:
+            content['correct_answer'] = str(content['correct_answer']).strip()
+        
+        # Trim options array
+        if 'options' in content and isinstance(content['options'], list):
+            content['options'] = [str(option).strip() for option in content['options'] if option]
+        
+        # Trim full_options structure
+        if 'full_options' in content and content['full_options']:
+            full_options = content['full_options']
+            
+            # Handle options array (for multiple choice)
+            if 'options' in full_options and isinstance(full_options['options'], list):
+                for option in full_options['options']:
+                    if isinstance(option, dict) and 'text' in option:
+                        option['text'] = str(option['text']).strip()
+            
+            # Handle True/False options
+            if 'trueOption' in full_options and isinstance(full_options['trueOption'], dict):
+                if 'text' in full_options['trueOption']:
+                    full_options['trueOption']['text'] = str(full_options['trueOption']['text']).strip()
+            
+            if 'falseOption' in full_options and isinstance(full_options['falseOption'], dict):
+                if 'text' in full_options['falseOption']:
+                    full_options['falseOption']['text'] = str(full_options['falseOption']['text']).strip()
+        
+        return content
 
 
 class AssignmentQuestionDetailSerializer(serializers.ModelSerializer):

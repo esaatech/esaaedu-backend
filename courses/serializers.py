@@ -846,6 +846,30 @@ class QuestionCreateUpdateSerializer(serializers.ModelSerializer):
         
         return data
     
+    def _trim_full_options_whitespace(self, full_options):
+        """
+        Trim whitespace from full_options structure
+        """
+        if not full_options:
+            return full_options
+        
+        # Handle options array (for multiple choice)
+        if 'options' in full_options and isinstance(full_options['options'], list):
+            for option in full_options['options']:
+                if isinstance(option, dict) and 'text' in option:
+                    option['text'] = str(option['text']).strip()
+        
+        # Handle True/False options
+        if 'trueOption' in full_options and isinstance(full_options['trueOption'], dict):
+            if 'text' in full_options['trueOption']:
+                full_options['trueOption']['text'] = str(full_options['trueOption']['text']).strip()
+        
+        if 'falseOption' in full_options and isinstance(full_options['falseOption'], dict):
+            if 'text' in full_options['falseOption']:
+                full_options['falseOption']['text'] = str(full_options['falseOption']['text']).strip()
+        
+        return full_options
+    
     def create(self, validated_data):
         # Extract virtual fields
         options = validated_data.pop('options', None)
@@ -860,6 +884,19 @@ class QuestionCreateUpdateSerializer(serializers.ModelSerializer):
         elif type_field:
             validated_data['type'] = type_field
         # For creates, type is required (validated above)
+        
+        # 🔧 FIX: Trim whitespace from options and correct_answer before saving
+        if options is not None and options != []:
+            # Trim whitespace from all options
+            options = [str(option).strip() for option in options if option]
+        
+        if correct_answer is not None and correct_answer != '':
+            # Trim whitespace from correct_answer
+            correct_answer = str(correct_answer).strip()
+        
+        if full_options is not None:
+            # Trim whitespace from full_options structure
+            full_options = self._trim_full_options_whitespace(full_options)
         
         # Create content dict
         content = {}
@@ -887,6 +924,19 @@ class QuestionCreateUpdateSerializer(serializers.ModelSerializer):
         elif type_field:
             validated_data['type'] = type_field
         # For updates, if no type provided, keep existing type (don't set validated_data['type'])
+        
+        # 🔧 FIX: Trim whitespace from options and correct_answer before saving
+        if options is not None and options != []:
+            # Trim whitespace from all options
+            options = [str(option).strip() for option in options if option]
+        
+        if correct_answer is not None and correct_answer != '':
+            # Trim whitespace from correct_answer
+            correct_answer = str(correct_answer).strip()
+        
+        if full_options is not None:
+            # Trim whitespace from full_options structure
+            full_options = self._trim_full_options_whitespace(full_options)
         
         # Update content dict
         content = instance.content or {}
