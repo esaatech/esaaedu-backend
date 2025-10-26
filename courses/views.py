@@ -1816,6 +1816,20 @@ def teacher_students_master(request):
         students_data = []
         for enrollment in enrollments:
             student_user = enrollment.student_profile.user
+            
+            # Get assignment summary for this student (count only submissions that are submitted and ungraded FOR THIS SPECIFIC COURSE)
+            from courses.models import AssignmentSubmission
+            
+            # Filter by student AND course (through the assignment's lesson)
+            ungraded_submissions = AssignmentSubmission.objects.filter(
+                student=student_user,
+                assignment__lesson__course=enrollment.course,
+                status='submitted',
+                is_graded=False
+            )
+            
+            assignment_count = ungraded_submissions.count()
+            
             student_data = {
                 'id': str(student_user.id),
                 'student_profile_id': str(enrollment.student_profile.id),
@@ -1837,7 +1851,8 @@ def teacher_students_master(request):
                 'current_lesson_title': enrollment.current_lesson.title if enrollment.current_lesson else None,
                 'completed_lessons_count': enrollment.completed_lessons_count,
                 'total_lessons_count': enrollment.total_lessons_count,
-                'last_accessed': enrollment.last_accessed.isoformat() if enrollment.last_accessed else None
+                'last_accessed': enrollment.last_accessed.isoformat() if enrollment.last_accessed else None,
+                'pending_assignment_count': assignment_count  # Add assignment count
             }
             students_data.append(student_data)
         
