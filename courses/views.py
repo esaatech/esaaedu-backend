@@ -3473,6 +3473,7 @@ class TeacherDashboardAPIView(APIView):
             'active_courses': self.get_active_courses(teacher),
             'total_enrollments': self.get_total_enrollments(teacher),
             'monthly_revenue': self.get_monthly_revenue(teacher),
+            'pending_assignment_count': self.get_pending_assignment_count(teacher),
         }
 
     def get_total_students(self, teacher):
@@ -3530,6 +3531,19 @@ class TeacherDashboardAPIView(APIView):
             total_revenue += float(enrollment.course.price)
         
         return total_revenue
+
+    def get_pending_assignment_count(self, teacher):
+        """Count pending assignment submissions (status='submitted', is_graded=False)"""
+        from courses.models import AssignmentSubmission
+        
+        # Count submissions for teacher's courses that are submitted but not graded
+        pending_count = AssignmentSubmission.objects.filter(
+            assignment__lesson__course__teacher=teacher,
+            status='submitted',
+            is_graded=False
+        ).count()
+        
+        return pending_count
 
     def get_upcoming_classes(self, teacher):
         """Get today's and upcoming live classes"""
