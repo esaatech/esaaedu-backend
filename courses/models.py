@@ -82,9 +82,10 @@ class Course(models.Model):
         default=list, 
         help_text="Detailed learning objectives"
     )
-    prerequisites_text = models.TextField(
-        blank=True, 
-        help_text="Text description of prerequisites"
+    prerequisites_text = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of prerequisites as JSON array"
     )
     duration_weeks = models.PositiveIntegerField(
         default=8, 
