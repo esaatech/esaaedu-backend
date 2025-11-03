@@ -45,5 +45,6 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:$PORT/ || exit 1
 
-# Run the application
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "--threads", "8", "--timeout", "0", "--log-level", "info", "backend.wsgi:application"]
+# Run the application with Daphne (ASGI server for WebSocket support)
+# Daphne handles both HTTP and WebSocket connections
+CMD ["daphne", "-b", "0.0.0.0", "-p", "8080", "--verbosity", "2", "backend.asgi:application"]

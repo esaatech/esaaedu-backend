@@ -68,3 +68,126 @@ class AIConversation(models.Model):
     def get_message_history(self) -> list:
         """Returns message history formatted for AI prompt"""
         return self.messages or []
+
+
+class AIPrompt(models.Model):
+    """
+    Stores AI prompts and schemas that can be edited from Django admin
+    """
+    PROMPT_TYPES = [
+        ('course_generation', 'Course Generation'),
+        ('lesson_content', 'Lesson Content'),
+        ('quiz_questions', 'Quiz Questions'),
+        ('assignment_questions', 'Assignment Questions'),
+    ]
+    
+    prompt_type = models.CharField(
+        max_length=50,
+        choices=PROMPT_TYPES,
+        unique=True,
+        help_text="Type of prompt (one per type)"
+    )
+    
+    # System instruction for the AI model
+    system_instruction = models.TextField(
+        help_text="System-level instruction for the AI model (e.g., 'You are an expert educational content creator...')"
+    )
+    
+    # Prompt template (can include placeholders like {user_request}, {context})
+    prompt_template = models.TextField(
+        help_text="Prompt template. Use placeholders: {user_request}, {context}, {age_range}, {level}, etc."
+    )
+    
+    # Output schema as JSON
+    output_schema = models.JSONField(
+        help_text="Expected output schema as JSON (e.g., {'type': 'object', 'properties': {...}})"
+    )
+    
+    # Schema description (human-readable)
+    schema_description = models.TextField(
+        blank=True,
+        help_text="Human-readable description of what the schema expects"
+    )
+    
+    # Is this prompt active?
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this prompt is currently active"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_prompts',
+        help_text="User who created this prompt"
+    )
+    last_modified_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='modified_prompts',
+        help_text="User who last modified this prompt"
+    )
+    
+    class Meta:
+        verbose_name = "AI Prompt"
+        verbose_name_plural = "AI Prompts"
+        ordering = ['prompt_type']
+    
+    def __str__(self):
+        return f"{self.get_prompt_type_display()} ({'Active' if self.is_active else 'Inactive'})"
+    
+    def format_prompt(self, user_request: str, context: dict = None) -> str:
+        """
+        Format the prompt template with user request and context.
+        
+        Args:
+            user_request: User's natural language request
+            context: Optional context dictionary
+        
+        Returns:
+            Formatted prompt string
+        """
+        # Import here to avoid circular imports
+        from .prompts import format_categories_list
+        
+        # Build context string if provided
+        context_str = ""
+        if context:
+            parts = []
+            for key, value in context.items():
+                if value and key != 'available_categories_list':  # Skip categories list, handle separately
+                    parts.append(f"{key}: {value}")
+            
+            if parts:
+                context_str = "\n\nAdditional context:\n" + "\n".join(f"- {part}" for part in parts)
+        
+        # Format categories list (fetched from database at runtime)
+        categories_list = context.get('available_categories_list') if context else None
+        if not categories_list:
+            categories_list = format_categories_list()
+        
+        # Format the prompt template
+        # Try to format with all placeholders, gracefully handle missing ones
+        try:
+            formatted = self.prompt_template.format(
+                user_request=user_request,
+                context=context_str if context else "",
+                available_categories_list=categories_list,
+                **{k: v for k, v in (context or {}).items() if v and k != 'available_categories_list'}
+            )
+        except KeyError as e:
+            # If template doesn't have a placeholder, just format what we have
+            formatted = self.prompt_template.format(
+                user_request=user_request,
+                context=context_str if context else "",
+                **{k: v for k, v in (context or {}).items() if v}
+            )
+        
+        return formatted
