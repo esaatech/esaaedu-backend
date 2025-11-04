@@ -93,3 +93,4 @@ logs/
 # Firebase service account files
 *firebase-adminsdk*.json
 firebase-service-account*.json
+.credentials/

@@ -3,8 +3,10 @@ GeminiService - Main service class for Google Vertex AI (Gemini) integration
 """
 import logging
 import json
+import os
 from typing import Dict, List, Optional, Any, AsyncGenerator
 from google.cloud import aiplatform
+from google.oauth2 import service_account
 from vertexai.generative_models import GenerativeModel
 from decouple import config
 
@@ -20,21 +22,77 @@ class GeminiService:
         """Initialize Vertex AI client"""
         self.project_id = config('GCP_PROJECT_ID', default=None)
         self.location = config('VERTEX_AI_LOCATION', default='us-central1')
-        self.model_name = config('GEMINI_MODEL', default='gemini-1.5-pro')
+        # Model name should be just the model identifier, not the full path
+        # Available models: gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash-001, gemini-2.0-flash-lite-001
+        # Using gemini-2.0-flash-001 as default (fast and cost-effective)
+        self.model_name = config('GEMINI_MODEL', default='gemini-2.0-flash-001')
         
         if not self.project_id:
             logger.warning("GCP_PROJECT_ID not set, Vertex AI may not work correctly")
         
+        # Get credentials
+        credentials = self._get_credentials()
+        
         # Initialize Vertex AI
         if self.project_id:
             try:
-                aiplatform.init(project=self.project_id, location=self.location)
-                logger.info(f"Vertex AI initialized for project: {self.project_id}, location: {self.location}")
+                if credentials:
+                    aiplatform.init(
+                        project=self.project_id,
+                        location=self.location,
+                        credentials=credentials
+                    )
+                    logger.info(f"Vertex AI initialized for project: {self.project_id}, location: {self.location} (with service account)")
+                else:
+                    aiplatform.init(project=self.project_id, location=self.location)
+                    logger.info(f"Vertex AI initialized for project: {self.project_id}, location: {self.location} (using default credentials)")
             except Exception as e:
                 logger.error(f"Failed to initialize Vertex AI: {e}")
     
-    def _get_model(self) -> GenerativeModel:
-        """Get the configured Gemini model"""
+    def _get_credentials(self):
+        """Get service account credentials if available"""
+        # Check for explicit credentials file path
+        creds_path = config('GOOGLE_APPLICATION_CREDENTIALS', default=None)
+        
+        # If not set, try default location for our service account
+        if not creds_path:
+            # Get project root: ai/services.py -> ai/ -> backend/ -> project root
+            # Or use BASE_DIR from Django settings if available
+            try:
+                from django.conf import settings
+                base_dir = settings.BASE_DIR
+            except:
+                # Fallback: calculate from current file location
+                base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            
+            default_path = os.path.join(base_dir, '.credentials', 'vertex-ai-service-account.json')
+            if os.path.exists(default_path):
+                creds_path = default_path
+                logger.info(f"Found Vertex AI credentials at: {creds_path}")
+        
+        if creds_path and os.path.exists(creds_path):
+            try:
+                credentials = service_account.Credentials.from_service_account_file(creds_path)
+                logger.info(f"Loaded Vertex AI credentials from: {creds_path}")
+                return credentials
+            except Exception as e:
+                logger.warning(f"Failed to load credentials from {creds_path}: {e}")
+        else:
+            if creds_path:
+                logger.warning(f"Credentials file not found at: {creds_path}")
+        
+        # Return None to use default credentials (for Cloud Run)
+        return None
+    
+    def _get_model(self, system_instruction: Optional[str] = None) -> GenerativeModel:
+        """
+        Get the configured Gemini model
+        
+        Args:
+            system_instruction: Optional system instruction to include in the model
+        """
+        if system_instruction:
+            return GenerativeModel(self.model_name, system_instruction=system_instruction)
         return GenerativeModel(self.model_name)
     
     async def generate_content(
@@ -57,7 +115,8 @@ class GeminiService:
             Generated text response
         """
         try:
-            model = self._get_model()
+            # Create model with system instruction if provided
+            model = self._get_model(system_instruction=system_instruction)
             
             generation_config = {
                 "temperature": temperature,
@@ -65,18 +124,11 @@ class GeminiService:
             if max_tokens:
                 generation_config["max_output_tokens"] = max_tokens
             
-            # Build request
-            if system_instruction:
-                response = model.generate_content(
-                    prompt,
-                    generation_config=generation_config,
-                    system_instruction=system_instruction,
-                )
-            else:
-                response = model.generate_content(
-                    prompt,
-                    generation_config=generation_config,
-                )
+            # Generate content (system instruction is already in the model)
+            response = model.generate_content(
+                prompt,
+                generation_config=generation_config,
+            )
             
             return response.text
             
@@ -102,25 +154,19 @@ class GeminiService:
             Chunks of generated text
         """
         try:
-            model = self._get_model()
+            # Create model with system instruction if provided
+            model = self._get_model(system_instruction=system_instruction)
             
             generation_config = {
                 "temperature": temperature,
             }
             
-            if system_instruction:
-                responses = model.generate_content(
-                    prompt,
-                    generation_config=generation_config,
-                    system_instruction=system_instruction,
-                    stream=True,
-                )
-            else:
-                responses = model.generate_content(
-                    prompt,
-                    generation_config=generation_config,
-                    stream=True,
-                )
+            # Generate content with streaming (system instruction is already in the model)
+            responses = model.generate_content(
+                prompt,
+                generation_config=generation_config,
+                stream=True,
+            )
             
             for chunk in responses:
                 if chunk.text:
