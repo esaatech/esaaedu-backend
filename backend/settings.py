@@ -437,22 +437,37 @@ def get_redis_hosts():
     
     return [host_config]
 
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            'hosts': get_redis_hosts(),
-        },
-    },
-}
+# Determine which channel layer to use
+# Check USE_INMEMORY_CHANNELS (handles both string "false"/"true" and boolean)
+use_inmemory = config('USE_INMEMORY_CHANNELS', default='false').lower() in ('true', '1', 'yes')
 
-# Fallback to in-memory channel layer for development (if Redis not available)
-if config('USE_INMEMORY_CHANNELS', default=False, cast=bool):
+if use_inmemory:
+    logger.warning("Using InMemoryChannelLayer - not recommended for production!")
     CHANNEL_LAYERS = {
         'default': {
             'BACKEND': 'channels.layers.InMemoryChannelLayer',
         },
     }
+else:
+    # Use Redis channel layer (required for Cloud Run with multiple instances)
+    redis_url = config('REDIS_URL', default=None)
+    if not redis_url:
+        logger.error("REDIS_URL not set but USE_INMEMORY_CHANNELS=false. Falling back to InMemoryChannelLayer.")
+        CHANNEL_LAYERS = {
+            'default': {
+                'BACKEND': 'channels.layers.InMemoryChannelLayer',
+            },
+        }
+    else:
+        logger.info(f"Using RedisChannelLayer with Redis URL: {redis_url[:20]}...")
+        CHANNEL_LAYERS = {
+            'default': {
+                'BACKEND': 'channels_redis.core.RedisChannelLayer',
+                'CONFIG': {
+                    'hosts': get_redis_hosts(),
+                },
+            },
+        }
 
 # Slack Configuration
 SLACK_BOT_TOKEN = config('SLACK_BOT_TOKEN', default='')
