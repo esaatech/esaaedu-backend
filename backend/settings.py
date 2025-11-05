@@ -439,7 +439,10 @@ def get_redis_hosts():
 
 # Determine which channel layer to use
 # Check USE_INMEMORY_CHANNELS (handles both string "false"/"true" and boolean)
-use_inmemory = config('USE_INMEMORY_CHANNELS', default='false').lower() in ('true', '1', 'yes')
+use_inmemory_env = config('USE_INMEMORY_CHANNELS', default='false')
+use_inmemory = str(use_inmemory_env).lower() in ('true', '1', 'yes')
+
+logger.info(f"Channel Layer Config - USE_INMEMORY_CHANNELS env value: '{use_inmemory_env}', parsed as: {use_inmemory}")
 
 if use_inmemory:
     logger.warning("Using InMemoryChannelLayer - not recommended for production!")
@@ -451,6 +454,7 @@ if use_inmemory:
 else:
     # Use Redis channel layer (required for Cloud Run with multiple instances)
     redis_url = config('REDIS_URL', default=None)
+    logger.info(f"Channel Layer Config - REDIS_URL present: {redis_url is not None}")
     if not redis_url:
         logger.error("REDIS_URL not set but USE_INMEMORY_CHANNELS=false. Falling back to InMemoryChannelLayer.")
         CHANNEL_LAYERS = {
@@ -459,15 +463,27 @@ else:
             },
         }
     else:
-        logger.info(f"Using RedisChannelLayer with Redis URL: {redis_url[:20]}...")
-        CHANNEL_LAYERS = {
-            'default': {
-                'BACKEND': 'channels_redis.core.RedisChannelLayer',
-                'CONFIG': {
-                    'hosts': get_redis_hosts(),
+        logger.info(f"Using RedisChannelLayer with Redis URL: {redis_url[:30]}...")
+        try:
+            redis_hosts = get_redis_hosts()
+            logger.info(f"Redis hosts configuration: {redis_hosts}")
+            CHANNEL_LAYERS = {
+                'default': {
+                    'BACKEND': 'channels_redis.core.RedisChannelLayer',
+                    'CONFIG': {
+                        'hosts': redis_hosts,
+                    },
                 },
-            },
-        }
+            }
+            logger.info("RedisChannelLayer configured successfully")
+        except Exception as e:
+            logger.error(f"Error configuring RedisChannelLayer: {e}", exc_info=True)
+            logger.error("Falling back to InMemoryChannelLayer")
+            CHANNEL_LAYERS = {
+                'default': {
+                    'BACKEND': 'channels.layers.InMemoryChannelLayer',
+                },
+            }
 
 # Slack Configuration
 SLACK_BOT_TOKEN = config('SLACK_BOT_TOKEN', default='')
