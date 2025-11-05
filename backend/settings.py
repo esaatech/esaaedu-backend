@@ -437,36 +437,59 @@ def get_redis_hosts():
     
     return [host_config]
 
-# Determine which channel layer to use
-# Check USE_INMEMORY_CHANNELS (handles both string "false"/"true" and boolean)
-use_inmemory_env = config('USE_INMEMORY_CHANNELS', default='false')
-use_inmemory = str(use_inmemory_env).lower() in ('true', '1', 'yes')
-
-logger.info(f"Channel Layer Config - USE_INMEMORY_CHANNELS env value: '{use_inmemory_env}', parsed as: {use_inmemory}")
-
-if use_inmemory:
-    logger.warning("Using InMemoryChannelLayer - not recommended for production!")
-    CHANNEL_LAYERS = {
-        'default': {
-            'BACKEND': 'channels.layers.InMemoryChannelLayer',
-        },
+# Channels Configuration (WebSocket support)
+def get_redis_hosts():
+    """Parse REDIS_URL and return appropriate hosts configuration for channels-redis."""
+    redis_url = config('REDIS_URL', default='redis://localhost:6379/1')
+    
+    # Parse the URL
+    parsed = urlparse(redis_url)
+    
+    # Check if it's an SSL connection (rediss://)
+    use_ssl = parsed.scheme == 'rediss'
+    
+    # Extract host and port
+    host = parsed.hostname or 'localhost'
+    port = parsed.port or 6379
+    
+    # Extract password if present
+    password = parsed.password
+    
+    # Build host configuration
+    host_config = {
+        'address': (host, port),
     }
-else:
-    # Use Redis channel layer (required for Cloud Run with multiple instances)
+    
+    # Add password if provided
+    if password:
+        host_config['password'] = password
+    
+    # Add SSL configuration for rediss:// connections
+    if use_ssl:
+        # Create SSL context for Upstash Redis
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ssl_context.check_hostname = True
+        ssl_context.verify_mode = ssl.CERT_REQUIRED
+        host_config['ssl'] = ssl_context
+    
+    return [host_config]
+
+# Determine which channel layer to use
+# FORCE Redis on Cloud Run (detected by K_SERVICE env var)
+is_cloud_run = config('K_SERVICE', default=None) is not None
+
+if is_cloud_run:
+    # Cloud Run: ALWAYS use Redis (InMemoryChannelLayer causes tuple decode errors)
+    logger.info("🚀 CLOUD RUN DETECTED - Forcing RedisChannelLayer")
     redis_url = config('REDIS_URL', default=None)
-    logger.info(f"Channel Layer Config - REDIS_URL present: {redis_url is not None}")
     if not redis_url:
-        logger.error("REDIS_URL not set but USE_INMEMORY_CHANNELS=false. Falling back to InMemoryChannelLayer.")
-        CHANNEL_LAYERS = {
-            'default': {
-                'BACKEND': 'channels.layers.InMemoryChannelLayer',
-            },
-        }
+        logger.error("❌ CRITICAL: REDIS_URL not set on Cloud Run! WebSocket will fail!")
+        raise ValueError("REDIS_URL must be set in Cloud Run environment variables")
     else:
-        logger.info(f"Using RedisChannelLayer with Redis URL: {redis_url[:30]}...")
+        logger.info(f"✅ Using RedisChannelLayer on Cloud Run with Redis URL: {redis_url[:40]}...")
         try:
             redis_hosts = get_redis_hosts()
-            logger.info(f"Redis hosts configuration: {redis_hosts}")
+            logger.info(f"✅ Redis hosts configuration: {redis_hosts}")
             CHANNEL_LAYERS = {
                 'default': {
                     'BACKEND': 'channels_redis.core.RedisChannelLayer',
@@ -475,10 +498,39 @@ else:
                     },
                 },
             }
-            logger.info("RedisChannelLayer configured successfully")
+            logger.info("✅✅✅ RedisChannelLayer configured successfully for Cloud Run ✅✅✅")
         except Exception as e:
-            logger.error(f"Error configuring RedisChannelLayer: {e}", exc_info=True)
-            logger.error("Falling back to InMemoryChannelLayer")
+            logger.error(f"❌ Error configuring RedisChannelLayer: {e}", exc_info=True)
+            raise  # Fail fast - don't use InMemoryChannelLayer on Cloud Run
+else:
+    # Local development: Check USE_INMEMORY_CHANNELS
+    use_inmemory_env = config('USE_INMEMORY_CHANNELS', default='false')
+    use_inmemory = str(use_inmemory_env).lower() in ('true', '1', 'yes')
+    
+    logger.info(f"🏠 LOCAL DEV - USE_INMEMORY_CHANNELS env value: '{use_inmemory_env}', parsed as: {use_inmemory}")
+    
+    if use_inmemory:
+        logger.warning("⚠️ Using InMemoryChannelLayer for local development")
+        CHANNEL_LAYERS = {
+            'default': {
+                'BACKEND': 'channels.layers.InMemoryChannelLayer',
+            },
+        }
+    else:
+        # Use Redis for local dev too if URL is provided
+        redis_url = config('REDIS_URL', default=None)
+        if redis_url:
+            logger.info(f"✅ Using RedisChannelLayer locally with Redis URL: {redis_url[:30]}...")
+            CHANNEL_LAYERS = {
+                'default': {
+                    'BACKEND': 'channels_redis.core.RedisChannelLayer',
+                    'CONFIG': {
+                        'hosts': get_redis_hosts(),
+                    },
+                },
+            }
+        else:
+            logger.info("✅ Using InMemoryChannelLayer locally (no REDIS_URL)")
             CHANNEL_LAYERS = {
                 'default': {
                     'BACKEND': 'channels.layers.InMemoryChannelLayer',
