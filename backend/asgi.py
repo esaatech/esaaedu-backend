@@ -33,40 +33,69 @@ class CloudRunWebSocketMiddleware:
     def __init__(self, app):
         self.app = app
 
+    def _normalize_data(self, data):
+        """Normalize data that might be a tuple to proper type"""
+        if isinstance(data, tuple):
+            # Extract first element if tuple
+            if len(data) > 0:
+                return data[0]
+            return b"" if isinstance(data, tuple) else ""
+        return data
+
     async def __call__(self, scope, receive, send):
         # Only wrap WebSocket connections
         if scope["type"] == "websocket":
             # Wrap the receive callable to normalize tuple/bytes data
             async def wrapped_receive():
-                message = await receive()
-                
-                # Fix Cloud Run's tuple format issue
-                if message["type"] == "websocket.receive":
-                    # Handle bytes data
-                    if "bytes" in message:
-                        bytes_data = message["bytes"]
-                        # If it's a tuple, extract the first element
-                        if isinstance(bytes_data, tuple):
-                            logger.warning("Received tuple in WebSocket bytes data, normalizing...")
-                            message["bytes"] = bytes_data[0] if bytes_data else b""
-                        # Ensure it's bytes
-                        elif not isinstance(bytes_data, bytes):
-                            logger.warning(f"Converting non-bytes data to bytes: {type(bytes_data)}")
-                            message["bytes"] = bytes(bytes_data) if bytes_data else b""
+                try:
+                    message = await receive()
                     
-                    # Handle text data
-                    if "text" in message:
-                        text_data = message["text"]
-                        # If it's a tuple, extract the first element
-                        if isinstance(text_data, tuple):
-                            logger.warning("Received tuple in WebSocket text data, normalizing...")
-                            message["text"] = text_data[0] if text_data else ""
-                        # Ensure it's a string
-                        elif not isinstance(text_data, str):
-                            logger.warning(f"Converting non-string data to string: {type(text_data)}")
-                            message["text"] = str(text_data) if text_data else ""
-                
-                return message
+                    # Fix Cloud Run's tuple format issue
+                    if message and isinstance(message, dict) and message.get("type") == "websocket.receive":
+                        # Handle bytes data
+                        if "bytes" in message:
+                            bytes_data = message["bytes"]
+                            try:
+                                # Try to normalize tuple data
+                                normalized = self._normalize_data(bytes_data)
+                                # Ensure it's bytes
+                                if isinstance(normalized, bytes):
+                                    message["bytes"] = normalized
+                                elif normalized:
+                                    # Try to convert to bytes
+                                    message["bytes"] = bytes(normalized) if not isinstance(normalized, str) else normalized.encode('utf-8')
+                                else:
+                                    message["bytes"] = b""
+                            except Exception as e:
+                                logger.error(f"Error normalizing bytes data: {e}, type: {type(bytes_data)}")
+                                message["bytes"] = b""
+                        
+                        # Handle text data
+                        if "text" in message:
+                            text_data = message["text"]
+                            try:
+                                # Try to normalize tuple data
+                                normalized = self._normalize_data(text_data)
+                                # Ensure it's a string
+                                if isinstance(normalized, str):
+                                    message["text"] = normalized
+                                elif normalized:
+                                    # Try to convert to string
+                                    if isinstance(normalized, bytes):
+                                        message["text"] = normalized.decode('utf-8')
+                                    else:
+                                        message["text"] = str(normalized)
+                                else:
+                                    message["text"] = ""
+                            except Exception as e:
+                                logger.error(f"Error normalizing text data: {e}, type: {type(text_data)}")
+                                message["text"] = ""
+                    
+                    return message
+                except Exception as e:
+                    logger.error(f"Error in wrapped_receive: {e}", exc_info=True)
+                    # Return a safe default message
+                    return {"type": "websocket.receive", "text": ""}
             
             return await self.app(scope, wrapped_receive, send)
         else:
