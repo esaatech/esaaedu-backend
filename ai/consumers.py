@@ -344,11 +344,14 @@ class CourseGenerationConsumer(BaseAIConsumer):
         if session_key not in self.chat_sessions:
             # Create new chat session with function calling enabled
             # System instruction encourages immediate course generation when user requests it
-            system_instruction = """You are a helpful assistant for creating educational courses. 
+            """
+            system_instruction =""" """You are a helpful assistant for creating educational courses. 
 When a user asks to create, generate, or make a course (even if they just provide a topic like "java" or "android"), 
 you should IMMEDIATELY call the generate_course function. Do not ask for more details - use the information provided 
 and generate a comprehensive course. Only ask questions if the user's request is completely unclear or ambiguous."""
             
+            system_instruction = "You are a helpful and friendly assistant. Keep your responses concise and conversational."
+
             chat, generation_config = self.gemini_service.start_chat_session(
                 system_instruction=system_instruction,
                 temperature=0.7,
