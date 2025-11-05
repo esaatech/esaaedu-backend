@@ -29,12 +29,19 @@ RUN pip install poetry \
 # Copy project
 COPY . .
 
+# Make entrypoint script executable
+RUN chmod +x /app/entrypoint.sh
+
 # Create staticfiles directory and collect static files
 RUN mkdir -p /app/staticfiles
 RUN python manage.py collectstatic --noinput --clear
 
-# Run database migrations
-RUN python manage.py migrate --noinput
+# Note: Database migrations are NOT run during build
+# They should be run:
+# 1. At container startup (via entrypoint script), OR
+# 2. Via Cloud Build step before deploying, OR  
+# 3. Via Cloud Run init container
+# This is because migrations require database connection which isn't available during build
 
 
 
@@ -45,6 +52,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:$PORT/ || exit 1
 
-# Run the application with Daphne (ASGI server for WebSocket support)
-# Daphne handles both HTTP and WebSocket connections
-CMD ["daphne", "-b", "0.0.0.0", "-p", "8080", "--verbosity", "2", "backend.asgi:application"]
+# Use entrypoint script to run migrations before starting server
+ENTRYPOINT ["/app/entrypoint.sh"]
