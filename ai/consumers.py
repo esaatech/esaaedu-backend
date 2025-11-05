@@ -3,6 +3,8 @@ WebSocket consumers for Django Channels - AI chat interface
 """
 import json
 import logging
+import time
+import asyncio
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
@@ -11,6 +13,7 @@ import firebase_admin
 from .models import AIConversation
 from .gemini_agent import GeminiAgent
 from .prompts import get_prompt_for_type
+from google.api_core import exceptions as google_exceptions
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -304,68 +307,301 @@ class BaseAIConsumer(AsyncWebsocketConsumer):
 
 class CourseGenerationConsumer(BaseAIConsumer):
     """
-    Consumer for course generation via AI chat
+    Consumer for course generation via AI chat using GeminiAgent with function calling
     """
     
-    async def test_chatbot(self, user_message: str, conversation_id=None):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Store ChatSession per conversation
+        # Key: conversation_id (str), Value: (ChatSession, generation_config) tuple
+        self.chat_sessions = {}
+    
+    async def _get_or_create_chat_session(self, conversation_id=None):
         """
-        TASK 1: Simple test chatbot - just echoes message with random number
-        This is isolated from AI course generation for testing
+        Get or create ChatSession for a conversation
+        ChatSession manages conversation history automatically
         """
-        import random
+        session_key = str(conversation_id) if conversation_id else 'default'
         
-        # Get or create conversation for chat history
-        self.conversation = await get_or_create_conversation(
-            self.user,
-            'course_generation',
-            conversation_id,
-            {}
-        )
+        if session_key not in self.chat_sessions:
+            # Create new chat session with function calling enabled
+            system_instruction = "You are a helpful assistant for creating educational courses. You can help users generate course outlines and answer questions about course creation."
+            
+            chat, generation_config = self.gemini_service.start_chat_session(
+                system_instruction=system_instruction,
+                temperature=0.7,
+                enable_function_calling=True  # Enable AI-driven function calling
+            )
+            
+            self.chat_sessions[session_key] = (chat, generation_config)
+            logger.info(f"Created new ChatSession for conversation: {session_key}")
         
-        # Save user message
-        await save_conversation_message(self.conversation, 'user', user_message)
+        return self.chat_sessions[session_key]
+    
+    async def _send_message_with_retry(self, chat, user_input, generation_config, max_retries=3):
+        """
+        Send message to ChatSession with retry logic for network errors
+        """
+        retry_delay = 2  # seconds
         
-        # Generate echo response with random number
-        random_id = random.randint(1000, 9999)
-        response = f"Echo: {user_message} [Response ID: {random_id}]"
+        for attempt in range(max_retries):
+            try:
+                response = chat.send_message(
+                    user_input,
+                    generation_config=generation_config,
+                    stream=False  # Need to check for function calls first
+                )
+                return response
+            except (google_exceptions.ServiceUnavailable, 
+                    google_exceptions.InternalServerError,
+                    Exception) as e:
+                error_msg = str(e).lower()
+                # Check if it's a network/connectivity error
+                if 'unavailable' in error_msg or 'recvmsg' in error_msg or 'address' in error_msg:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Network error (attempt {attempt + 1}/{max_retries}). Retrying...")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                        continue
+                    else:
+                        logger.error(f"Network error after {max_retries} attempts")
+                        raise
+                else:
+                    # Not a network error, re-raise immediately
+                    raise
         
-        # Save assistant response
-        await save_conversation_message(self.conversation, 'assistant', response)
+        # Should never reach here, but just in case
+        raise Exception("Failed to send message after retries")
+    
+    async def _detect_function_calls(self, response):
+        """
+        Detect if response contains function calls
+        Returns: (has_function_call: bool, function_calls: list)
+        """
+        has_function_call = False
+        function_calls = []
+        text_response = None
         
-        # Send response back to client
-        await self.send_json({
-            'type': 'message',
-            'role': 'assistant',
-            'content': response,
-            'conversation_id': str(self.conversation.id)
-        })
+        # First, try to get text response
+        try:
+            text_response = response.text
+        except (ValueError, AttributeError) as e:
+            error_msg = str(e)
+            if 'function_call' in error_msg.lower() or 'function' in error_msg.lower():
+                has_function_call = True
+            else:
+                logger.warning(f"Unexpected error getting text: {e}")
+        
+        # If we couldn't get text, check for function calls
+        if has_function_call or not text_response:
+            # Check for function calls in the response structure
+            try:
+                if hasattr(response, 'candidates') and response.candidates:
+                    for candidate in response.candidates:
+                        if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                            for part in candidate.content.parts:
+                                if hasattr(part, 'function_call'):
+                                    func_call = part.function_call
+                                    if not func_call:
+                                        continue
+                                    
+                                    # Extract function name
+                                    func_name = None
+                                    if hasattr(func_call, 'name') and func_call.name:
+                                        func_name = func_call.name
+                                    elif isinstance(func_call, dict) and func_call.get('name'):
+                                        func_name = func_call.get('name')
+                                    
+                                    if func_name and func_name.strip():
+                                        has_function_call = True
+                                        function_calls.append(func_call)
+            except Exception as e:
+                logger.debug(f"Error checking for function calls: {e}")
+            
+            # Also check direct function_calls attribute
+            if not function_calls and hasattr(response, 'function_calls') and response.function_calls:
+                valid_calls = []
+                for call in response.function_calls:
+                    func_name = None
+                    if hasattr(call, 'name') and call.name:
+                        func_name = call.name
+                    elif isinstance(call, dict) and call.get('name'):
+                        func_name = call.get('name')
+                    
+                    if func_name and func_name.strip():
+                        valid_calls.append(call)
+                
+                if valid_calls:
+                    has_function_call = True
+                    function_calls = valid_calls
+        
+        return has_function_call, function_calls, text_response
+    
+    async def _handle_function_call(self, function_call, user_input, conversation_id):
+        """
+        Handle function call execution (e.g., generate_course)
+        """
+        # Extract function name and args
+        if hasattr(function_call, 'name'):
+            function_name = function_call.name
+            function_args = function_call.args if hasattr(function_call, 'args') else {}
+        else:
+            function_name = function_call.get('name', '') if isinstance(function_call, dict) else getattr(function_call, 'name', '')
+            function_args = function_call.get('args', {}) if isinstance(function_call, dict) else (getattr(function_call, 'args', {}) if hasattr(function_call, 'args') else {})
+        
+        if not function_name:
+            logger.warning("Function call detected but no function name found")
+            return None
+        
+        logger.info(f"Executing function: {function_name}")
+        
+        # Handle course generation
+        if function_name == "generate_course":
+            # Extract the user's original request
+            course_request = function_args.get("user_request") if isinstance(function_args, dict) else user_input
+            
+            # Notify client that function is being executed
+            await self.send_json({
+                'type': 'function_call',
+                'function_name': function_name,
+                'message': 'Generating course...'
+            })
+            
+            # Call Level 2 AI for structured course generation
+            course_data = await self.gemini_service.handle_course_generation(
+                user_request=course_request,
+                system_instruction="You are an expert course creator. Generate comprehensive course outlines.",
+                temperature=0.7
+            )
+            
+            # Save generated course data to conversation
+            await save_generated_content(self.conversation, course_data)
+            
+            # Ensure course_data is a dict
+            if not isinstance(course_data, dict):
+                logger.error(f"course_data is not a dict: {type(course_data)}")
+                raise ValueError("course_data must be a dictionary")
+            
+            # Send course_data with type: 'course_generated' (spread properties directly)
+            # This matches what the user requested - just the course_data properties
+            response_data = {
+                'type': 'course_generated',
+                **course_data  # Spread course_data properties directly
+            }
+            
+            logger.info(f"Sending course data - Type: {response_data.get('type')}, Title: {response_data.get('title')}")
+            await self.send_json(response_data)
+            
+            # Also send as 'complete' type for frontend compatibility (if needed)
+            # The frontend can use either format
+            await self.send_json({
+                'type': 'complete',
+                'conversation_id': str(self.conversation.id) if self.conversation else None,
+                'data': course_data
+            })
+            
+            return course_data
+        
+        return None
     
     async def handle_message(self, data):
-        """Handle course generation request"""
+        """Handle course generation request using GeminiAgent"""
         user_request = data.get('content', '').strip()
         conversation_id = data.get('conversation_id')
         context = data.get('context', {})
-        test_mode = data.get('test_mode', False)  # For Task 1: Basic Chatbot testing
         
         if not user_request:
             await self.send_error("Content is required")
             return
         
-        # TASK 1: Test Chatbot Mode - Isolated simple echo chatbot
-        # ALWAYS use test chatbot - AI completely disabled for Task 1
-        if test_mode:
-            # Remove /test prefix if present
-            clean_request = user_request.replace('/test', '').strip() or user_request
-            await self.test_chatbot(clean_request, conversation_id)
-            return
+        try:
+            # Get or create conversation
+            self.conversation = await get_or_create_conversation(
+                self.user,
+                'course_generation',
+                conversation_id,
+                context
+            )
+            
+            # Save user message to database
+            await save_conversation_message(self.conversation, 'user', user_request)
+            
+            # Get or create ChatSession for this conversation
+            chat, generation_config = await self._get_or_create_chat_session(
+                str(self.conversation.id)
+            )
+            
+            # Send message to ChatSession with retry logic
+            response = await self._send_message_with_retry(
+                chat, user_request, generation_config
+            )
+            
+            # Detect function calls
+            has_function_call, function_calls, text_response = await self._detect_function_calls(response)
+            
+            # Handle function calls
+            if has_function_call and function_calls:
+                try:
+                    for function_call in function_calls:
+                        course_data = await self._handle_function_call(
+                            function_call, user_request, str(self.conversation.id)
+                        )
+                        
+                        # If course was generated, save assistant message
+                        if course_data:
+                            assistant_msg = f"Course generated: {course_data.get('title', 'Untitled Course')}"
+                            await save_conversation_message(self.conversation, 'assistant', assistant_msg)
+                            logger.info(f"Course generated successfully: {course_data.get('title')}")
+                    
+                    # Note: We don't send a follow-up message to chat after function execution
+                    # The conversation continues naturally when the user sends their next message
+                    return
+                except Exception as e:
+                    logger.error(f"Error handling function call: {e}", exc_info=True)
+                    await self.send_error(f"Error generating course: {str(e)}")
+                    return
+            
+            # Normal text response - stream it back to client
+            if text_response:
+                # Save full response
+                await save_conversation_message(self.conversation, 'assistant', text_response)
+                
+                # Send only the content (simple format)
+                await self.send_json({
+                    'type': 'message',
+                    'content': text_response
+                })
+            else:
+                # Try streaming response
+                stream_response = chat.send_message(
+                    user_request,
+                    generation_config=generation_config,
+                    stream=True
+                )
+                
+                full_response = ""
+                for chunk in stream_response:
+                    if chunk.text:
+                        chunk_text = chunk.text
+                        full_response += chunk_text
+                        await self.send_streaming(chunk_text)
+                
+                # Save full streamed response
+                if full_response:
+                    await save_conversation_message(self.conversation, 'assistant', full_response)
+                    
+                    # Send completion - only the content
+                    await self.send_json({
+                        'type': 'message',
+                        'content': full_response
+                    })
         
-        # TASK 1: DISABLED - If test_mode is false, still use test chatbot for now
-        # This ensures AI is completely disabled during Task 1 testing
-        await self.test_chatbot(user_request, conversation_id)
-        return
+        except Exception as e:
+            logger.error(f"Error handling message: {e}", exc_info=True)
+            await self.send_error(f"Error processing request: {str(e)}")
     
     async def handle_refinement(self, data):
-        """Handle refinement request - TASK 1: Also goes through test chatbot"""
+        """Handle refinement request - same flow as handle_message"""
         refinement_request = data.get('content', '').strip()
         conversation_id = data.get('conversation_id')
         
@@ -373,9 +609,12 @@ class CourseGenerationConsumer(BaseAIConsumer):
             await self.send_error("Content is required")
             return
         
-        # TASK 1: ALL refinements go through test chatbot - AI completely disabled
-        await self.test_chatbot(refinement_request, conversation_id)
-        return
+        # Treat refinement as a regular message
+        await self.handle_message({
+            'content': refinement_request,
+            'conversation_id': conversation_id,
+            'context': {}
+        })
     
     async def handle_save(self, data):
         """Handle save/approve request"""
