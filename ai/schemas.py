@@ -46,7 +46,7 @@ def get_function_calling_schema() -> Dict[str, Any]:
     """
     return {
         "name": "generate_course",
-        "description": "Generate a structured course outline with title, description, category, and lessons. Use this when the user wants to create, generate, or design a course.",
+        "description": "Generate a structured course outline immediately when the user requests to create, generate, or make a course. Call this function as soon as the user mentions a course topic or subject, even if minimal details are provided. Use the available information to create a comprehensive course.",
         "parameters": {
             "type": "object",
             "properties": {

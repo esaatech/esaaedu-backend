@@ -325,7 +325,13 @@ class CourseGenerationConsumer(BaseAIConsumer):
         
         if session_key not in self.chat_sessions:
             # Create new chat session with function calling enabled
-            system_instruction = "You are a helpful assistant for creating educational courses. You can help users generate course outlines and answer questions about course creation."
+            # System instruction: Generate immediately when topic is provided, ask if topic is missing
+            system_instruction = """You are a helpful assistant for creating educational courses. 
+When a user asks to create, generate, or make a course AND provides a topic/subject (e.g., "create a course on java", "make a course about android", "generate a course for python"), 
+you should IMMEDIATELY call the generate_course function with the provided topic. Do not ask for more details - use the information provided and generate a comprehensive course.
+
+However, if the user asks to create a course but does NOT specify a topic (e.g., "create a course for me", "can you make a course"), 
+you should ask them what topic or subject they want the course to be about. Only call generate_course when a topic is explicitly mentioned."""
             
             chat, generation_config = self.gemini_service.start_chat_session(
                 system_instruction=system_instruction,

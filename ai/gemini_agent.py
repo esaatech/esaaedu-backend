@@ -443,7 +443,7 @@ async def interactive_chat():
                 max_retries = 3
                 retry_delay = 2  # seconds
                 response = None
-                
+                print(f"Sending message for user: {user_input}")
                 for attempt in range(max_retries):
                     try:
                         response = chat.send_message(
