@@ -198,10 +198,27 @@ class BaseAIConsumer(AsyncWebsocketConsumer):
         """Handle WebSocket disconnection"""
         logger.info(f"WebSocket connection closed: {close_code}")
     
-    async def receive(self, text_data):
-        """Handle messages from client"""
+    async def receive(self, text_data=None, bytes_data=None):
+        """Handle messages from client - supports both text and binary"""
         try:
-            data = json.loads(text_data)
+            # Handle text data (normal case)
+            if text_data:
+                data = json.loads(text_data)
+            # Handle binary data (Cloud Run proxy case)
+            elif bytes_data:
+                # Try to decode bytes to string
+                if isinstance(bytes_data, bytes):
+                    text_data = bytes_data.decode('utf-8')
+                elif isinstance(bytes_data, tuple):
+                    # Cloud Run might send tuples - extract the actual data
+                    text_data = bytes_data[0].decode('utf-8') if isinstance(bytes_data[0], bytes) else str(bytes_data[0])
+                else:
+                    text_data = str(bytes_data)
+                data = json.loads(text_data)
+            else:
+                await self.send_error("No data received")
+                return
+            
             message_type = data.get('type', 'message')
             
             # Handle authentication
@@ -225,7 +242,8 @@ class BaseAIConsumer(AsyncWebsocketConsumer):
             else:
                 await self.send_error(f"Unknown message type: {message_type}")
                 
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON decode error: {e}, text_data: {text_data[:100] if text_data else None}, bytes_data: {bytes_data}")
             await self.send_error("Invalid JSON format")
         except Exception as e:
             logger.error(f"Error handling message: {e}", exc_info=True)
@@ -325,13 +343,11 @@ class CourseGenerationConsumer(BaseAIConsumer):
         
         if session_key not in self.chat_sessions:
             # Create new chat session with function calling enabled
-            # System instruction: Generate immediately when topic is provided, ask if topic is missing
+            # System instruction encourages immediate course generation when user requests it
             system_instruction = """You are a helpful assistant for creating educational courses. 
-When a user asks to create, generate, or make a course AND provides a topic/subject (e.g., "create a course on java", "make a course about android", "generate a course for python"), 
-you should IMMEDIATELY call the generate_course function with the provided topic. Do not ask for more details - use the information provided and generate a comprehensive course.
-
-However, if the user asks to create a course but does NOT specify a topic (e.g., "create a course for me", "can you make a course"), 
-you should ask them what topic or subject they want the course to be about. Only call generate_course when a topic is explicitly mentioned."""
+When a user asks to create, generate, or make a course (even if they just provide a topic like "java" or "android"), 
+you should IMMEDIATELY call the generate_course function. Do not ask for more details - use the information provided 
+and generate a comprehensive course. Only ask questions if the user's request is completely unclear or ambiguous."""
             
             chat, generation_config = self.gemini_service.start_chat_session(
                 system_instruction=system_instruction,
