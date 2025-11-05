@@ -437,43 +437,6 @@ def get_redis_hosts():
     
     return [host_config]
 
-# Channels Configuration (WebSocket support)
-def get_redis_hosts():
-    """Parse REDIS_URL and return appropriate hosts configuration for channels-redis."""
-    redis_url = config('REDIS_URL', default='redis://localhost:6379/1')
-    
-    # Parse the URL
-    parsed = urlparse(redis_url)
-    
-    # Check if it's an SSL connection (rediss://)
-    use_ssl = parsed.scheme == 'rediss'
-    
-    # Extract host and port
-    host = parsed.hostname or 'localhost'
-    port = parsed.port or 6379
-    
-    # Extract password if present
-    password = parsed.password
-    
-    # Build host configuration
-    host_config = {
-        'address': (host, port),
-    }
-    
-    # Add password if provided
-    if password:
-        host_config['password'] = password
-    
-    # Add SSL configuration for rediss:// connections
-    if use_ssl:
-        # Create SSL context for Upstash Redis
-        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ssl_context.check_hostname = True
-        ssl_context.verify_mode = ssl.CERT_REQUIRED
-        host_config['ssl'] = ssl_context
-    
-    return [host_config]
-
 # Determine which channel layer to use
 # FORCE Redis on Cloud Run (detected by K_SERVICE env var)
 is_cloud_run = config('K_SERVICE', default=None) is not None
