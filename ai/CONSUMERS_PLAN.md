@@ -55,7 +55,7 @@ WebSocket consumers for Django Channels that handle AI chat conversations and co
 3. Consumer validates token → Stores user in scope
 4. Frontend sends generation request
 5. Consumer loads/creates conversation
-6. Consumer calls GeminiService
+6. Consumer calls GeminiAgent
 7. Service streams response → Consumer forwards chunks
 8. Final response → Consumer saves to conversation
 9. Frontend can send refinements → Loop back to step 4

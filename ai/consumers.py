@@ -9,7 +9,7 @@ from django.contrib.auth import get_user_model
 from firebase_admin import auth
 import firebase_admin
 from .models import AIConversation
-from .services import GeminiService
+from .gemini_agent import GeminiAgent
 from .prompts import get_prompt_for_type
 
 logger = logging.getLogger(__name__)
@@ -245,8 +245,8 @@ class BaseAIConsumer(AsyncWebsocketConsumer):
             self.user = await get_or_create_user(decoded_token)
             self.authenticated = True
             
-            # Initialize Gemini service
-            self.gemini_service = GeminiService()
+            # Initialize Gemini agent
+            self.gemini_service = GeminiAgent()
             
             await self.send_json({
                 'type': 'auth_success',
