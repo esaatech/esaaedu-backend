@@ -4,10 +4,10 @@ GeminiService - Main service class for Google Vertex AI (Gemini) integration
 import logging
 import json
 import os
-from typing import Dict, List, Optional, Any, AsyncGenerator
+from typing import Dict, List, Optional, Any, AsyncGenerator, Tuple
 from google.cloud import aiplatform
 from google.oauth2 import service_account
-from vertexai.generative_models import GenerativeModel
+from vertexai.generative_models import GenerativeModel, ChatSession
 from decouple import config
 
 logger = logging.getLogger(__name__)
@@ -56,14 +56,15 @@ class GeminiService:
         
         # If not set, try default location for our service account
         if not creds_path:
-            # Get project root: ai/services.py -> ai/ -> backend/ -> project root
+            # Get project root: ai/services.py -> ai/ (1 level) -> project root (2 levels)
             # Or use BASE_DIR from Django settings if available
             try:
                 from django.conf import settings
                 base_dir = settings.BASE_DIR
             except:
                 # Fallback: calculate from current file location
-                base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                # ai/services.py -> go up 2 levels to project root
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             
             default_path = os.path.join(base_dir, '.credentials', 'vertex-ai-service-account.json')
             if os.path.exists(default_path):
@@ -73,10 +74,10 @@ class GeminiService:
         if creds_path and os.path.exists(creds_path):
             try:
                 credentials = service_account.Credentials.from_service_account_file(creds_path)
-                logger.info(f"Loaded Vertex AI credentials from: {creds_path}")
+                logger.info(f"Successfully loaded Vertex AI credentials from: {creds_path}")
                 return credentials
             except Exception as e:
-                logger.warning(f"Failed to load credentials from {creds_path}: {e}")
+                logger.error(f"Failed to load credentials from {creds_path}: {e}", exc_info=True)
         else:
             if creds_path:
                 logger.warning(f"Credentials file not found at: {creds_path}")
@@ -94,6 +95,39 @@ class GeminiService:
         if system_instruction:
             return GenerativeModel(self.model_name, system_instruction=system_instruction)
         return GenerativeModel(self.model_name)
+    
+    def start_chat_session(
+        self,
+        system_instruction: Optional[str] = None,
+        temperature: float = 0.7,
+    ) -> Tuple[ChatSession, dict]:
+        """
+        Start a new chat session with conversation history management
+        
+        Args:
+            system_instruction: Optional system instruction for the chat
+            temperature: Creativity level (0.0-1.0)
+            
+        Returns:
+            Tuple of (ChatSession object, generation_config dict)
+            ChatSession manages conversation history automatically
+        """
+        try:
+            # Create model with system instruction if provided
+            model = self._get_model(system_instruction=system_instruction)
+            
+            # Start a chat session (automatically manages conversation history)
+            # Note: generation_config is passed to send_message(), not start_chat()
+            chat = model.start_chat()
+            
+            # Store generation config to pass to send_message() calls
+            generation_config = {"temperature": temperature}
+            
+            return chat, generation_config
+            
+        except Exception as e:
+            logger.error(f"Error starting chat session: {e}")
+            raise
     
     async def generate_content(
         self,
@@ -231,3 +265,121 @@ Return ONLY valid JSON, no additional text or markdown formatting."""
         except Exception as e:
             logger.error(f"Error generating structured content: {e}")
             raise
+
+
+# ============================================================================
+# INTERACTIVE CHAT - Run this file directly to chat with Gemini
+# Usage: python ai/services.py
+# ============================================================================
+async def interactive_chat():
+    """Interactive chat with Gemini service using ChatSession API"""
+    print("\n" + "="*70)
+    print("GEMINI INTERACTIVE CHAT (Using ChatSession API)")
+    print("="*70)
+    print("Type your messages below. Type 'quit', 'exit', or Ctrl+C to end the chat.\n")
+    
+    try:
+        # Initialize service
+        print("Initializing GeminiService...")
+        service = GeminiService()
+        print(f"✓ Service initialized (Model: {service.model_name})\n")
+        
+        # Set a system instruction for the chat
+        system_instruction = "You are a helpful and friendly assistant. Keep your responses concise and conversational."
+        
+        # Start a chat session (ChatSession automatically manages conversation history)
+        print("Starting chat session...")
+        chat, generation_config = service.start_chat_session(
+            system_instruction=system_instruction,
+            temperature=0.7
+        )
+        print("✓ Chat session started (conversation history managed by Vertex AI)\n")
+        
+        print("Chat started! Type your message:\n")
+        
+        while True:
+            try:
+                # Get user input
+                user_input = input("You: ").strip()
+                
+                # Check for exit commands
+                if user_input.lower() in ['quit', 'exit', 'q']:
+                    print("\nGoodbye! 👋\n")
+                    break
+                
+                if not user_input:
+                    print("Please enter a message.\n")
+                    continue
+                
+                # Show AI is thinking
+                print("\nAI: ", end="", flush=True)
+                
+                # Send message to chat session and stream response
+                # ChatSession automatically includes previous conversation history
+                full_response = ""
+                response = chat.send_message(
+                    user_input,
+                    generation_config=generation_config,
+                    stream=True
+                )
+                
+                # Stream the response chunks
+                for chunk in response:
+                    if chunk.text:
+                        print(chunk.text, end="", flush=True)
+                        full_response += chunk.text
+                
+                print("\n\n")  # Add spacing after response
+                
+                # Note: ChatSession automatically stores the user message and AI response
+                # No need to manually manage conversation_history!
+                
+            except KeyboardInterrupt:
+                print("\n\nChat interrupted. Goodbye! 👋\n")
+                break
+            except EOFError:
+                print("\n\nGoodbye! 👋\n")
+                break
+                
+    except Exception as e:
+        print(f"\n\nError: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+if __name__ == "__main__":
+    import asyncio
+    import sys
+    
+    # Configure logging for test output (only show warnings and errors)
+    logging.basicConfig(
+        level=logging.WARNING,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # Suppress deprecation warnings from Vertex AI SDK
+    import warnings
+    warnings.filterwarnings('ignore', category=UserWarning, module='vertexai')
+    
+    # Set up Django environment if needed (for config to work)
+    try:
+        import django
+        from django.conf import settings
+        if not settings.configured:
+            # Try to configure Django
+            os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
+            django.setup()
+    except Exception as e:
+        print(f"Warning: Could not configure Django settings: {e}")
+        print("Make sure environment variables are set or Django is configured.\n")
+    
+    # Run interactive chat
+    try:
+        asyncio.run(interactive_chat())
+    except KeyboardInterrupt:
+        print("\n\nChat interrupted. Goodbye! 👋")
+        sys.exit(0)
+    except Exception as e:
+        print(f"\n\nError: {e}")
+        sys.exit(1)
