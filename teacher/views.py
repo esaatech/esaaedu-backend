@@ -1,3 +1,4 @@
+import logging
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
@@ -6,6 +7,8 @@ from django.shortcuts import get_object_or_404
 from django.db.models import Q, Count, Avg, Sum
 from django.utils import timezone
 from users.models import User, TeacherProfile
+
+logger = logging.getLogger(__name__)
 from .serializers import (
     TeacherProfileSerializer, TeacherProfileUpdateSerializer,
     ProjectSerializer, ProjectCreateUpdateSerializer,
@@ -18,6 +21,8 @@ from .serializers import (
 from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission
 from student.models import EnrolledCourse
 from datetime import datetime, timedelta
+# Import AI grading service
+from ai.gemini_grader import GeminiGrader
 
 
 class TeacherProfileAPIView(APIView):
@@ -2001,5 +2006,146 @@ class AssignmentGradingView(APIView):
         except Exception as e:
             return Response(
                 {'error': f'Error providing feedback: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AssignmentAIGradingView(APIView):
+    """
+    AI-powered assignment grading endpoint.
+    
+    POST: Grade assignment submission using AI
+    - Receives questions array from frontend
+    - Returns grades (points_earned, feedback) for each question
+    - NO database save - frontend handles state and saving
+    
+    Endpoint: POST /api/teacher/assignments/{assignment_id}/grading/{submission_id}/ai-grade
+    
+    Request Body:
+    {
+        "questions": [
+            {
+                "question_id": "uuid",
+                "question_text": "...",
+                "question_type": "essay" | "fill_blank" | "short_answer",
+                "student_answer": "...",
+                "points_possible": 5,
+                "correct_answer": "...",  // Optional
+                "explanation": "...",  // Optional
+                "rubric": "..."  // Optional, for essays
+            }
+        ],
+        "assignment_context": {  // Optional
+            "passage_text": "...",
+            "lesson_content": "...",
+            "learning_objectives": [...]
+        }
+    }
+    
+    Response:
+    {
+        "grades": [
+            {
+                "question_id": "uuid",
+                "points_earned": 3.0,
+                "points_possible": 5,
+                "feedback": "...",
+                "confidence": 0.85
+            }
+        ],
+        "total_score": 17.0,
+        "total_possible": 25
+    }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request, assignment_id, submission_id):
+        """
+        POST: AI-grade assignment submission.
+        
+        Receives questions from frontend, returns grades.
+        Does NOT save to database - frontend manages state.
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can use AI grading'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get assignment and check ownership
+            try:
+                assignment = Assignment.objects.select_related('lesson', 'lesson__course').get(
+                    id=assignment_id, 
+                    lesson__course__teacher=request.user
+                )
+            except Assignment.DoesNotExist:
+                return Response(
+                    {'error': 'Assignment not found or you do not have permission to grade it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get submission and check it belongs to assignment
+            try:
+                submission = AssignmentSubmission.objects.select_related('student').get(
+                    id=submission_id, 
+                    assignment=assignment
+                )
+            except AssignmentSubmission.DoesNotExist:
+                return Response(
+                    {'error': 'Submission not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Validate request data
+            questions_data = request.data.get('questions', [])
+            if not questions_data:
+                return Response(
+                    {'error': 'Questions array is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get assignment context (optional)
+            assignment_context = request.data.get('assignment_context')
+            
+            # If no context provided, try to extract from assignment
+            if not assignment_context:
+                assignment_context = {}
+                try:
+                    lesson = assignment.lesson
+                    assignment_context['lesson_title'] = lesson.title
+                    if hasattr(lesson, 'content'):
+                        assignment_context['lesson_content'] = lesson.content
+                    if hasattr(lesson, 'description'):
+                        assignment_context['lesson_description'] = lesson.description
+                    
+                    course = lesson.course
+                    assignment_context['course_title'] = course.title
+                    assignment_context['assignment_title'] = assignment.title
+                    assignment_context['assignment_description'] = assignment.description
+                except Exception as e:
+                    logger.warning(f"Failed to extract assignment context: {e}")
+            
+            # Initialize grader
+            grader = GeminiGrader()
+            
+            # Grade questions batch
+            result = grader.grade_questions_batch(
+                questions=questions_data,
+                assignment_context=assignment_context if assignment_context else None
+            )
+            
+            return Response({
+                'grades': result['grades'],
+                'total_score': result['total_score'],
+                'total_possible': result['total_possible']
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in AI grading: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Error during AI grading: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

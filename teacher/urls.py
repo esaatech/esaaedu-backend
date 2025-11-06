@@ -21,4 +21,5 @@ urlpatterns = [
     path('assignments/<uuid:assignment_id>/questions/<uuid:question_id>/', views.AssignmentQuestionManagementView.as_view(), name='assignment_question_detail'),
     path('assignments/<uuid:assignment_id>/grading/', views.AssignmentGradingView.as_view(), name='assignment_grading'),
     path('assignments/<uuid:assignment_id>/grading/<uuid:submission_id>/', views.AssignmentGradingView.as_view(), name='assignment_submission_grading'),
+    path('assignments/<uuid:assignment_id>/grading/<uuid:submission_id>/ai-grade/', views.AssignmentAIGradingView.as_view(), name='assignment_ai_grading'),
 ]
