@@ -301,13 +301,14 @@ class GeminiGrader:
         prompt_parts.append("GRADING INSTRUCTIONS:")
         prompt_parts.append(f"- Points possible: {points_possible}")
         prompt_parts.append("- Grade based on understanding of the concept, not just exact match")
-        prompt_parts.append("- Provide constructive feedback")
+        prompt_parts.append("- Provide constructive feedback written in second person (use 'you' and 'your'), as if you are the teacher directly addressing the student")
+        prompt_parts.append("- Write feedback naturally and conversationally - do not use prefixes like 'Reasoning:' or 'Feedback:'")
         prompt_parts.append("- If question is unclear, answer is unclear, or insufficient information provided, award 0 points and explain why grading is not possible")
         if question_type == 'fill_blank':
             prompt_parts.append("- Consider partial credit for close answers that show understanding")
         prompt_parts.append("")
         
-        prompt_parts.append("Please grade this answer and provide points_earned, feedback, and reasoning.")
+        prompt_parts.append("Please grade this answer and provide points_earned and feedback. The feedback should be written directly to the student in second person.")
         
         return "\n".join(prompt_parts)
     
@@ -324,9 +325,11 @@ class GeminiGrader:
         - Student answer is unclear
         - Insufficient information provided
         """
-        base_instruction = """You are an expert educational grader. Your role is to evaluate student answers with:
+        base_instruction = """You are an expert educational grader writing feedback directly to students. Your role is to evaluate student answers with:
 - Focus on understanding and ideas, not just correctness
-- Provide constructive feedback
+- Provide constructive feedback written in second person (use 'you' and 'your') - write as if you are the teacher speaking directly to the student
+- Write feedback naturally and conversationally - avoid formal prefixes like "Reasoning:", "Feedback:", or "The answer is..."
+- Use phrases like "Your answer..." or "You got..." instead of "The answer is..." or "The student's answer..."
 - Award partial credit when appropriate
 - Consider context and meaning
 
@@ -369,11 +372,7 @@ Then award 0 points and provide feedback explaining why grading is not possible 
                 },
                 "feedback": {
                     "type": "string",
-                    "description": "Constructive feedback for the student. If unable to grade, explain why (e.g., 'Unable to grade: question is unclear')."
-                },
-                "reasoning": {
-                    "type": "string",
-                    "description": "Explanation of why this grade was given (optional)"
+                    "description": "Constructive feedback written directly to the student in second person (use 'you' and 'your'). Write naturally and conversationally - do not use prefixes like 'Reasoning:' or 'Feedback:'. The feedback should be self-contained and complete. If unable to grade, explain why (e.g., 'Unable to grade: question is unclear')."
                 },
                 "confidence": {
                     "type": "number",
@@ -402,7 +401,6 @@ Then award 0 points and provide feedback explaining why grading is not possible 
         # Extract fields
         points_earned = response.get('points_earned', 0)
         feedback = response.get('feedback', '')
-        reasoning = response.get('reasoning', '')
         confidence = response.get('confidence', 0.8)
         
         # Validate points
@@ -411,14 +409,16 @@ Then award 0 points and provide feedback explaining why grading is not possible 
         if points_earned > points_possible:
             points_earned = points_possible
         
-        # Combine feedback and reasoning if both exist
-        if reasoning and reasoning != feedback:
-            full_feedback = f"{feedback}\n\nReasoning: {reasoning}"
-        else:
-            full_feedback = feedback
+        # Use feedback directly - it should be self-contained and written in second person
+        # Remove any "Reasoning:" prefixes that might have been added by the AI
+        cleaned_feedback = feedback.strip()
+        if cleaned_feedback.startswith("Reasoning:"):
+            cleaned_feedback = cleaned_feedback.replace("Reasoning:", "").strip()
+        if cleaned_feedback.startswith("Feedback:"):
+            cleaned_feedback = cleaned_feedback.replace("Feedback:", "").strip()
         
         return {
             'points_earned': float(points_earned),
-            'feedback': full_feedback,
+            'feedback': cleaned_feedback,
             'confidence': float(confidence) if confidence else 0.8
         }
