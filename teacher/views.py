@@ -23,6 +23,9 @@ from student.models import EnrolledCourse
 from datetime import datetime, timedelta
 # Import AI grading service
 from ai.gemini_grader import GeminiGrader
+# Import AI generation services
+from ai.gemini_course_introduction_service import GeminiCourseIntroductionService
+from ai.gemini_course_lessons_service import GeminiCourseLessonsService
 
 
 class TeacherProfileAPIView(APIView):
@@ -2147,5 +2150,201 @@ class AssignmentAIGradingView(APIView):
             logger.error(f"Error in AI grading: {e}\n{traceback.format_exc()}")
             return Response(
                 {'error': f'Error during AI grading: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AIGenerateCourseIntroductionView(APIView):
+    """
+    REST API endpoint for generating course introduction using AI.
+    
+    POST: Generate course introduction
+    - Receives system_instruction and course context from frontend
+    - Returns generated course introduction data (not saved to DB)
+    
+    Endpoint: POST /api/teacher/courses/{course_id}/ai/generate-introduction/
+    
+    Request Body:
+    {
+        "system_instruction": "You are an expert course creator...",
+        "temperature": 0.7  // Optional
+    }
+    
+    Response:
+    {
+        "overview": "...",
+        "learning_objectives": [...],
+        "prerequisites_text": [...],
+        "duration_weeks": 8,
+        "sessions_per_week": 2,
+        "total_projects": 5,
+        "max_students": 12,
+        "value_propositions": [...]
+    }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request, course_id):
+        """
+        POST: Generate course introduction using AI.
+        
+        Does NOT save to database - frontend handles saving.
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can use AI generation'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get course and check ownership
+            try:
+                course = Course.objects.select_related('teacher').get(
+                    id=course_id,
+                    teacher=request.user
+                )
+            except Course.DoesNotExist:
+                return Response(
+                    {'error': 'Course not found or you do not have permission'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Validate request data
+            system_instruction = request.data.get('system_instruction', '').strip()
+            if not system_instruction:
+                # Provide default system instruction if not provided
+                system_instruction = """You are an expert course creator specializing in educational content.
+Generate comprehensive course introductions that are engaging, clear, and informative.
+Focus on creating value for students and highlighting what makes the course unique."""
+            
+            temperature = float(request.data.get('temperature', 0.7))
+            
+            # Initialize service
+            service = GeminiCourseIntroductionService()
+            
+            # Generate course introduction
+            result = service.generate(
+                system_instruction=system_instruction,
+                course_title=course.title,
+                course_description=course.long_description or course.description or '',
+                temperature=temperature
+            )
+            
+            return Response(result, status=status.HTTP_200_OK)
+            
+        except ValueError as e:
+            logger.error(f"Validation error in AI course introduction generation: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in AI course introduction generation: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Error during AI generation: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AIGenerateCourseLessonsView(APIView):
+    """
+    REST API endpoint for generating course lessons using AI.
+    
+    POST: Generate course lessons
+    - Receives system_instruction and course context from frontend
+    - Returns generated lessons data (not saved to DB)
+    
+    Endpoint: POST /api/teacher/courses/{course_id}/ai/generate-lessons/
+    
+    Request Body:
+    {
+        "system_instruction": "You are an expert curriculum designer...",
+        "duration_weeks": 8,  // Optional
+        "sessions_per_week": 2,  // Optional
+        "temperature": 0.7  // Optional
+    }
+    
+    Response:
+    {
+        "lessons": [
+            {
+                "title": "...",
+                "description": "...",
+                "order": 1,
+                "type": "live_class",
+                "duration": 45
+            },
+            ...
+        ]
+    }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request, course_id):
+        """
+        POST: Generate course lessons using AI.
+        
+        Does NOT save to database - frontend handles saving.
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can use AI generation'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get course and check ownership
+            try:
+                course = Course.objects.select_related('teacher').get(
+                    id=course_id,
+                    teacher=request.user
+                )
+            except Course.DoesNotExist:
+                return Response(
+                    {'error': 'Course not found or you do not have permission'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Validate request data
+            system_instruction = request.data.get('system_instruction', '').strip()
+            if not system_instruction:
+                # Provide default system instruction if not provided
+                system_instruction = """You are an expert curriculum designer specializing in creating structured, progressive learning experiences.
+Generate comprehensive lesson outlines that build upon each other in a scaffolded manner.
+Each lesson should be clear, focused, and contribute to the overall course learning objectives."""
+            
+            temperature = float(request.data.get('temperature', 0.7))
+            duration_weeks = request.data.get('duration_weeks')
+            sessions_per_week = request.data.get('sessions_per_week')
+            
+            # Initialize service
+            service = GeminiCourseLessonsService()
+            
+            # Generate lessons
+            result = service.generate(
+                system_instruction=system_instruction,
+                course_title=course.title,
+                course_description=course.long_description or course.description or '',
+                duration_weeks=duration_weeks,
+                sessions_per_week=sessions_per_week,
+                temperature=temperature
+            )
+            
+            return Response(result, status=status.HTTP_200_OK)
+            
+        except ValueError as e:
+            logger.error(f"Validation error in AI lessons generation: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in AI lessons generation: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Error during AI generation: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

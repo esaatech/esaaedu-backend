@@ -14,6 +14,7 @@ from .models import AIConversation
 from .gemini_agent import GeminiAgent
 from .prompts import get_prompt_for_type
 from google.api_core import exceptions as google_exceptions
+from courses.models import Course
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -157,6 +158,34 @@ def get_course_categories_sync():
 def get_prompt_for_type_sync(prompt_type, user_request, context=None):
     """Get prompt configuration (wrapped for async context)"""
     return get_prompt_for_type(prompt_type, user_request, context)
+
+
+@database_sync_to_async
+def get_course_and_validate_ownership(course_id, user):
+    """
+    Get course and validate user owns it
+    
+    Args:
+        course_id: UUID of the course
+        user: Django user instance
+        
+    Returns:
+        Course: Course instance if found and user owns it
+        
+    Raises:
+        Course.DoesNotExist: If course not found
+        PermissionError: If user doesn't own the course
+    """
+    try:
+        course = Course.objects.select_related('teacher').get(id=course_id)
+    except Course.DoesNotExist:
+        raise Course.DoesNotExist(f"Course {course_id} not found")
+    
+    # Check ownership
+    if course.teacher != user:
+        raise PermissionError(f"User {user.email} does not own course {course_id}")
+    
+    return course
 
 
 class BaseAIConsumer(AsyncWebsocketConsumer):
@@ -647,6 +676,457 @@ and generate a comprehensive course. Only ask questions if the user's request is
         # The content is already saved in the conversation
         # This could trigger creating the actual Course object, but that's handled by the frontend
         
+        await self.send_json({
+            'type': 'save_success',
+            'message': 'Content approved',
+            'conversation_id': str(self.conversation.id) if self.conversation else None
+        })
+
+
+class CourseManagementConsumer(BaseAIConsumer):
+    """
+    Consumer for course management via AI chat (introduction, lessons, assignments, quizzes)
+    Requires course_id from URL path
+    """
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.chat_sessions = {}
+        self.course_id = None
+        self.course = None
+    
+    async def connect(self):
+        """Handle WebSocket connection and extract course_id from URL"""
+        try:
+            # Extract course_id from URL kwargs (from regex named group)
+            import uuid
+            kwargs = self.scope.get('url_route', {}).get('kwargs', {})
+            course_id_str = kwargs.get('course_id')
+            
+            if not course_id_str:
+                logger.error("Course ID not found in URL")
+                await self.close(code=4004)  # Invalid path
+                return
+            
+            try:
+                course_id = uuid.UUID(course_id_str)
+                self.course_id = course_id
+            except ValueError:
+                logger.error(f"Invalid course ID format: {course_id_str}")
+                await self.send_error(f"Invalid course ID format: {course_id_str}")
+                await self.close(code=4004)
+                return
+            
+            # Accept connection
+            await self.accept()
+            logger.info(f"CourseManagementConsumer connection opened for course: {course_id}")
+            
+            await self.send_json({
+                'type': 'connected',
+                'message': 'WebSocket connected. Please authenticate.',
+                'course_id': str(course_id)
+            })
+            
+        except Exception as e:
+            logger.error(f"Error in CourseManagementConsumer connect: {e}", exc_info=True)
+            try:
+                await self.close()
+            except:
+                pass
+            raise
+    
+    async def handle_auth(self, data):
+        """Handle authentication and validate course ownership"""
+        token = data.get('token')
+        
+        if not token:
+            await self.send_error("Token is required for authentication")
+            await self.close()
+            return
+        
+        try:
+            # Verify Firebase token
+            decoded_token = await verify_firebase_token(token)
+            
+            # Get or create user
+            self.user = await get_or_create_user(decoded_token)
+            
+            # Validate course ownership
+            if not self.course_id:
+                await self.send_error("Course ID is required")
+                await self.close()
+                return
+            
+            self.course = await get_course_and_validate_ownership(self.course_id, self.user)
+            self.authenticated = True
+            
+            # Initialize Gemini agent
+            self.gemini_service = GeminiAgent()
+            
+            await self.send_json({
+                'type': 'auth_success',
+                'message': 'Authentication successful',
+                'course_id': str(self.course_id),
+                'course_title': self.course.title
+            })
+            
+            logger.info(f"User authenticated for course management: {self.user.email}, course: {self.course.title}")
+            
+        except ValueError as e:
+            await self.send_error(f"Authentication failed: {str(e)}")
+            await self.close()
+        except Exception as e:
+            logger.error(f"Auth error: {e}", exc_info=True)
+            await self.send_error("Authentication error")
+            await self.close()
+    
+    async def _get_or_create_chat_session(self, conversation_id=None):
+        """Get or create ChatSession for a conversation"""
+        from .schemas import get_course_management_function_schema
+        
+        session_key = str(conversation_id) if conversation_id else 'default'
+        
+        if session_key not in self.chat_sessions:
+            # Create new chat session with course management functions
+            system_instruction = f"""You are a helpful assistant for managing the course "{self.course.title}". 
+You can help generate course introductions, lessons, assignments, and quizzes for this course.
+Be conversational and helpful. Ask clarifying questions if needed before generating content."""
+            
+            # Get function schema for course management (no generate_course)
+            function_schemas = get_course_management_function_schema()
+            
+            chat, generation_config = self.gemini_service.start_chat_session(
+                system_instruction=system_instruction,
+                temperature=0.7,
+                enable_function_calling=True,
+                function_schemas=function_schemas
+            )
+            
+            self.chat_sessions[session_key] = (chat, generation_config)
+            logger.info(f"Created new ChatSession for course management: {session_key}")
+        
+        return self.chat_sessions[session_key]
+    
+    async def _send_message_with_retry(self, chat, user_input, generation_config, max_retries=3):
+        """Send message to ChatSession with retry logic"""
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                response = chat.send_message(
+                    user_input,
+                    generation_config=generation_config,
+                    stream=False
+                )
+                return response
+            except (google_exceptions.ServiceUnavailable, 
+                    google_exceptions.InternalServerError,
+                    Exception) as e:
+                error_msg = str(e).lower()
+                if 'unavailable' in error_msg or 'recvmsg' in error_msg or 'address' in error_msg:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Network error (attempt {attempt + 1}/{max_retries}). Retrying...")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+                    else:
+                        logger.error(f"Network error after {max_retries} attempts")
+                        raise
+                else:
+                    raise
+        
+        raise Exception("Failed to send message after retries")
+    
+    async def _detect_function_calls(self, response):
+        """Detect if response contains function calls"""
+        has_function_call = False
+        function_calls = []
+        text_response = None
+        
+        try:
+            text_response = response.text
+        except (ValueError, AttributeError) as e:
+            error_msg = str(e)
+            if 'function_call' in error_msg.lower() or 'function' in error_msg.lower():
+                has_function_call = True
+        
+        if has_function_call or not text_response:
+            try:
+                if hasattr(response, 'candidates') and response.candidates:
+                    for candidate in response.candidates:
+                        if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                            for part in candidate.content.parts:
+                                if hasattr(part, 'function_call'):
+                                    func_call = part.function_call
+                                    if func_call:
+                                        func_name = None
+                                        if hasattr(func_call, 'name') and func_call.name:
+                                            func_name = func_call.name
+                                        elif isinstance(func_call, dict) and func_call.get('name'):
+                                            func_name = func_call.get('name')
+                                        
+                                        if func_name and func_name.strip():
+                                            has_function_call = True
+                                            function_calls.append(func_call)
+            except Exception as e:
+                logger.debug(f"Error checking for function calls: {e}")
+            
+            if not function_calls and hasattr(response, 'function_calls') and response.function_calls:
+                valid_calls = []
+                for call in response.function_calls:
+                    func_name = None
+                    if hasattr(call, 'name') and call.name:
+                        func_name = call.name
+                    elif isinstance(call, dict) and call.get('name'):
+                        func_name = call.get('name')
+                    
+                    if func_name and func_name.strip():
+                        valid_calls.append(call)
+                
+                if valid_calls:
+                    has_function_call = True
+                    function_calls = valid_calls
+        
+        return has_function_call, function_calls, text_response
+    
+    async def _handle_function_call(self, function_call, user_input, conversation_id):
+        """Handle function call execution"""
+        # Extract function name and args
+        if hasattr(function_call, 'name'):
+            function_name = function_call.name
+            function_args = function_call.args if hasattr(function_call, 'args') else {}
+        else:
+            function_name = function_call.get('name', '') if isinstance(function_call, dict) else getattr(function_call, 'name', '')
+            function_args = function_call.get('args', {}) if isinstance(function_call, dict) else (getattr(function_call, 'args', {}) if hasattr(function_call, 'args') else {})
+        
+        if not function_name:
+            logger.warning("Function call detected but no function name found")
+            return None
+        
+        logger.info(f"Executing function: {function_name} for course: {self.course_id}")
+        
+        # Handle course introduction generation
+        if function_name == "generate_course_introduction":
+            user_request = function_args.get("user_request") if isinstance(function_args, dict) else user_input
+            course_title = function_args.get("course_title", self.course.title) if isinstance(function_args, dict) else self.course.title
+            course_description = function_args.get("course_description", self.course.description) if isinstance(function_args, dict) else self.course.description
+            
+            await self.send_json({
+                'type': 'function_call',
+                'function_name': function_name,
+                'message': 'Generating course introduction...'
+            })
+            
+            introduction_data = await self.gemini_service.handle_course_introduction_generation(
+                user_request=user_request,
+                course_title=course_title,
+                course_description=course_description,
+                temperature=0.7
+            )
+            
+            await save_generated_content(self.conversation, introduction_data)
+            
+            response_data = {
+                'type': 'course_introduction_generated',
+                'conversation_id': str(self.conversation.id) if self.conversation else None,
+                **introduction_data
+            }
+            
+            await self.send_json(response_data)
+            return introduction_data
+        
+        # Handle lesson generation
+        elif function_name == "generate_lesson":
+            user_request = function_args.get("user_request") if isinstance(function_args, dict) else user_input
+            course_title = function_args.get("course_title", self.course.title) if isinstance(function_args, dict) else self.course.title
+            course_description = function_args.get("course_description", self.course.description) if isinstance(function_args, dict) else self.course.description
+            duration_weeks = function_args.get("duration_weeks") if isinstance(function_args, dict) else None
+            sessions_per_week = function_args.get("sessions_per_week") if isinstance(function_args, dict) else None
+            
+            await self.send_json({
+                'type': 'function_call',
+                'function_name': function_name,
+                'message': 'Generating lessons...'
+            })
+            
+            lessons_data = await self.gemini_service.handle_lesson_generation(
+                user_request=user_request,
+                course_title=course_title,
+                course_description=course_description,
+                duration_weeks=duration_weeks,
+                sessions_per_week=sessions_per_week,
+                temperature=0.7
+            )
+            
+            await save_generated_content(self.conversation, lessons_data)
+            
+            response_data = {
+                'type': 'lesson_generated',
+                'conversation_id': str(self.conversation.id) if self.conversation else None,
+                **lessons_data
+            }
+            
+            await self.send_json(response_data)
+            return lessons_data
+        
+        # Handle assignment generation
+        elif function_name == "generate_assignment":
+            user_request = function_args.get("user_request") if isinstance(function_args, dict) else user_input
+            
+            await self.send_json({
+                'type': 'function_call',
+                'function_name': function_name,
+                'message': 'Generating assignment...'
+            })
+            
+            assignment_data = await self.gemini_service.handle_assignment_generation(
+                user_request=user_request,
+                temperature=0.7
+            )
+            
+            await save_generated_content(self.conversation, assignment_data)
+            
+            response_data = {
+                'type': 'assignment_generated',
+                'conversation_id': str(self.conversation.id) if self.conversation else None,
+                **assignment_data
+            }
+            
+            await self.send_json(response_data)
+            return assignment_data
+        
+        # Handle quiz generation
+        elif function_name == "generate_quiz":
+            user_request = function_args.get("user_request") if isinstance(function_args, dict) else user_input
+            
+            await self.send_json({
+                'type': 'function_call',
+                'function_name': function_name,
+                'message': 'Generating quiz...'
+            })
+            
+            quiz_data = await self.gemini_service.handle_quiz_generation(
+                user_request=user_request,
+                temperature=0.7
+            )
+            
+            await save_generated_content(self.conversation, quiz_data)
+            
+            response_data = {
+                'type': 'quiz_generated',
+                'conversation_id': str(self.conversation.id) if self.conversation else None,
+                **quiz_data
+            }
+            
+            await self.send_json(response_data)
+            return quiz_data
+        
+        return None
+    
+    async def handle_message(self, data):
+        """Handle course management request"""
+        user_request = data.get('content', '').strip()
+        conversation_id = data.get('conversation_id')
+        context = data.get('context', {})
+        
+        if not user_request:
+            await self.send_error("Content is required")
+            return
+        
+        try:
+            # Get or create conversation
+            context['course_id'] = str(self.course_id)
+            self.conversation = await get_or_create_conversation(
+                self.user,
+                'course_management',
+                conversation_id,
+                context
+            )
+            
+            # Save user message
+            await save_conversation_message(self.conversation, 'user', user_request)
+            
+            # Get or create ChatSession
+            chat, generation_config = await self._get_or_create_chat_session(
+                str(self.conversation.id)
+            )
+            
+            # Send message with retry
+            response = await self._send_message_with_retry(
+                chat, user_request, generation_config
+            )
+            
+            # Detect function calls
+            has_function_call, function_calls, text_response = await self._detect_function_calls(response)
+            
+            # Handle function calls
+            if has_function_call and function_calls:
+                try:
+                    for function_call in function_calls:
+                        result = await self._handle_function_call(
+                            function_call, user_request, str(self.conversation.id)
+                        )
+                        
+                        if result:
+                            assistant_msg = f"Generated {function_call.name if hasattr(function_call, 'name') else 'content'}"
+                            await save_conversation_message(self.conversation, 'assistant', assistant_msg)
+                    
+                    return
+                except Exception as e:
+                    logger.error(f"Error handling function call: {e}", exc_info=True)
+                    await self.send_error(f"Error generating content: {str(e)}")
+                    return
+            
+            # Normal text response
+            if text_response:
+                await save_conversation_message(self.conversation, 'assistant', text_response)
+                await self.send_json({
+                    'type': 'message',
+                    'content': text_response
+                })
+            else:
+                # Try streaming
+                stream_response = chat.send_message(
+                    user_request,
+                    generation_config=generation_config,
+                    stream=True
+                )
+                
+                full_response = ""
+                for chunk in stream_response:
+                    if chunk.text:
+                        chunk_text = chunk.text
+                        full_response += chunk_text
+                        await self.send_streaming(chunk_text)
+                
+                if full_response:
+                    await save_conversation_message(self.conversation, 'assistant', full_response)
+                    await self.send_json({
+                        'type': 'message',
+                        'content': full_response
+                    })
+        
+        except Exception as e:
+            logger.error(f"Error handling message: {e}", exc_info=True)
+            await self.send_error(f"Error processing request: {str(e)}")
+    
+    async def handle_refinement(self, data):
+        """Handle refinement request"""
+        refinement_request = data.get('content', '').strip()
+        conversation_id = data.get('conversation_id')
+        
+        if not refinement_request:
+            await self.send_error("Content is required")
+            return
+        
+        await self.handle_message({
+            'content': refinement_request,
+            'conversation_id': conversation_id,
+            'context': {}
+        })
+    
+    async def handle_save(self, data):
+        """Handle save/approve request"""
         await self.send_json({
             'type': 'save_success',
             'message': 'Content approved',

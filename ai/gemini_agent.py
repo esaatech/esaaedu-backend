@@ -14,7 +14,14 @@ from decouple import config
 
 # Handle imports for both script and module usage
 try:
-    from .schemas import get_function_calling_schema, get_course_generation_schema
+    from .schemas import (
+        get_function_calling_schema, 
+        get_course_generation_schema,
+        get_course_introduction_schema,
+        get_lesson_generation_schema,
+        get_assignment_generation_schema,
+        get_quiz_generation_schema
+    )
 except ImportError:
     # If running as script, add parent directory to path and import
     import sys
@@ -23,7 +30,14 @@ except ImportError:
     current_dir = pathlib.Path(__file__).parent
     if str(current_dir) not in sys.path:
         sys.path.insert(0, str(current_dir))
-    from schemas import get_function_calling_schema, get_course_generation_schema
+    from schemas import (
+        get_function_calling_schema, 
+        get_course_generation_schema,
+        get_course_introduction_schema,
+        get_lesson_generation_schema,
+        get_assignment_generation_schema,
+        get_quiz_generation_schema
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +140,7 @@ class GeminiAgent:
         system_instruction: Optional[str] = None,
         temperature: float = 0.7,
         enable_function_calling: bool = True,
+        function_schemas: Optional[List[dict]] = None,
     ) -> Tuple[ChatSession, dict]:
         """
         Start a new chat session with conversation history management and optional function calling
@@ -134,6 +149,7 @@ class GeminiAgent:
             system_instruction: Optional system instruction for the chat
             temperature: Creativity level (0.0-1.0)
             enable_function_calling: Whether to enable AI-driven function calling
+            function_schemas: Optional list of function schemas (if None, uses default from schemas.py)
             
         Returns:
             Tuple of (ChatSession object, generation_config dict)
@@ -143,19 +159,22 @@ class GeminiAgent:
             # Prepare tools for function calling if enabled
             tools = None
             if enable_function_calling:
-                # Get function declaration schema
-                function_schema = get_function_calling_schema()
+                # Use provided function schemas or get default
+                if function_schemas is None:
+                    function_schemas = get_function_calling_schema()
                 
-                # Create FunctionDeclaration for Vertex AI
-                function_declaration = FunctionDeclaration(
-                    name=function_schema["name"],
-                    description=function_schema["description"],
-                    parameters=function_schema["parameters"]
-                )
-
+                # Create FunctionDeclarations for all functions
+                function_declarations = []
+                for function_schema in function_schemas:
+                    function_declaration = FunctionDeclaration(
+                        name=function_schema["name"],
+                        description=function_schema["description"],
+                        parameters=function_schema["parameters"]
+                    )
+                    function_declarations.append(function_declaration)
                 
-                # Create Tool with the function
-                tools = [Tool(function_declarations=[function_declaration])]
+                # Create Tool with all function declarations
+                tools = [Tool(function_declarations=function_declarations)]
             
             # Create model with system instruction and tools if provided
             # Tools must be passed when creating the model, not when starting chat
@@ -211,6 +230,252 @@ class GeminiAgent:
             
         except Exception as e:
             logger.error(f"Error in course generation: {e}")
+            raise
+    
+    async def handle_course_introduction_generation(
+        self,
+        course_title: str,
+        course_description: str,
+        user_request: str,
+        temperature: float = 0.7,
+    ) -> Dict[str, Any]:
+        """
+        Handle course introduction generation with structured output
+        This is the Level 2 AI that generates structured course introduction data
+        
+        Args:
+            course_title: Title of the course
+            course_description: Description of the course
+            user_request: User's request for introduction generation
+            temperature: Creativity level
+            
+        Returns:
+            Dictionary matching the course introduction schema
+        """
+        try:
+            # Get the structured output schema
+            introduction_schema = get_course_introduction_schema()
+            
+            # Create prompt with course context
+            prompt = f"""Course Title: {course_title}
+Course Description: {course_description}
+
+User Request: {user_request}
+
+Generate comprehensive course introduction details including overview, learning objectives, prerequisites, duration, sessions per week, total projects, and value propositions."""
+            
+            # System instruction for course introduction generation
+            system_instruction = """You are an expert course creator. Generate comprehensive course introduction details that are engaging, clear, and informative. 
+            Create detailed learning objectives, identify prerequisites, suggest appropriate duration and session frequency, estimate project count, and highlight value propositions."""
+            
+            # Use structured content generation with the schema
+            structured_response = await self.generate_structured_content(
+                prompt=prompt,
+                output_schema=introduction_schema,
+                system_instruction=system_instruction,
+                temperature=temperature,
+            )
+            
+            return structured_response
+            
+        except Exception as e:
+            logger.error(f"Error in course introduction generation: {e}")
+            raise
+    
+    async def handle_lesson_generation(
+        self,
+        course_title: str = "",
+        course_description: str = "",
+        duration_weeks: Optional[int] = None,
+        sessions_per_week: Optional[int] = None,
+        user_request: str = "",
+        temperature: float = 0.7,
+    ) -> Dict[str, Any]:
+        """
+        Handle lesson generation with structured output
+        This is the Level 2 AI that generates multiple lessons for an entire course
+        Lessons follow a scaffolding/cumulative organization
+        
+        Args:
+            course_title: Title of the course (optional - can use conversation context)
+            course_description: Description of the course (optional - can use conversation context)
+            duration_weeks: Number of weeks the course runs (optional)
+            sessions_per_week: Number of sessions per week (optional)
+            user_request: User's request for lesson generation
+            temperature: Creativity level
+            
+        Returns:
+            Dictionary with 'lessons' array matching the lesson generation schema
+        """
+        try:
+            # Get the structured output schema
+            lesson_schema = get_lesson_generation_schema()
+            
+            # Build prompt with available information
+            prompt_parts = []
+            
+            if course_title:
+                prompt_parts.append(f"Course Title: {course_title}")
+            if course_description:
+                prompt_parts.append(f"Course Description: {course_description}")
+            if duration_weeks:
+                prompt_parts.append(f"Course Duration: {duration_weeks} weeks")
+            if sessions_per_week:
+                prompt_parts.append(f"Sessions per Week: {sessions_per_week}")
+            
+            if user_request:
+                prompt_parts.append(f"\nUser Request: {user_request}")
+            
+            # Calculate total lessons if duration and sessions are provided
+            total_lessons = None
+            if duration_weeks and sessions_per_week:
+                total_lessons = duration_weeks * sessions_per_week
+                prompt_parts.append(f"\nTotal Lessons Needed: {total_lessons} lessons ({duration_weeks} weeks × {sessions_per_week} sessions/week)")
+            
+            prompt = "\n".join(prompt_parts) if prompt_parts else user_request
+            
+            # Add instruction for lesson generation
+            prompt += """
+
+Generate lesson outlines (titles and descriptions) for the entire course. The lessons should:
+1. Follow a scaffolding/cumulative organization - each lesson builds on previous ones
+2. Progress from basic concepts to more advanced topics
+3. Be organized in a logical learning sequence
+4. Cover the full scope of the course content"""
+            
+            if total_lessons:
+                prompt += f"\n5. Generate exactly {total_lessons} lessons to match the course duration"
+            else:
+                prompt += "\n5. Generate an appropriate number of lessons based on the course scope"
+            
+            # System instruction for lesson generation
+            system_instruction = """You are an expert lesson creator and curriculum designer. Generate comprehensive lesson outlines for entire courses that follow educational scaffolding principles.
+
+Key principles:
+- Lessons should be cumulative - each lesson builds on knowledge from previous lessons
+- Start with foundational concepts and progressively introduce more complex topics
+- Ensure logical flow and sequencing
+- Each lesson should have a clear, descriptive title and a detailed description
+- Lessons should be organized in order (1, 2, 3, etc.)
+- Consider the total number of lessons needed based on course duration and sessions per week
+
+Create engaging, clear, and informative lesson outlines that help students understand what they will learn in each lesson and how lessons connect to form a complete learning journey."""
+            
+            # Use structured content generation with the schema
+            structured_response = await self.generate_structured_content(
+                prompt=prompt,
+                output_schema=lesson_schema,
+                system_instruction=system_instruction,
+                temperature=temperature,
+            )
+            
+            return structured_response
+            
+        except Exception as e:
+            logger.error(f"Error in lesson generation: {e}")
+            raise
+    
+    async def handle_assignment_generation(
+        self,
+        user_request: str,
+        temperature: float = 0.7,
+    ) -> Dict[str, Any]:
+        """
+        Handle assignment generation with structured output
+        This is the Level 2 AI that generates structured assignment data with questions
+        
+        Args:
+            user_request: User's request for assignment generation (includes material content)
+            temperature: Creativity level
+            
+        Returns:
+            Dictionary matching the assignment generation schema
+        """
+        try:
+            # Get the structured output schema
+            assignment_schema = get_assignment_generation_schema()
+            
+            # System instruction for assignment generation
+            system_instruction = """You are an expert assignment creator. Based on the provided material content, create assignment questions. 
+            Use question types: essay and fill_blank. 
+            
+            For fill_blank questions:
+            - Identify key concepts, terms, or important information from the material
+            - Create fill-in-the-blank questions that test understanding
+            - Provide correct answers for each blank
+            
+            For essay questions:
+            - Create thought-provoking prompts that require students to analyze and synthesize the material
+            - Include a rubric or grading criteria if helpful
+            
+            For short_answer questions:
+            - Create questions that require brief but specific answers
+            - Test comprehension of key concepts
+            
+            Generate a comprehensive assignment with multiple questions that effectively assess student understanding of the material."""
+            
+            # Use structured content generation with the schema
+            structured_response = await self.generate_structured_content(
+                prompt=user_request,
+                output_schema=assignment_schema,
+                system_instruction=system_instruction,
+                temperature=temperature,
+            )
+            
+            return structured_response
+            
+        except Exception as e:
+            logger.error(f"Error in assignment generation: {e}")
+            raise
+    
+    async def handle_quiz_generation(
+        self,
+        user_request: str,
+        temperature: float = 0.7,
+    ) -> Dict[str, Any]:
+        """
+        Handle quiz generation with structured output
+        This is the Level 2 AI that generates structured quiz data with questions
+        
+        Args:
+            user_request: User's request for quiz generation (includes material content)
+            temperature: Creativity level
+            
+        Returns:
+            Dictionary matching the quiz generation schema
+        """
+        try:
+            # Get the structured output schema
+            quiz_schema = get_quiz_generation_schema()
+            
+            # System instruction for quiz generation
+            system_instruction = """You are an expert quiz creator. Based on the provided material content, create quiz questions. 
+            Use question types: multiple_choice and true_false. 
+            
+            For multiple_choice questions:
+            - Create 4 options with one correct answer
+            - Make distractors plausible but clearly incorrect
+            - Test understanding of key concepts from the material
+            
+            For true_false questions:
+            - Create statements that test understanding of key concepts
+            - Ensure statements are clearly true or false based on the material
+            - Avoid ambiguous statements
+            
+            Generate a comprehensive quiz with multiple questions that effectively assess student understanding of the material."""
+            
+            # Use structured content generation with the schema
+            structured_response = await self.generate_structured_content(
+                prompt=user_request,
+                output_schema=quiz_schema,
+                system_instruction=system_instruction,
+                temperature=temperature,
+            )
+            
+            return structured_response
+            
+        except Exception as e:
+            logger.error(f"Error in quiz generation: {e}")
             raise
     
     def process_function_call(
@@ -406,7 +671,16 @@ async def interactive_chat():
         print(f"✓ Agent initialized (Model: {agent.model_name})\n")
         
         # Set a system instruction for the chat
-        system_instruction = "You are a helpful and friendly assistant. Keep your responses concise and conversational."
+        system_instruction = """You are a helpful assistant for creating educational content including courses, lessons, assignments, and quizzes.
+
+When to call functions:
+1. generate_course: When user asks to create/generate a course AND provides a topic. If no topic is given, ask for clarification.
+2. generate_course_introduction: When user asks to add or create an introduction for a course. Requires course title and description.
+3. generate_lesson: When user asks to create lessons for a course. Use course context from the conversation if available. If duration_weeks or sessions_per_week are not provided, ask the user for this information. Generate multiple lessons that follow scaffolding/cumulative organization.
+4. generate_assignment: When user asks to create an assignment from material content. The material content will be in the user's message.
+5. generate_quiz: When user asks to create a quiz from material content. The material content will be in the user's message.
+
+Keep your responses concise and conversational. When calling functions, use all available information from the conversation context and user's message."""
         
         # Start a chat session with function calling enabled
         print("Starting chat session with function calling...")
@@ -416,7 +690,7 @@ async def interactive_chat():
             enable_function_calling=True  # Enable AI-driven function calling
         )
         print("✓ Chat session started with function calling enabled\n")
-        print("✓ AI can automatically detect when to generate courses\n")
+        print("✓ AI can automatically detect when to generate courses, lessons, assignments, and quizzes\n")
         
         print("Chat started! Type your message:\n")
         
@@ -545,7 +819,7 @@ async def interactive_chat():
                 
                 # Only handle as function call if we actually found valid function calls
                 if has_function_call and function_calls:
-                    print("[AI detected course generation request - calling function...]\n")
+                    print(f"[AI detected function call request - calling function...]\n")
                     
                     # Process each function call
                     for function_call in function_calls:
@@ -568,8 +842,7 @@ async def interactive_chat():
                         # Handle the function call
                         if function_name == "generate_course":
                             # Extract the user's original request
-                            # The function args might contain the request or we use the original input
-                            course_request = function_args.get("user_request") if isinstance(function_args, dict) else (function_args.get("user_request") if hasattr(function_args, 'get') else user_input) or user_input
+                            course_request = function_args.get("user_request") if isinstance(function_args, dict) else user_input
                             
                             # Call Level 2 AI for structured course generation
                             print("Generating structured course data...\n")
@@ -584,10 +857,105 @@ async def interactive_chat():
                             print("\n[Structured Course Data Generated]")
                             print(json.dumps(course_data, indent=2))
                             print()
-                            
-                            # Don't send a message back to chat - just display the results
-                            # The conversation will continue naturally when the user sends their next message
                             print("Course generation complete! You can ask me to modify anything or continue with your next request.\n")
+                        
+                        elif function_name == "generate_course_introduction":
+                            # Extract parameters
+                            if isinstance(function_args, dict):
+                                course_title = function_args.get("course_title", "")
+                                course_description = function_args.get("course_description", "")
+                                intro_request = function_args.get("user_request", user_input)
+                            else:
+                                course_title = ""
+                                course_description = ""
+                                intro_request = user_input
+                            
+                            print("Generating course introduction...\n")
+                            introduction_data = await agent.handle_course_introduction_generation(
+                                course_title=course_title,
+                                course_description=course_description,
+                                user_request=intro_request,
+                                temperature=0.7
+                            )
+                            
+                            print(f"\n✓ Course introduction generated successfully!")
+                            print("\n[Structured Course Introduction Data Generated]")
+                            print(json.dumps(introduction_data, indent=2))
+                            print()
+                            print("Course introduction generation complete!\n")
+                        
+                        elif function_name == "generate_lesson":
+                            # Extract parameters (all optional - AI can use conversation context)
+                            if isinstance(function_args, dict):
+                                course_title = function_args.get("course_title", "")
+                                course_description = function_args.get("course_description", "")
+                                duration_weeks = function_args.get("duration_weeks", None)
+                                sessions_per_week = function_args.get("sessions_per_week", None)
+                                lesson_request = function_args.get("user_request", user_input)
+                            else:
+                                course_title = ""
+                                course_description = ""
+                                duration_weeks = None
+                                sessions_per_week = None
+                                lesson_request = user_input
+                            
+                            print("Generating lessons for the course...\n")
+                            lessons_data = await agent.handle_lesson_generation(
+                                course_title=course_title,
+                                course_description=course_description,
+                                duration_weeks=duration_weeks,
+                                sessions_per_week=sessions_per_week,
+                                user_request=lesson_request,
+                                temperature=0.7
+                            )
+                            
+                            print(f"\n✓ Lessons generated successfully!")
+                            print(f"\n[Generated {len(lessons_data.get('lessons', []))} lessons]")
+                            print("\n[Structured Lessons Data Generated]")
+                            print(json.dumps(lessons_data, indent=2))
+                            print()
+                            print("Lesson generation complete!\n")
+                        
+                        elif function_name == "generate_assignment":
+                            # Extract user request (includes material content)
+                            if isinstance(function_args, dict):
+                                assignment_request = function_args.get("user_request", user_input)
+                            else:
+                                assignment_request = user_input
+                            
+                            print("Generating assignment...\n")
+                            assignment_data = await agent.handle_assignment_generation(
+                                user_request=assignment_request,
+                                temperature=0.7
+                            )
+                            
+                            print(f"\n✓ Assignment generated successfully!")
+                            print("\n[Structured Assignment Data Generated]")
+                            print(json.dumps(assignment_data, indent=2))
+                            print()
+                            print("Assignment generation complete!\n")
+                        
+                        elif function_name == "generate_quiz":
+                            # Extract user request (includes material content)
+                            if isinstance(function_args, dict):
+                                quiz_request = function_args.get("user_request", user_input)
+                            else:
+                                quiz_request = user_input
+                            
+                            print("Generating quiz...\n")
+                            quiz_data = await agent.handle_quiz_generation(
+                                user_request=quiz_request,
+                                temperature=0.7
+                            )
+                            
+                            print(f"\n✓ Quiz generated successfully!")
+                            print("\n[Structured Quiz Data Generated]")
+                            print(json.dumps(quiz_data, indent=2))
+                            print()
+                            print("Quiz generation complete!\n")
+                        
+                        else:
+                            print(f"[Warning: Unknown function '{function_name}']\n")
                 else:
                     # No function call - normal text response
                     # Try to get text response safely
