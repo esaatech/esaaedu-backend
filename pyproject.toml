@@ -7,7 +7,7 @@ readme = "README.md"
 package-mode = false
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = ">=3.9,<3.15"
 django = "^4.2.0"
 djangorestframework = "^3.14.0"
 firebase-admin = "^6.2.0"
@@ -28,6 +28,7 @@ channels = "^4.3.1"
 channels-redis = "^4.3.0"
 google-cloud-aiplatform = "^1.124.0"
 daphne = "^4.2.1"
+youtube-transcript-api = "^1.2.3"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.0.0"
