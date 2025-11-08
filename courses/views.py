@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage
+from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial
 from student.models import EnrolledCourse
 from django.db.models import F, Sum
 from courses.models import ClassEvent
@@ -3218,18 +3218,25 @@ class MaterialContentView(APIView):
             # Get the material
             material = get_object_or_404(LessonMaterialModel, id=material_id)
             
-            # Check if user has access to this material (enrolled in any lesson that uses this material)
-            user_enrollments = EnrolledCourse.objects.filter(
-                student_profile__user=request.user,
-                status__in=['active', 'completed']
-            )
-            
-            # Check if material belongs to any lesson in user's enrolled courses
+            # Check if user has access to this material
+            # 1. Check if user is a teacher who owns the course containing this material
+            # 2. Check if user is enrolled as a student in a course that uses this material
             has_access = False
-            for enrollment in user_enrollments:
-                if material.lessons.filter(course=enrollment.course).exists():
-                    has_access = True
-                    break
+            
+            # Check teacher access - if user is teacher of any course that has lessons using this material
+            if material.lessons.filter(course__teacher=request.user).exists():
+                has_access = True
+            
+            # Check student access - if user is enrolled in any course that has lessons using this material
+            if not has_access:
+                user_enrollments = EnrolledCourse.objects.filter(
+                    student_profile__user=request.user,
+                    status__in=['active', 'completed']
+                )
+                for enrollment in user_enrollments:
+                    if material.lessons.filter(course=enrollment.course).exists():
+                        has_access = True
+                        break
             
             if not has_access:
                 return Response(
@@ -3269,6 +3276,39 @@ class MaterialContentView(APIView):
                 
             elif material.material_type == 'note':
                 # For notes, use description as content
+                response_data['content'] = material.description or ''
+                
+            elif material.material_type == 'video':
+                # For videos, try to get video material details (transcript, etc.)
+                try:
+                    video_material = VideoMaterial.objects.filter(
+                        lesson_material=material
+                    ).first()
+                    if not video_material and material.file_url:
+                        # Try to find by video URL if not linked by lesson_material
+                        video_material = VideoMaterial.objects.filter(
+                            video_url=material.file_url
+                        ).first()
+                    
+                    if video_material:
+                        response_data['video_material'] = {
+                            'id': str(video_material.id),
+                            'video_url': video_material.video_url,
+                            'video_id': video_material.video_id,
+                            'is_youtube': video_material.is_youtube,
+                            'has_transcript': video_material.has_transcript,
+                            'transcript': video_material.transcript,
+                            'language': video_material.language,
+                            'language_name': video_material.language_name,
+                            'method_used': video_material.method_used,
+                            'word_count': video_material.word_count,
+                            'transcribed_at': video_material.transcribed_at.isoformat() if video_material.transcribed_at else None
+                        }
+                except Exception as e:
+                    print(f"⚠️ Could not load video material details: {e}")
+                    # Continue without video material details
+                
+                # Include basic file info
                 response_data['content'] = material.description or ''
                 
             else:

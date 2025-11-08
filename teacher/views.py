@@ -2487,6 +2487,47 @@ class VideoMaterialTranscribeView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    def get(self, request, video_material_id):
+        """
+        Get video material transcript status (for SWR).
+        Returns current state immediately, allowing SWR to show stale data while revalidating.
+        """
+        try:
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can access video transcripts'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            try:
+                video_material = VideoMaterial.objects.get(id=video_material_id)
+            except VideoMaterial.DoesNotExist:
+                return Response(
+                    {'error': 'Video material not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            serializer = VideoMaterialSerializer(video_material)
+            response = Response({
+                'video_material': serializer.data,
+                'has_transcript': video_material.has_transcript,
+                'is_transcribing': False  # Could be enhanced with async job tracking
+            }, status=status.HTTP_200_OK)
+            
+            # Add cache headers for SWR
+            # Allow stale data for 1 hour, revalidate in background
+            response['Cache-Control'] = 'public, s-maxage=3600, stale-while-revalidate=86400'
+            response['ETag'] = f'"{video_material.updated_at.timestamp()}"'
+            
+            return response
+
+        except Exception as e:
+            logger.error(f"Error getting video material transcript: {e}", exc_info=True)
+            return Response(
+                {'error': f'Error getting video material: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     def post(self, request, video_material_id):
         """
         Transcribe a video material.
