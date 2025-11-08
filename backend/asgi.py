@@ -107,9 +107,9 @@ class CloudRunWebSocketMiddleware:
 # in the consumer's first message, not via Django session auth
 application = CloudRunWebSocketMiddleware(
     ProtocolTypeRouter({
-        "http": django_asgi_app,
+    "http": django_asgi_app,
         "websocket": URLRouter(
             websocket_urlpatterns
-        ),
-    })
+    ),
+})
 )

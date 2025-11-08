@@ -18,7 +18,7 @@ from .serializers import (
     AssignmentQuestionSerializer, AssignmentSubmissionSerializer, AssignmentGradingSerializer,
     AssignmentFeedbackSerializer
 )
-from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission
+from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, LessonMaterial, VideoMaterial
 from student.models import EnrolledCourse
 from datetime import datetime, timedelta
 # Import AI grading service
@@ -26,6 +26,8 @@ from ai.gemini_grader import GeminiGrader
 # Import AI generation services
 from ai.gemini_course_introduction_service import GeminiCourseIntroductionService
 from ai.gemini_course_lessons_service import GeminiCourseLessonsService
+from ai.video_transcription_service import VideoTranscriptionService
+from courses.serializers import VideoMaterialSerializer, VideoMaterialCreateSerializer, VideoMaterialTranscribeSerializer
 
 
 class TeacherProfileAPIView(APIView):
@@ -2346,5 +2348,227 @@ Each lesson should be clear, focused, and contribute to the overall course learn
             logger.error(f"Error in AI lessons generation: {e}\n{traceback.format_exc()}")
             return Response(
                 {'error': f'Error during AI generation: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class VideoMaterialView(APIView):
+    """
+    API view for managing video materials.
+    Handles creating video materials and checking for existing transcriptions.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        """
+        Create a new video material or get existing one by URL.
+        Checks if transcript already exists for this video URL.
+        """
+        try:
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can create video materials'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            video_url = request.data.get('video_url', '').strip()
+            lesson_material_id = request.data.get('lesson_material_id')  # Optional
+
+            if not video_url:
+                return Response(
+                    {'error': 'video_url is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Check if video material already exists for this URL (caching)
+            video_material = None
+            try:
+                video_material = VideoMaterial.objects.get(video_url=video_url)
+                logger.info(f"Found existing video material for URL: {video_url}")
+            except VideoMaterial.DoesNotExist:
+                pass
+
+            # If exists, return it (or update lesson_material link if provided)
+            if video_material:
+                if lesson_material_id and not video_material.lesson_material:
+                    try:
+                        lesson_material = LessonMaterial.objects.get(
+                            id=lesson_material_id,
+                            material_type='video'
+                        )
+                        video_material.lesson_material = lesson_material
+                        video_material.save()
+                    except LessonMaterial.DoesNotExist:
+                        pass
+
+                serializer = VideoMaterialSerializer(video_material)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+
+            # Create new video material
+            create_data = {'video_url': video_url}
+            if lesson_material_id:
+                create_data['lesson_material'] = lesson_material_id
+
+            serializer = VideoMaterialCreateSerializer(data=create_data)
+            if serializer.is_valid():
+                video_material = serializer.save()
+
+                # Extract video ID and detect if YouTube
+                transcription_service = VideoTranscriptionService()
+                if transcription_service._is_youtube_url(video_url):
+                    video_material.is_youtube = True
+                    video_material.video_id = transcription_service._extract_youtube_id(video_url)
+                    video_material.save()
+
+                result_serializer = VideoMaterialSerializer(video_material)
+                return Response(result_serializer.data, status=status.HTTP_201_CREATED)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            import traceback
+            logger.error(f"Error creating video material: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Error creating video material: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def get(self, request, video_material_id=None):
+        """
+        Get video material by ID or by video_url query parameter
+        """
+        try:
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can access video materials'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            video_material = None
+
+            if video_material_id:
+                try:
+                    video_material = VideoMaterial.objects.get(id=video_material_id)
+                except VideoMaterial.DoesNotExist:
+                    return Response(
+                        {'error': 'Video material not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            elif request.query_params.get('video_url'):
+                video_url = request.query_params.get('video_url')
+                try:
+                    video_material = VideoMaterial.objects.get(video_url=video_url)
+                except VideoMaterial.DoesNotExist:
+                    return Response(
+                        {'error': 'Video material not found for this URL'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            else:
+                return Response(
+                    {'error': 'video_material_id or video_url query parameter required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            serializer = VideoMaterialSerializer(video_material)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error getting video material: {e}", exc_info=True)
+            return Response(
+                {'error': f'Error getting video material: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class VideoMaterialTranscribeView(APIView):
+    """
+    API view for transcribing video materials.
+    Uses VideoTranscriptionService and caches the result.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, video_material_id):
+        """
+        Transcribe a video material.
+        Checks cache first, then transcribes if needed.
+        """
+        try:
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can transcribe videos'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            try:
+                video_material = VideoMaterial.objects.get(id=video_material_id)
+            except VideoMaterial.DoesNotExist:
+                return Response(
+                    {'error': 'Video material not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Check if already transcribed
+            if video_material.has_transcript:
+                logger.info(f"Video material {video_material_id} already has transcript")
+                serializer = VideoMaterialSerializer(video_material)
+                return Response({
+                    'video_material': serializer.data,
+                    'message': 'Transcript already exists',
+                    'from_cache': True
+                }, status=status.HTTP_200_OK)
+
+            # Validate request data
+            transcribe_serializer = VideoMaterialTranscribeSerializer(data=request.data)
+            if not transcribe_serializer.is_valid():
+                return Response(transcribe_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+            language_codes = transcribe_serializer.validated_data.get('language_codes')
+
+            # Transcribe using VideoTranscriptionService
+            transcription_service = VideoTranscriptionService()
+            result = transcription_service.transcribe_video(
+                video_material.video_url,
+                language_codes=language_codes
+            )
+
+            if result['success']:
+                # Update video material with transcript
+                video_material.transcript = result['transcript']
+                video_material.language = result.get('language')
+                video_material.method_used = result['method']
+                video_material.transcript_length = len(result['transcript'])
+                video_material.word_count = len(result['transcript'].split())
+                if result.get('language'):
+                    # Try to get language name (simplified)
+                    language_map = {
+                        'en': 'English',
+                        'es': 'Spanish',
+                        'fr': 'French',
+                        'de': 'German',
+                        'it': 'Italian',
+                        'pt': 'Portuguese'
+                    }
+                    video_material.language_name = language_map.get(result['language'], result['language'])
+                video_material.save()
+
+                logger.info(f"Successfully transcribed video material {video_material_id} using {result['method']}")
+
+                serializer = VideoMaterialSerializer(video_material)
+                return Response({
+                    'video_material': serializer.data,
+                    'message': 'Transcript generated successfully',
+                    'from_cache': False
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response(
+                    {'error': result.get('error', 'Failed to transcribe video')},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        except Exception as e:
+            import traceback
+            logger.error(f"Error transcribing video material: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Error transcribing video: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

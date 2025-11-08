@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, Note, BookPage
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, Note, BookPage, VideoMaterial
 
 
 @admin.register(Course)
@@ -794,4 +794,51 @@ class BookPageAdmin(admin.ModelAdmin):
     )
     
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related('book_material').prefetch_related('book_material__lessons')
+        return super().get_queryset(request).select_related('book_material')
+
+
+@admin.register(VideoMaterial)
+class VideoMaterialAdmin(admin.ModelAdmin):
+    list_display = ['get_lesson_material_title', 'video_url_short', 'is_youtube', 'has_transcript_display', 'word_count', 'method_used', 'created_at', 'transcribed_at']
+    list_filter = ['is_youtube', 'method_used', 'language', 'created_at', 'transcribed_at']
+    search_fields = ['video_url', 'video_id', 'lesson_material__title', 'transcript']
+    readonly_fields = ['id', 'created_at', 'updated_at', 'transcribed_at', 'transcript_length', 'word_count', 'has_transcript_display']
+    date_hierarchy = 'created_at'
+    
+    def get_lesson_material_title(self, obj):
+        """Display the lesson material title if linked"""
+        if obj.lesson_material:
+            return obj.lesson_material.title
+        return "Not linked"
+    get_lesson_material_title.short_description = 'Lesson Material'
+    get_lesson_material_title.admin_order_field = 'lesson_material__title'
+    
+    def video_url_short(self, obj):
+        """Display shortened video URL"""
+        if len(obj.video_url) > 50:
+            return obj.video_url[:47] + "..."
+        return obj.video_url
+    video_url_short.short_description = 'Video URL'
+    
+    def has_transcript_display(self, obj):
+        """Display has_transcript property"""
+        return obj.has_transcript
+    has_transcript_display.boolean = True
+    has_transcript_display.short_description = 'Has Transcript'
+    
+    fieldsets = (
+        ('Video Information', {
+            'fields': ('lesson_material', 'video_url', 'video_id', 'is_youtube')
+        }),
+        ('Transcript Information', {
+            'fields': ('has_transcript_display', 'transcript', 'language', 'language_name', 'method_used', 'transcript_length', 'word_count', 'transcribed_at'),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('lesson_material')

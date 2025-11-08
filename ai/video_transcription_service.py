@@ -194,12 +194,17 @@ class VideoTranscriptionService:
             
             response = model.generate_content(
                 [prompt, video_part],
-                generation_config={'temperature': 0.1}  # Low temperature for accurate transcription
+                generation_config={
+                    'temperature': 0.1,  # Low temperature for accurate transcription
+                    'max_output_tokens': 8192  # Increase max tokens to avoid truncation
+                }
             )
             
+            # Handle potential truncation - check if response was cut off
             transcript_text = response.text if hasattr(response, 'text') else str(response)
             
-            logger.info(f"Successfully transcribed video using Vertex AI")
+            # Log transcript length for debugging
+            logger.info(f"Successfully transcribed video using Vertex AI (length: {len(transcript_text)} chars)")
             
             return {
                 'transcript': transcript_text,

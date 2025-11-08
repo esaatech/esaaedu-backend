@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage, VideoMaterial
 
 User = get_user_model()
 
@@ -1571,4 +1571,61 @@ class BookPageUpdateSerializer(serializers.ModelSerializer):
         """Validate content is not empty if provided"""
         if value is not None and not value.strip():
             raise serializers.ValidationError("Page content cannot be empty")
+        return value
+
+
+# ===== VIDEO MATERIAL SERIALIZERS =====
+
+class VideoMaterialSerializer(serializers.ModelSerializer):
+    """
+    Serializer for video materials with transcript data
+    """
+    has_transcript = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = VideoMaterial
+        fields = [
+            'id', 'lesson_material', 'video_url', 'video_id', 'is_youtube',
+            'transcript', 'language', 'language_name', 'method_used',
+            'transcript_length', 'word_count', 'has_transcript',
+            'created_at', 'updated_at', 'transcribed_at'
+        ]
+        read_only_fields = [
+            'id', 'video_id', 'is_youtube', 'transcript_length', 'word_count',
+            'has_transcript', 'created_at', 'updated_at', 'transcribed_at'
+        ]
+
+
+class VideoMaterialCreateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for creating video materials
+    """
+    class Meta:
+        model = VideoMaterial
+        fields = ['video_url', 'lesson_material']
+        extra_kwargs = {
+            'lesson_material': {'required': False}
+        }
+    
+    def validate_video_url(self, value):
+        """Validate video URL"""
+        if not value:
+            raise serializers.ValidationError("Video URL is required")
+        return value
+
+
+class VideoMaterialTranscribeSerializer(serializers.Serializer):
+    """
+    Serializer for transcribing a video material
+    """
+    language_codes = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="Optional list of language codes to try (e.g., ['en', 'es'])"
+    )
+    
+    def validate_language_codes(self, value):
+        """Validate language codes"""
+        if value and len(value) > 10:
+            raise serializers.ValidationError("Maximum 10 language codes allowed")
         return value

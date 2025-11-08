@@ -432,6 +432,89 @@ class BookPage(models.Model):
         return self.page_number - 1 if self.page_number > 1 else None
 
 
+class VideoMaterial(models.Model):
+    """
+    Video-specific data for video materials.
+    Similar to BookPage for books, this extends LessonMaterial with video-specific fields.
+    Also caches transcriptions to avoid re-transcribing the same video URL.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Link to LessonMaterial (optional - can exist independently for caching)
+    lesson_material = models.OneToOneField(
+        LessonMaterial,
+        on_delete=models.CASCADE,
+        related_name='video_data',
+        blank=True,
+        null=True,
+        limit_choices_to={'material_type': 'video'},
+        help_text="Link to LessonMaterial if this is part of a lesson"
+    )
+    
+    # Video Information (for caching transcriptions by URL)
+    video_url = models.URLField(unique=True, help_text="URL of the video (YouTube or other)")
+    video_id = models.CharField(max_length=100, blank=True, null=True, help_text="Video ID (e.g., YouTube video ID)")
+    is_youtube = models.BooleanField(default=False, help_text="Whether this is a YouTube video")
+    
+    # Transcript Data (optional - only if transcribed)
+    transcript = models.TextField(blank=True, null=True, help_text="Full transcript text (if transcribed)")
+    language = models.CharField(max_length=10, blank=True, null=True, help_text="Language code of transcript (e.g., 'en', 'es')")
+    language_name = models.CharField(max_length=50, blank=True, null=True, help_text="Language name (e.g., 'English')")
+    
+    # Transcription Metadata
+    method_used = models.CharField(
+        max_length=20,
+        choices=[
+            ('youtube_api', 'YouTube Transcript API'),
+            ('vertex_ai', 'Vertex AI'),
+        ],
+        blank=True,
+        null=True,
+        help_text="Method used to transcribe the video (if transcribed)"
+    )
+    transcript_length = models.PositiveIntegerField(blank=True, null=True, help_text="Length of transcript in characters")
+    word_count = models.PositiveIntegerField(blank=True, null=True, help_text="Word count of transcript")
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    transcribed_at = models.DateTimeField(blank=True, null=True, help_text="When the transcription was created (if transcribed)")
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['video_url']),
+            models.Index(fields=['video_id']),
+            models.Index(fields=['is_youtube']),
+            models.Index(fields=['method_used']),
+            models.Index(fields=['lesson_material']),
+        ]
+        verbose_name = "Video Material"
+        verbose_name_plural = "Video Materials"
+    
+    def __str__(self):
+        if self.lesson_material:
+            return f"Video Material: {self.lesson_material.title}"
+        video_id_display = self.video_id or self.video_url[:50]
+        return f"Video Material: {video_id_display}"
+    
+    def save(self, *args, **kwargs):
+        # Auto-calculate transcript length and word count if transcript exists
+        if self.transcript:
+            self.transcript_length = len(self.transcript)
+            self.word_count = len(self.transcript.split())
+            # Set transcribed_at if not already set
+            if not self.transcribed_at:
+                from django.utils import timezone
+                self.transcribed_at = timezone.now()
+        super().save(*args, **kwargs)
+    
+    @property
+    def has_transcript(self):
+        """Check if this video material has a transcript"""
+        return bool(self.transcript and self.transcript.strip())
+
+
 class Project(models.Model):
     SUBMISSION_TYPES = [
         ('link', 'Link/URL'),
