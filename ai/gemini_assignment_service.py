@@ -2,8 +2,8 @@
 GeminiAssignmentService - Service for generating assignments using Gemini AI
 
 This service extends GeminiService to provide assignment generation functionality.
-It accepts lesson content, materials content, and video URLs (including YouTube)
-to generate comprehensive assignment questions.
+It accepts only text content (no video URLs or YouTube handling).
+All content extraction and transcription should be handled by the calling view.
 
 Usage:
     from ai.gemini_assignment_service import GeminiAssignmentService
@@ -14,17 +14,14 @@ Usage:
         system_instruction="You are an expert assignment creator...",
         lesson_title="Introduction to Python",
         lesson_description="Learn Python basics",
-        lesson_content="Python is a programming language...",
-        materials_content=["Note 1 content", "Note 2 content"],
-        video_url="https://www.youtube.com/watch?v=...",
+        content="Python is a programming language...",  # Combined text content
         temperature=0.7
     )
 """
 import logging
-import re
 import sys
 import os
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 # Handle both module import and direct execution
 try:
@@ -44,7 +41,7 @@ class GeminiAssignmentService:
     Service for generating assignments using Gemini AI.
     
     Extends GeminiService to provide assignment-specific functionality.
-    Supports multiple content sources: lesson content, materials, and YouTube videos.
+    Accepts only text content - all content extraction/transcription handled by views.
     """
     
     def __init__(self):
@@ -52,46 +49,17 @@ class GeminiAssignmentService:
         self.gemini_service = GeminiService()
         logger.info("GeminiAssignmentService initialized")
     
-    def _is_youtube_url(self, url: str) -> bool:
-        """Check if URL is a YouTube URL"""
-        if not url:
-            return False
-        youtube_patterns = [
-            r'youtube\.com/watch\?v=',
-            r'youtu\.be/',
-            r'youtube\.com/embed/',
-            r'youtube\.com/v/'
-        ]
-        return any(re.search(pattern, url) for pattern in youtube_patterns)
-    
-    def _extract_youtube_id(self, url: str) -> Optional[str]:
-        """Extract YouTube video ID from URL"""
-        if not url:
-            return None
-        
-        patterns = [
-            r'youtube\.com/watch\?v=([^&]+)',
-            r'youtu\.be/([^?]+)',
-            r'youtube\.com/embed/([^?]+)',
-            r'youtube\.com/v/([^?]+)'
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, url)
-            if match:
-                return match.group(1)
-        return None
-    
     def generate(
         self,
         system_instruction: str,
         lesson_title: str,
         lesson_description: str,
-        lesson_content: Optional[str] = None,
-        materials_content: Optional[List[str]] = None,
-        video_url: Optional[str] = None,
+        content: str,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        total_questions: int = 5,
+        essay_count: int = 2,
+        fill_blank_count: int = 3
     ) -> Dict[str, Any]:
         """
         Generate assignment using Gemini AI.
@@ -100,9 +68,7 @@ class GeminiAssignmentService:
             system_instruction: System instruction/prompt from frontend
             lesson_title: Title of the lesson
             lesson_description: Description of the lesson
-            lesson_content: Text content of the lesson (optional)
-            materials_content: List of material content strings (optional)
-            video_url: YouTube or video URL (optional)
+            content: Combined text content from all selected materials (required)
             temperature: Temperature for generation (0.0-1.0, default: 0.7)
             max_tokens: Maximum tokens in response (optional)
             
@@ -124,95 +90,48 @@ class GeminiAssignmentService:
             raise ValueError("lesson_title is required")
         if not lesson_description:
             raise ValueError("lesson_description is required")
+        if not content or not content.strip():
+            raise ValueError("content is required")
         
         try:
-            # Build comprehensive prompt with all available content
-            prompt_parts = [
-                f"Generate a comprehensive assignment for the following lesson:",
-                f"",
-                f"Lesson Title: {lesson_title}",
-                f"Lesson Description: {lesson_description}"
-            ]
-            
-            # Add lesson content if available
-            if lesson_content and lesson_content.strip():
-                prompt_parts.append("")
-                prompt_parts.append("Lesson Content:")
-                prompt_parts.append(lesson_content)
-            
-            # Add materials content if available
-            if materials_content:
-                materials_text = "\n\n".join([
-                    f"Material {i+1}:\n{content}" 
-                    for i, content in enumerate(materials_content) 
-                    if content and content.strip()
-                ])
-                if materials_text:
-                    prompt_parts.append("")
-                    prompt_parts.append("Additional Materials:")
-                    prompt_parts.append(materials_text)
-            
-            # Add video URL information if available
-            if video_url:
-                if self._is_youtube_url(video_url):
-                    youtube_id = self._extract_youtube_id(video_url)
-                    prompt_parts.append("")
-                    prompt_parts.append(f"Video Content: YouTube video (ID: {youtube_id})")
-                    prompt_parts.append(f"Video URL: {video_url}")
-                    prompt_parts.append("")
-                    prompt_parts.append("Please analyze the video content and generate assignment questions based on it.")
+            # Validate question counts
+            if essay_count + fill_blank_count != total_questions:
+                # Auto-adjust to match total
+                if essay_count + fill_blank_count > total_questions:
+                    # Reduce proportionally
+                    ratio = total_questions / (essay_count + fill_blank_count)
+                    essay_count = int(essay_count * ratio)
+                    fill_blank_count = total_questions - essay_count
                 else:
-                    prompt_parts.append("")
-                    prompt_parts.append(f"Video Content: {video_url}")
+                    # Increase to match total
+                    fill_blank_count = total_questions - essay_count
             
-            prompt_parts.append("")
-            prompt_parts.append("Generate assignment questions that require students to demonstrate understanding and application of the lesson content. Include a mix of essay questions, fill-in-the-blank, and short answer questions. Each question should have clear requirements and helpful explanations.")
-            
-            prompt = "\n".join(prompt_parts)
+            # Build prompt with lesson info, content, and question requirements
+            prompt = f"""Generate a comprehensive assignment for the following lesson:
+
+Lesson Title: {lesson_title}
+Lesson Description: {lesson_description}
+
+Content:
+{content}
+
+Generate exactly {total_questions} assignment questions that require students to demonstrate understanding and application of the lesson content:
+- Exactly {essay_count} essay questions
+- Exactly {fill_blank_count} fill-in-the-blank questions
+
+Each question should have clear requirements and helpful explanations. Essay questions should include grading rubrics or criteria. Fill-in-the-blank questions should test key concepts from the material."""
             
             # Get schema for structured output
             response_schema = get_assignment_generation_schema()
             
-            # Prepare content parts for multi-modal input (if video URL provided)
-            content_parts = []
-            
-            # Add text prompt
-            content_parts.append(prompt)
-            
-            # Add video if YouTube URL is provided
-            if video_url and self._is_youtube_url(video_url):
-                try:
-                    from vertexai.generative_models import Part
-                    # Create video part from YouTube URL
-                    video_part = Part.from_uri(
-                        uri=video_url,
-                        mime_type="video/*"
-                    )
-                    content_parts.append(video_part)
-                    logger.info(f"Added YouTube video to content: {video_url}")
-                except Exception as e:
-                    logger.warning(f"Failed to add video part, will use text-only: {e}")
-                    # Continue with text-only if video fails
-            
-            # Call base service with multi-modal content if video provided
-            if len(content_parts) > 1:
-                # Multi-modal input (text + video)
-                response = self._generate_with_multimodal(
-                    system_instruction=system_instruction,
-                    content_parts=content_parts,
-                    response_schema=response_schema,
-                    temperature=temperature,
-                    max_tokens=max_tokens
-                )
-            else:
-                # Text-only input
-                response = self.gemini_service.generate(
-                    system_instruction=system_instruction,
-                    prompt=prompt,
-                    response_schema=response_schema,
-                    temperature=temperature,
-                    max_tokens=max_tokens
-                )
+            # Call base service with text-only input
+            response = self.gemini_service.generate(
+                system_instruction=system_instruction,
+                prompt=prompt,
+                response_schema=response_schema,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
             
             # Extract parsed data
             if not response.get('parsed'):
@@ -266,92 +185,6 @@ class GeminiAssignmentService:
             logger.error(f"Error generating assignment: {e}", exc_info=True)
             raise
     
-    def _generate_with_multimodal(
-        self,
-        system_instruction: str,
-        content_parts: List[Any],
-        response_schema: Dict[str, Any],
-        temperature: float = 0.7,
-        max_tokens: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """
-        Generate content with multi-modal input (text + video).
-        
-        This method handles the case where we have both text and video content.
-        """
-        import json
-        from vertexai.generative_models import GenerativeModel
-        from google.api_core import exceptions as google_exceptions
-        
-        try:
-            # Get model with system instruction
-            model = self.gemini_service._get_model(system_instruction=system_instruction)
-            
-            # Build generation config
-            generation_config = {
-                'temperature': temperature,
-            }
-            
-            if max_tokens:
-                generation_config['max_output_tokens'] = max_tokens
-            
-            # Add schema instruction to text prompt (first part)
-            if response_schema and len(content_parts) > 0:
-                schema_json = json.dumps(response_schema, indent=2)
-                text_prompt = content_parts[0]
-                content_parts[0] = f"""{text_prompt}
-
-IMPORTANT: Please respond with valid JSON matching this schema:
-{schema_json}
-
-Return ONLY valid JSON, no additional text before or after."""
-            
-            # Generate content with multi-modal input
-            logger.debug(f"Generating content with multi-modal input (text + video)")
-            response = model.generate_content(
-                content_parts,
-                generation_config=generation_config
-            )
-            
-            # Extract text
-            raw_text = response.text if hasattr(response, 'text') else str(response)
-            
-            # Parse JSON if schema was provided
-            parsed_data = None
-            if response_schema:
-                try:
-                    # Clean the response - remove markdown code blocks if present
-                    cleaned_text = raw_text.strip()
-                    if cleaned_text.startswith('```json'):
-                        cleaned_text = cleaned_text[7:]  # Remove ```json
-                    elif cleaned_text.startswith('```'):
-                        cleaned_text = cleaned_text[3:]  # Remove ```
-                    
-                    if cleaned_text.endswith('```'):
-                        cleaned_text = cleaned_text[:-3]  # Remove closing ```
-                    
-                    cleaned_text = cleaned_text.strip()
-                    
-                    parsed_data = json.loads(cleaned_text)
-                    logger.debug(f"Parsed JSON response: {parsed_data}")
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse JSON response: {e}")
-                    logger.error(f"Raw response: {raw_text}")
-                    raise ValueError(f"Invalid JSON response from AI: {e}")
-            
-            return {
-                'raw': raw_text,
-                'parsed': parsed_data,
-                'model': self.gemini_service.model_name
-            }
-            
-        except google_exceptions.GoogleAPIError as e:
-            logger.error(f"Google API error: {e}", exc_info=True)
-            raise Exception(f"Gemini API error: {e}")
-        except Exception as e:
-            logger.error(f"Unexpected error in multi-modal generation: {e}", exc_info=True)
-            raise
-    
     def test(self):
         """
         Test function for the assignment service.
@@ -379,13 +212,8 @@ Return ONLY valid JSON, no additional text before or after."""
         print()
         
         try:
-            result = self.generate(
-                system_instruction="""You are an expert assignment creator specializing in educational content.
-Generate comprehensive assignment questions that require students to demonstrate understanding and application of lesson material.
-Create a mix of essay questions, fill-in-the-blank, and short answer questions with clear requirements.""",
-                lesson_title="Introduction to Python Programming",
-                lesson_description="Learn the basics of Python programming including variables, data types, and basic operations.",
-                lesson_content="""Python is a high-level programming language known for its simplicity and readability.
+            # Combine content for test
+            combined_content = """Python is a high-level programming language known for its simplicity and readability.
 
 Key Concepts:
 1. Variables: Store data values (e.g., x = 5)
@@ -393,11 +221,19 @@ Key Concepts:
 3. Basic Operations: Arithmetic (+, -, *, /), comparison (==, !=, <, >)
 4. Print Function: Display output (print('Hello World'))
 
-Python uses indentation to define code blocks, making it easy to read.""",
-                materials_content=[
-                    "Python was created by Guido van Rossum in 1991.",
-                    "Python is an interpreted language, meaning code is executed line by line."
-                ],
+Python uses indentation to define code blocks, making it easy to read.
+
+Additional Material:
+Python was created by Guido van Rossum in 1991.
+Python is an interpreted language, meaning code is executed line by line."""
+            
+            result = self.generate(
+                system_instruction="""You are an expert assignment creator specializing in educational content.
+Generate comprehensive assignment questions that require students to demonstrate understanding and application of lesson material.
+Create a mix of essay questions, fill-in-the-blank, and short answer questions with clear requirements.""",
+                lesson_title="Introduction to Python Programming",
+                lesson_description="Learn the basics of Python programming including variables, data types, and basic operations.",
+                content=combined_content,
                 temperature=0.7
             )
             

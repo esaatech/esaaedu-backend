@@ -18,7 +18,7 @@ from .serializers import (
     AssignmentQuestionSerializer, AssignmentSubmissionSerializer, AssignmentGradingSerializer,
     AssignmentFeedbackSerializer
 )
-from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, LessonMaterial, VideoMaterial
+from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, LessonMaterial, VideoMaterial, BookPage, Lesson
 from student.models import EnrolledCourse
 from datetime import datetime, timedelta
 # Import AI grading service
@@ -27,6 +27,8 @@ from ai.gemini_grader import GeminiGrader
 from ai.gemini_course_introduction_service import GeminiCourseIntroductionService
 from ai.gemini_course_lessons_service import GeminiCourseLessonsService
 from ai.video_transcription_service import VideoTranscriptionService
+from ai.gemini_quiz_service import GeminiQuizService
+from ai.gemini_assignment_service import GeminiAssignmentService
 from courses.serializers import VideoMaterialSerializer, VideoMaterialCreateSerializer, VideoMaterialTranscribeSerializer
 
 
@@ -2487,47 +2489,6 @@ class VideoMaterialTranscribeView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated]
 
-    def get(self, request, video_material_id):
-        """
-        Get video material transcript status (for SWR).
-        Returns current state immediately, allowing SWR to show stale data while revalidating.
-        """
-        try:
-            if request.user.role != 'teacher':
-                return Response(
-                    {'error': 'Only teachers can access video transcripts'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-
-            try:
-                video_material = VideoMaterial.objects.get(id=video_material_id)
-            except VideoMaterial.DoesNotExist:
-                return Response(
-                    {'error': 'Video material not found'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            serializer = VideoMaterialSerializer(video_material)
-            response = Response({
-                'video_material': serializer.data,
-                'has_transcript': video_material.has_transcript,
-                'is_transcribing': False  # Could be enhanced with async job tracking
-            }, status=status.HTTP_200_OK)
-            
-            # Add cache headers for SWR
-            # Allow stale data for 1 hour, revalidate in background
-            response['Cache-Control'] = 'public, s-maxage=3600, stale-while-revalidate=86400'
-            response['ETag'] = f'"{video_material.updated_at.timestamp()}"'
-            
-            return response
-
-        except Exception as e:
-            logger.error(f"Error getting video material transcript: {e}", exc_info=True)
-            return Response(
-                {'error': f'Error getting video material: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
     def post(self, request, video_material_id):
         """
         Transcribe a video material.
@@ -2611,5 +2572,440 @@ class VideoMaterialTranscribeView(APIView):
             logger.error(f"Error transcribing video material: {e}\n{traceback.format_exc()}")
             return Response(
                 {'error': f'Error transcribing video: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AIGenerateQuizView(APIView):
+    """
+    REST API endpoint for generating quizzes using AI from lesson materials.
+    
+    POST: Generate quiz from selected materials
+    - Receives lesson_id, material_ids, system_instruction from frontend
+    - Fetches content for each material
+    - Handles transcription for video/audio materials
+    - Combines all content and generates quiz
+    
+    Endpoint: POST /api/teacher/lessons/{lesson_id}/ai/generate-quiz/
+    
+    Request Body:
+    {
+        "material_ids": ["uuid1", "uuid2", ...],  // IDs of materials to include
+        "system_instruction": "You are an expert quiz creator...",  // Optional
+        "temperature": 0.7  // Optional
+    }
+    
+    Response:
+    {
+        "title": "...",
+        "description": "...",
+        "questions": [...]
+    }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request, lesson_id):
+        """
+        POST: Generate quiz from selected materials using AI.
+        
+        Does NOT save to database - frontend handles saving.
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can use AI generation'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get lesson and check ownership
+            try:
+                lesson = Lesson.objects.select_related('course__teacher').get(
+                    id=lesson_id,
+                    course__teacher=request.user
+                )
+            except Lesson.DoesNotExist:
+                return Response(
+                    {'error': 'Lesson not found or you do not have permission'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get material IDs from request
+            material_ids = request.data.get('material_ids', [])
+            if not material_ids or not isinstance(material_ids, list):
+                return Response(
+                    {'error': 'material_ids is required and must be a list'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Fetch all materials
+            materials = LessonMaterial.objects.filter(
+                id__in=material_ids,
+                lessons=lesson
+            ).prefetch_related('book_pages')
+            
+            if materials.count() != len(material_ids):
+                return Response(
+                    {'error': 'Some materials not found or not associated with this lesson'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Collect content from all materials
+            content_parts = []
+            transcription_service = VideoTranscriptionService()
+            
+            for material in materials:
+                material_content = None
+                
+                if material.material_type == 'note':
+                    # Notes: use content/description
+                    material_content = material.description or ''
+                    
+                elif material.material_type == 'video' or material.material_type == 'audio':
+                    # Video/Audio: use transcript if available, otherwise transcribe
+                    try:
+                        video_material = VideoMaterial.objects.filter(
+                            lesson_material=material
+                        ).first()
+                        
+                        if not video_material and material.file_url:
+                            # Try to find by video URL
+                            video_material = VideoMaterial.objects.filter(
+                                video_url=material.file_url
+                            ).first()
+                        
+                        if video_material and video_material.has_transcript and video_material.transcript:
+                            # Use existing transcript
+                            material_content = video_material.transcript
+                            logger.info(f"Using existing transcript for video material {material.id}")
+                        elif material.file_url:
+                            # Need to transcribe
+                            logger.info(f"Transcribing video/audio material {material.id}")
+                            result = transcription_service.transcribe_video(material.file_url)
+                            if result.get('success') and result.get('transcript'):
+                                material_content = result['transcript']
+                                logger.info(f"Successfully transcribed material {material.id}")
+                            else:
+                                logger.warning(f"Failed to transcribe material {material.id}: {result.get('error')}")
+                                material_content = f"[Video/Audio URL: {material.file_url} - Transcription unavailable]"
+                        else:
+                            material_content = f"[Video/Audio material: {material.title} - No URL available]"
+                    except Exception as e:
+                        logger.error(f"Error processing video/audio material {material.id}: {e}")
+                        material_content = f"[Video/Audio material: {material.title} - Error processing]"
+                
+                elif material.material_type == 'book':
+                    # Books: get all page content
+                    pages = material.book_pages.all().order_by('page_number')
+                    if pages.exists():
+                        page_contents = []
+                        for page in pages:
+                            page_text = f"Page {page.page_number}"
+                            if page.title:
+                                page_text += f": {page.title}"
+                            page_text += f"\n{page.content}"
+                            page_contents.append(page_text)
+                        material_content = "\n\n".join(page_contents)
+                    else:
+                        material_content = material.description or ''
+                
+                else:
+                    # Other materials: use description
+                    material_content = material.description or ''
+                
+                # Add material content to parts
+                if material_content and material_content.strip():
+                    content_parts.append(f"=== {material.title} ({material.material_type}) ===\n{material_content}")
+            
+            # Combine all content
+            combined_content = "\n\n".join(content_parts)
+            
+            if not combined_content.strip():
+                return Response(
+                    {'error': 'No content found in selected materials'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get question count parameters first (needed to enhance system instruction)
+            total_questions = int(request.data.get('total_questions', 10))
+            multiple_choice_count = int(request.data.get('multiple_choice_count', 7))
+            true_false_count = int(request.data.get('true_false_count', 3))
+            
+            # Validate question counts match total
+            if multiple_choice_count + true_false_count != total_questions:
+                # Auto-adjust to match total
+                if multiple_choice_count + true_false_count > total_questions:
+                    # Reduce proportionally
+                    ratio = total_questions / (multiple_choice_count + true_false_count)
+                    multiple_choice_count = int(multiple_choice_count * ratio)
+                    true_false_count = total_questions - multiple_choice_count
+                else:
+                    # Increase to match total
+                    true_false_count = total_questions - multiple_choice_count
+            
+            # Get system instruction and enhance it with question type requirements
+            system_instruction = request.data.get('system_instruction', '').strip()
+            if not system_instruction:
+                system_instruction = """You are an expert quiz creator specializing in educational content.
+Generate comprehensive quiz questions that test understanding of the lesson material."""
+            
+            # Enhance system instruction with question type requirements
+            # This makes the AI's role clearer while keeping specific counts in the prompt
+            question_type_info = []
+            if multiple_choice_count > 0:
+                question_type_info.append(f"{multiple_choice_count} multiple choice question{'s' if multiple_choice_count != 1 else ''}")
+            if true_false_count > 0:
+                question_type_info.append(f"{true_false_count} true/false question{'s' if true_false_count != 1 else ''}")
+            
+            if question_type_info:
+                type_requirement = f"Create {', and '.join(question_type_info)} with clear correct answers and helpful explanations."
+                # Append to system instruction if not already present
+                if type_requirement.lower() not in system_instruction.lower():
+                    system_instruction = f"{system_instruction}\n{type_requirement}"
+            
+            temperature = float(request.data.get('temperature', 0.7))
+            
+            # Initialize service and generate quiz
+            service = GeminiQuizService()
+            result = service.generate(
+                system_instruction=system_instruction,
+                lesson_title=lesson.title,
+                lesson_description=lesson.description or '',
+                content=combined_content,
+                temperature=temperature,
+                total_questions=total_questions,
+                multiple_choice_count=multiple_choice_count,
+                true_false_count=true_false_count
+            )
+            
+            return Response(result, status=status.HTTP_200_OK)
+            
+        except ValueError as e:
+            logger.error(f"Validation error in AI quiz generation: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in AI quiz generation: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Error during AI generation: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AIGenerateAssignmentView(APIView):
+    """
+    REST API endpoint for generating assignments using AI from lesson materials.
+    
+    POST: Generate assignment from selected materials
+    - Receives lesson_id, material_ids, system_instruction from frontend
+    - Fetches content for each material
+    - Handles transcription for video/audio materials
+    - Combines all content and generates assignment
+    
+    Endpoint: POST /api/teacher/lessons/{lesson_id}/ai/generate-assignment/
+    
+    Request Body:
+    {
+        "material_ids": ["uuid1", "uuid2", ...],  // IDs of materials to include
+        "system_instruction": "You are an expert assignment creator...",  // Optional
+        "temperature": 0.7  // Optional
+    }
+    
+    Response:
+    {
+        "title": "...",
+        "description": "...",
+        "questions": [...]
+    }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request, lesson_id):
+        """
+        POST: Generate assignment from selected materials using AI.
+        
+        Does NOT save to database - frontend handles saving.
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can use AI generation'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get lesson and check ownership
+            try:
+                lesson = Lesson.objects.select_related('course__teacher').get(
+                    id=lesson_id,
+                    course__teacher=request.user
+                )
+            except Lesson.DoesNotExist:
+                return Response(
+                    {'error': 'Lesson not found or you do not have permission'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get material IDs from request
+            material_ids = request.data.get('material_ids', [])
+            if not material_ids or not isinstance(material_ids, list):
+                return Response(
+                    {'error': 'material_ids is required and must be a list'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Fetch all materials
+            materials = LessonMaterial.objects.filter(
+                id__in=material_ids,
+                lessons=lesson
+            ).prefetch_related('book_pages')
+            
+            if materials.count() != len(material_ids):
+                return Response(
+                    {'error': 'Some materials not found or not associated with this lesson'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Collect content from all materials (same logic as quiz)
+            content_parts = []
+            transcription_service = VideoTranscriptionService()
+            
+            for material in materials:
+                material_content = None
+                
+                if material.material_type == 'note':
+                    material_content = material.description or ''
+                    
+                elif material.material_type == 'video' or material.material_type == 'audio':
+                    try:
+                        video_material = VideoMaterial.objects.filter(
+                            lesson_material=material
+                        ).first()
+                        
+                        if not video_material and material.file_url:
+                            video_material = VideoMaterial.objects.filter(
+                                video_url=material.file_url
+                            ).first()
+                        
+                        if video_material and video_material.has_transcript and video_material.transcript:
+                            material_content = video_material.transcript
+                            logger.info(f"Using existing transcript for video material {material.id}")
+                        elif material.file_url:
+                            logger.info(f"Transcribing video/audio material {material.id}")
+                            result = transcription_service.transcribe_video(material.file_url)
+                            if result.get('success') and result.get('transcript'):
+                                material_content = result['transcript']
+                                logger.info(f"Successfully transcribed material {material.id}")
+                            else:
+                                logger.warning(f"Failed to transcribe material {material.id}: {result.get('error')}")
+                                material_content = f"[Video/Audio URL: {material.file_url} - Transcription unavailable]"
+                        else:
+                            material_content = f"[Video/Audio material: {material.title} - No URL available]"
+                    except Exception as e:
+                        logger.error(f"Error processing video/audio material {material.id}: {e}")
+                        material_content = f"[Video/Audio material: {material.title} - Error processing]"
+                
+                elif material.material_type == 'book':
+                    pages = material.book_pages.all().order_by('page_number')
+                    if pages.exists():
+                        page_contents = []
+                        for page in pages:
+                            page_text = f"Page {page.page_number}"
+                            if page.title:
+                                page_text += f": {page.title}"
+                            page_text += f"\n{page.content}"
+                            page_contents.append(page_text)
+                        material_content = "\n\n".join(page_contents)
+                    else:
+                        material_content = material.description or ''
+                
+                else:
+                    material_content = material.description or ''
+                
+                if material_content and material_content.strip():
+                    content_parts.append(f"=== {material.title} ({material.material_type}) ===\n{material_content}")
+            
+            # Combine all content
+            combined_content = "\n\n".join(content_parts)
+            
+            if not combined_content.strip():
+                return Response(
+                    {'error': 'No content found in selected materials'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get question count parameters first (needed to enhance system instruction)
+            total_questions = int(request.data.get('total_questions', 5))
+            essay_count = int(request.data.get('essay_count', 2))
+            fill_blank_count = int(request.data.get('fill_blank_count', 3))
+            
+            # Validate question counts match total
+            if essay_count + fill_blank_count != total_questions:
+                # Auto-adjust to match total
+                if essay_count + fill_blank_count > total_questions:
+                    # Reduce proportionally
+                    ratio = total_questions / (essay_count + fill_blank_count)
+                    essay_count = int(essay_count * ratio)
+                    fill_blank_count = total_questions - essay_count
+                else:
+                    # Increase to match total
+                    fill_blank_count = total_questions - essay_count
+            
+            # Get system instruction and enhance it with question type requirements
+            system_instruction = request.data.get('system_instruction', '').strip()
+            if not system_instruction:
+                system_instruction = """You are an expert assignment creator specializing in educational content.
+Generate comprehensive assignment questions that require students to demonstrate understanding and application of lesson material."""
+            
+            # Enhance system instruction with question type requirements
+            # This makes the AI's role clearer while keeping specific counts in the prompt
+            question_type_info = []
+            if essay_count > 0:
+                question_type_info.append(f"{essay_count} essay question{'s' if essay_count != 1 else ''}")
+            if fill_blank_count > 0:
+                question_type_info.append(f"{fill_blank_count} fill-in-the-blank question{'s' if fill_blank_count != 1 else ''}")
+            
+            # Check for other question types that might be in the request
+            short_answer_count = int(request.data.get('short_answer_count', 0))
+            if short_answer_count > 0:
+                question_type_info.append(f"{short_answer_count} short answer question{'s' if short_answer_count != 1 else ''}")
+            
+            if question_type_info:
+                type_requirement = f"Create {', and '.join(question_type_info)} with clear requirements, helpful explanations, and grading rubrics where applicable."
+                # Append to system instruction if not already present
+                if type_requirement.lower() not in system_instruction.lower():
+                    system_instruction = f"{system_instruction}\n{type_requirement}"
+            
+            temperature = float(request.data.get('temperature', 0.7))
+            
+            # Initialize service and generate assignment
+            service = GeminiAssignmentService()
+            result = service.generate(
+                system_instruction=system_instruction,
+                lesson_title=lesson.title,
+                lesson_description=lesson.description or '',
+                content=combined_content,
+                temperature=temperature,
+                total_questions=total_questions,
+                essay_count=essay_count,
+                fill_blank_count=fill_blank_count
+            )
+            
+            return Response(result, status=status.HTTP_200_OK)
+            
+        except ValueError as e:
+            logger.error(f"Validation error in AI assignment generation: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in AI assignment generation: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Error during AI generation: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

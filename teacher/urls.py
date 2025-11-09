@@ -26,6 +26,8 @@ urlpatterns = [
     # AI Generation URLs
     path('courses/<uuid:course_id>/ai/generate-introduction/', views.AIGenerateCourseIntroductionView.as_view(), name='ai_generate_course_introduction'),
     path('courses/<uuid:course_id>/ai/generate-lessons/', views.AIGenerateCourseLessonsView.as_view(), name='ai_generate_course_lessons'),
+    path('lessons/<uuid:lesson_id>/ai/generate-quiz/', views.AIGenerateQuizView.as_view(), name='ai_generate_quiz'),
+    path('lessons/<uuid:lesson_id>/ai/generate-assignment/', views.AIGenerateAssignmentView.as_view(), name='ai_generate_assignment'),
     
     # Video Material URLs
     path('video-materials/', views.VideoMaterialView.as_view(), name='video_material_create'),
