@@ -88,8 +88,7 @@ class GeminiAssignmentService:
             raise ValueError("system_instruction is required")
         if not lesson_title:
             raise ValueError("lesson_title is required")
-        if not lesson_description:
-            raise ValueError("lesson_description is required")
+        # lesson_description is optional - can be empty string
         if not content or not content.strip():
             raise ValueError("content is required")
         
@@ -107,10 +106,12 @@ class GeminiAssignmentService:
                     fill_blank_count = total_questions - essay_count
             
             # Build prompt with lesson info, content, and question requirements
+            # Handle optional lesson_description gracefully
+            lesson_desc_section = f"Lesson Description: {lesson_description}\n" if lesson_description else ""
             prompt = f"""Generate a comprehensive assignment for the following lesson:
 
 Lesson Title: {lesson_title}
-Lesson Description: {lesson_description}
+{lesson_desc_section}
 
 Content:
 {content}

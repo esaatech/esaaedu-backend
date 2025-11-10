@@ -3297,12 +3297,12 @@ class MaterialContentView(APIView):
                             'video_id': video_material.video_id,
                             'is_youtube': video_material.is_youtube,
                             'has_transcript': video_material.has_transcript,
-                            'transcript': video_material.transcript,
-                            'language': video_material.language,
-                            'language_name': video_material.language_name,
-                            'method_used': video_material.method_used,
-                            'word_count': video_material.word_count,
-                            'transcribed_at': video_material.transcribed_at.isoformat() if video_material.transcribed_at else None
+                            'transcript_available_to_students': video_material.transcript_available_to_students,
+                            # Only include transcript if it's available to students
+                            'transcript': video_material.transcript if video_material.transcript_available_to_students else None,
+                            'word_count': video_material.word_count if video_material.transcript_available_to_students else None,
+                            'language': video_material.language if video_material.transcript_available_to_students else None,
+                            'language_name': video_material.language_name if video_material.transcript_available_to_students else None,
                         }
                 except Exception as e:
                     print(f"⚠️ Could not load video material details: {e}")
@@ -4339,6 +4339,35 @@ class LessonMaterial(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
+            # For document materials, handle file deletion when file_url changes
+            old_file_url = None
+            if material.material_type == 'document':
+                old_file_url = material.file_url
+                new_file_url = request.data.get('file_url')
+                
+                # If file_url is being changed or removed, delete old DocumentMaterial and file
+                if old_file_url and (new_file_url != old_file_url or new_file_url is None or new_file_url == ''):
+                    try:
+                        from .models import DocumentMaterial
+                        # Try to find DocumentMaterial linked to this LessonMaterial
+                        document_material = DocumentMaterial.objects.filter(lesson_material=material).first()
+                        
+                        # If not found by relationship, try to find by file_url
+                        if not document_material and old_file_url:
+                            document_material = DocumentMaterial.objects.filter(file_url=old_file_url).first()
+                        
+                        # If found, delete it (this will trigger file deletion from GCS)
+                        if document_material:
+                            import logging
+                            logger = logging.getLogger(__name__)
+                            logger.info(f"Deleting old DocumentMaterial {document_material.id} for file replacement")
+                            document_material.delete()
+                    except Exception as e:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"Error deleting old DocumentMaterial during update: {e}")
+                        # Continue with update even if old file deletion fails
+            
             # Validate and update material using serializer
             from .serializers import LessonMaterialUpdateSerializer
             serializer = LessonMaterialUpdateSerializer(material, data=request.data, partial=True)
@@ -4397,6 +4426,50 @@ class LessonMaterial(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
+            # For document materials, find and delete associated DocumentMaterial before deleting LessonMaterial
+            # This ensures the file is deleted from GCS
+            if material.material_type == 'document':
+                try:
+                    from .models import DocumentMaterial
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    
+                    # Try to find DocumentMaterial linked to this LessonMaterial
+                    document_material = DocumentMaterial.objects.filter(lesson_material=material).first()
+                    
+                    # If not found by relationship, try to find by file_url
+                    if not document_material and material.file_url:
+                        document_material = DocumentMaterial.objects.filter(file_url=material.file_url).first()
+                    
+                    # If still not found, try to find by file_name (extract from file_url)
+                    if not document_material and material.file_url:
+                        # Extract file path from GCS URL
+                        # URL format: https://storage.googleapis.com/bucket-name/path/to/file
+                        try:
+                            from urllib.parse import urlparse
+                            parsed_url = urlparse(material.file_url)
+                            # Get path after bucket name (e.g., /documents/uuid-filename.pdf)
+                            path_parts = parsed_url.path.split('/', 2)
+                            if len(path_parts) >= 3:
+                                file_path = path_parts[2]  # Get everything after /bucket-name/
+                                document_material = DocumentMaterial.objects.filter(file_name=file_path).first()
+                        except Exception as e:
+                            logger.warning(f"Could not parse file_url to find DocumentMaterial: {e}")
+                    
+                    # If found, delete it (this will trigger file deletion from GCS via DocumentMaterial.delete())
+                    if document_material:
+                        logger.info(f"Found DocumentMaterial {document_material.id} for LessonMaterial {material_id}, deleting...")
+                        document_material.delete()
+                        logger.info(f"Successfully deleted DocumentMaterial {document_material.id} and file from GCS")
+                    else:
+                        logger.warning(f"Could not find DocumentMaterial for LessonMaterial {material_id} with file_url: {material.file_url}")
+                except Exception as e:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Error deleting DocumentMaterial for LessonMaterial {material_id}: {e}")
+                    # Continue with LessonMaterial deletion even if DocumentMaterial deletion fails
+            
+            # Delete the LessonMaterial (this will cascade delete related DocumentMaterial if linked)
             material.delete()
             
             return Response({

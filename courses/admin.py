@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, Note, BookPage, VideoMaterial
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, Note, BookPage, VideoMaterial, DocumentMaterial
 
 
 @admin.register(Course)
@@ -797,10 +797,40 @@ class BookPageAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related('book_material')
 
 
+@admin.register(DocumentMaterial)
+class DocumentMaterialAdmin(admin.ModelAdmin):
+    """
+    Admin interface for DocumentMaterial
+    """
+    list_display = ['id', 'original_filename', 'file_extension', 'file_size_mb', 'uploaded_by', 'created_at']
+    list_filter = ['file_extension', 'mime_type', 'created_at', 'uploaded_by']
+    search_fields = ['original_filename', 'file_name', 'file_url', 'lesson_material__title']
+    readonly_fields = ['id', 'created_at', 'updated_at', 'file_size_mb', 'is_pdf']
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('id', 'lesson_material', 'original_filename', 'file_name')
+        }),
+        ('File Information', {
+            'fields': ('file_url', 'file_size', 'file_size_mb', 'file_extension', 'mime_type', 'is_pdf')
+        }),
+        ('Upload Information', {
+            'fields': ('uploaded_by',)
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at')
+        }),
+    )
+    
+    def get_queryset(self, request):
+        """Optimize queryset with select_related"""
+        qs = super().get_queryset(request)
+        return qs.select_related('lesson_material', 'uploaded_by')
+
+
 @admin.register(VideoMaterial)
 class VideoMaterialAdmin(admin.ModelAdmin):
-    list_display = ['get_lesson_material_title', 'video_url_short', 'is_youtube', 'has_transcript_display', 'word_count', 'method_used', 'created_at', 'transcribed_at']
-    list_filter = ['is_youtube', 'method_used', 'language', 'created_at', 'transcribed_at']
+    list_display = ['get_lesson_material_title', 'video_url_short', 'is_youtube', 'has_transcript_display', 'transcript_available_to_students', 'word_count', 'method_used', 'created_at', 'transcribed_at']
+    list_filter = ['is_youtube', 'method_used', 'language', 'transcript_available_to_students', 'created_at', 'transcribed_at']
     search_fields = ['video_url', 'video_id', 'lesson_material__title', 'transcript']
     readonly_fields = ['id', 'created_at', 'updated_at', 'transcribed_at', 'transcript_length', 'word_count', 'has_transcript_display']
     date_hierarchy = 'created_at'
@@ -831,8 +861,8 @@ class VideoMaterialAdmin(admin.ModelAdmin):
             'fields': ('lesson_material', 'video_url', 'video_id', 'is_youtube')
         }),
         ('Transcript Information', {
-            'fields': ('has_transcript_display', 'transcript', 'language', 'language_name', 'method_used', 'transcript_length', 'word_count', 'transcribed_at'),
-            'classes': ('collapse',)
+            'fields': ('has_transcript_display', 'transcript', 'transcript_available_to_students', 'language', 'language_name', 'method_used', 'transcript_length', 'word_count', 'transcribed_at'),
+            'description': 'Transcript settings. Check "Available to students" to make transcript visible to students.'
         }),
         ('Metadata', {
             'fields': ('id', 'created_at', 'updated_at'),

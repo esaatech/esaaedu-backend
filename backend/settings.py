@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "django_extensions",
     "channels",
+    "storages",  # Django storages for cloud storage (GCS)
     
     # Local apps
     "authentication",
@@ -156,7 +157,67 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # WhiteNoise configuration for serving static files
+# Note: For GCS, we'll use django-storages, but keep WhiteNoise as fallback
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# Google Cloud Storage Configuration
+# Only enable if GCS_BUCKET_NAME is set (for document uploads)
+GCS_BUCKET_NAME = config('GCS_BUCKET_NAME', default=None)
+GCS_PROJECT_ID = config('GCS_PROJECT_ID', default=None)
+
+if GCS_BUCKET_NAME and GCS_PROJECT_ID:
+    # Configure GCS for file uploads (documents)
+    DEFAULT_FILE_STORAGE = 'storages.backends.gcloud.GoogleCloudStorage'
+    GS_BUCKET_NAME = GCS_BUCKET_NAME
+    GS_PROJECT_ID = GCS_PROJECT_ID
+    
+    # GCS Settings
+    GS_DEFAULT_ACL = 'publicRead'  # Make uploaded files publicly readable
+    GS_FILE_OVERWRITE = False  # Don't overwrite existing files
+    GS_QUERYSTRING_AUTH = False  # Don't require authentication for file access
+    
+    # Authentication: Load service account credentials properly
+    credentials_path = config('GOOGLE_APPLICATION_CREDENTIALS', default=None)
+    
+    # If not set via env var, try default location
+    if not credentials_path:
+        default_credentials_path = BASE_DIR / '.credentials' / 'esaasolution-a507eae37ccb.json'
+        if default_credentials_path.exists():
+            credentials_path = str(default_credentials_path)
+            logger.info(f"Using default credentials path: {credentials_path}")
+    
+    # Load credentials using google-auth-library if path is provided
+    if credentials_path:
+        try:
+            from google.oauth2 import service_account
+            import os
+            if os.path.exists(credentials_path):
+                GS_CREDENTIALS = service_account.Credentials.from_service_account_file(
+                    credentials_path
+                )
+                logger.info(f"Successfully loaded GCS credentials from: {credentials_path}")
+            else:
+                logger.warning(f"Credentials file not found at: {credentials_path}")
+                GS_CREDENTIALS = None
+        except ImportError:
+            logger.warning("google-auth library not available, falling back to path string")
+            GS_CREDENTIALS = credentials_path
+        except Exception as e:
+            logger.error(f"Error loading GCS credentials: {e}")
+            GS_CREDENTIALS = None
+    else:
+        # No credentials path provided - will use Application Default Credentials
+        GS_CREDENTIALS = None
+        logger.info("No GCS credentials path provided, will use Application Default Credentials")
+    
+    # File upload settings
+    FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024  # 50MB
+    DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024  # 50MB
+else:
+    # Fallback to local storage if GCS not configured
+    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+    MEDIA_ROOT = BASE_DIR / 'media'
+    MEDIA_URL = '/media/'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field

@@ -29,6 +29,7 @@ channels-redis = "^4.3.0"
 google-cloud-aiplatform = "^1.124.0"
 daphne = "^4.2.1"
 youtube-transcript-api = "^1.2.3"
+django-storages = {extras = ["google"], version = "^1.14.2"}
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.0.0"

@@ -3,8 +3,10 @@ from django.contrib.auth import get_user_model
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils import timezone
 import uuid
+import logging
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 class CourseCategory(models.Model):
     """
@@ -460,6 +462,10 @@ class VideoMaterial(models.Model):
     transcript = models.TextField(blank=True, null=True, help_text="Full transcript text (if transcribed)")
     language = models.CharField(max_length=10, blank=True, null=True, help_text="Language code of transcript (e.g., 'en', 'es')")
     language_name = models.CharField(max_length=50, blank=True, null=True, help_text="Language name (e.g., 'English')")
+    transcript_available_to_students = models.BooleanField(
+        default=False,
+        help_text="Whether transcript is visible to students"
+    )
     
     # Transcription Metadata
     method_used = models.CharField(
@@ -513,6 +519,132 @@ class VideoMaterial(models.Model):
     def has_transcript(self):
         """Check if this video material has a transcript"""
         return bool(self.transcript and self.transcript.strip())
+
+
+class DocumentMaterial(models.Model):
+    """
+    Document-specific data for document materials.
+    Similar to VideoMaterial for videos, this extends LessonMaterial with document-specific fields.
+    Stores metadata about uploaded documents (PDF, DOCX, DOC, TXT, etc.)
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Link to LessonMaterial (optional - can exist independently for caching)
+    lesson_material = models.OneToOneField(
+        LessonMaterial,
+        on_delete=models.CASCADE,
+        related_name='document_data',
+        blank=True,
+        null=True,
+        limit_choices_to={'material_type': 'document'},
+        help_text="Link to LessonMaterial if this is part of a lesson"
+    )
+    
+    # File Information
+    file_name = models.CharField(
+        max_length=255,
+        help_text="Stored filename in GCS (e.g., 'documents/uuid-filename.pdf')"
+    )
+    original_filename = models.CharField(
+        max_length=255,
+        help_text="Original filename from user upload (e.g., 'My Lesson Notes.pdf')"
+    )
+    file_url = models.URLField(
+        help_text="Full GCS URL to the document"
+    )
+    
+    # File Metadata
+    file_size = models.PositiveIntegerField(
+        help_text="File size in bytes"
+    )
+    file_extension = models.CharField(
+        max_length=10,
+        help_text="File extension (e.g., 'pdf', 'docx', 'doc', 'txt')"
+    )
+    mime_type = models.CharField(
+        max_length=100,
+        help_text="MIME type (e.g., 'application/pdf', 'application/msword')"
+    )
+    
+    # Upload Information
+    uploaded_by = models.ForeignKey(
+        'users.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='uploaded_documents',
+        help_text="Teacher who uploaded this document"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['file_url']),
+            models.Index(fields=['file_extension']),
+            models.Index(fields=['mime_type']),
+            models.Index(fields=['uploaded_by']),
+            models.Index(fields=['lesson_material']),
+        ]
+        verbose_name = "Document Material"
+        verbose_name_plural = "Document Materials"
+    
+    def __str__(self):
+        if self.lesson_material:
+            return f"Document Material: {self.lesson_material.title}"
+        return f"Document Material: {self.original_filename}"
+    
+    @property
+    def file_size_mb(self):
+        """Convert file size to MB for display"""
+        if self.file_size:
+            return round(self.file_size / (1024 * 1024), 2)
+        return None
+    
+    @property
+    def is_pdf(self):
+        """Check if this is a PDF document"""
+        return self.file_extension.lower() == 'pdf' or self.mime_type == 'application/pdf'
+    
+    def delete(self, *args, **kwargs):
+        """
+        Override delete to also delete the file from Google Cloud Storage.
+        This ensures that when a DocumentMaterial is deleted (either directly or via CASCADE
+        when LessonMaterial is deleted), the associated file is also removed from GCS.
+        """
+        # Delete file from GCS before deleting the model
+        if self.file_name:
+            try:
+                from django.core.files.storage import default_storage
+                from django.conf import settings
+                
+                # Only delete from GCS if GCS is configured
+                if hasattr(settings, 'GS_BUCKET_NAME') and settings.GS_BUCKET_NAME:
+                    try:
+                        # Delete the file from GCS
+                        default_storage.delete(self.file_name)
+                        logger.info(f"Deleted file from GCS: {self.file_name}")
+                    except Exception as e:
+                        # Log error but don't fail the deletion
+                        logger.error(f"Failed to delete file from GCS ({self.file_name}): {e}")
+                        # Continue with model deletion even if file deletion fails
+                else:
+                    # If GCS is not configured, try local storage
+                    try:
+                        from django.core.files.storage import default_storage
+                        default_storage.delete(self.file_name)
+                        logger.info(f"Deleted file from local storage: {self.file_name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete file from storage ({self.file_name}): {e}")
+            except Exception as e:
+                # Log error but don't fail the deletion
+                logger.error(f"Error during file deletion ({self.file_name}): {e}")
+        
+        # Call parent delete to remove the model instance
+        super().delete(*args, **kwargs)
 
 
 class Project(models.Model):

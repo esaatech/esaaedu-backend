@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage, VideoMaterial
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage, VideoMaterial, DocumentMaterial
 
 User = get_user_model()
 
@@ -1588,12 +1588,36 @@ class VideoMaterialSerializer(serializers.ModelSerializer):
             'id', 'lesson_material', 'video_url', 'video_id', 'is_youtube',
             'transcript', 'language', 'language_name', 'method_used',
             'transcript_length', 'word_count', 'has_transcript',
+            'transcript_available_to_students',
             'created_at', 'updated_at', 'transcribed_at'
         ]
         read_only_fields = [
             'id', 'video_id', 'is_youtube', 'transcript_length', 'word_count',
             'has_transcript', 'created_at', 'updated_at', 'transcribed_at'
         ]
+    
+    def update(self, instance, validated_data):
+        """
+        Update video material, especially transcript and availability settings.
+        Auto-update transcript_length and word_count if transcript changes.
+        """
+        # Update transcript if provided
+        if 'transcript' in validated_data:
+            instance.transcript = validated_data['transcript']
+            # Auto-calculate length and word count
+            if instance.transcript:
+                instance.transcript_length = len(instance.transcript)
+                instance.word_count = len(instance.transcript.split())
+            else:
+                instance.transcript_length = None
+                instance.word_count = None
+        
+        # Update transcript_available_to_students if provided
+        if 'transcript_available_to_students' in validated_data:
+            instance.transcript_available_to_students = validated_data['transcript_available_to_students']
+        
+        instance.save()
+        return instance
 
 
 class VideoMaterialCreateSerializer(serializers.ModelSerializer):
@@ -1626,6 +1650,74 @@ class VideoMaterialTranscribeSerializer(serializers.Serializer):
     
     def validate_language_codes(self, value):
         """Validate language codes"""
-        if value and len(value) > 10:
-            raise serializers.ValidationError("Maximum 10 language codes allowed")
+
+
+class DocumentMaterialSerializer(serializers.ModelSerializer):
+    """
+    Serializer for document materials with file metadata
+    """
+    file_size_mb = serializers.ReadOnlyField()
+    is_pdf = serializers.ReadOnlyField()
+    uploaded_by_email = serializers.EmailField(source='uploaded_by.email', read_only=True)
+    
+    class Meta:
+        model = DocumentMaterial
+        fields = [
+            'id',
+            'lesson_material',
+            'file_name',
+            'original_filename',
+            'file_url',
+            'file_size',
+            'file_size_mb',
+            'file_extension',
+            'mime_type',
+            'uploaded_by',
+            'uploaded_by_email',
+            'is_pdf',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class DocumentMaterialCreateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for creating document materials
+    """
+    class Meta:
+        model = DocumentMaterial
+        fields = [
+            'file_name',
+            'original_filename',
+            'file_url',
+            'file_size',
+            'file_extension',
+            'mime_type',
+            'lesson_material',
+        ]
+        extra_kwargs = {
+            'lesson_material': {'required': False}
+        }
+    
+    def validate_file_url(self, value):
+        """Validate file URL"""
+        if not value:
+            raise serializers.ValidationError("File URL is required")
         return value
+    
+    def validate_file_size(self, value):
+        """Validate file size (max 50MB)"""
+        max_size = 50 * 1024 * 1024  # 50MB in bytes
+        if value > max_size:
+            raise serializers.ValidationError(f"File size exceeds maximum allowed size of 50MB")
+        return value
+    
+    def validate_file_extension(self, value):
+        """Validate file extension"""
+        allowed_extensions = ['pdf', 'docx', 'doc', 'txt']
+        if value.lower() not in allowed_extensions:
+            raise serializers.ValidationError(
+                f"File extension '{value}' not allowed. Allowed extensions: {', '.join(allowed_extensions)}"
+            )
+        return value.lower()

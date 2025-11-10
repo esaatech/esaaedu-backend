@@ -33,4 +33,7 @@ urlpatterns = [
     path('video-materials/', views.VideoMaterialView.as_view(), name='video_material_create'),
     path('video-materials/<uuid:video_material_id>/', views.VideoMaterialView.as_view(), name='video_material_detail'),
     path('video-materials/<uuid:video_material_id>/transcribe/', views.VideoMaterialTranscribeView.as_view(), name='video_material_transcribe'),
+    
+    # Document Upload URLs
+    path('documents/upload/', views.DocumentUploadView.as_view(), name='document_upload'),
 ]

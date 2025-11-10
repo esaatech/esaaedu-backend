@@ -191,3 +191,80 @@ class AIPrompt(models.Model):
             )
         
         return formatted
+
+
+class AIPromptTemplate(models.Model):
+    """
+    Template for AI prompts with default values and configuration.
+    Each template represents a type of AI generation (quiz, assignment, etc.)
+    """
+    # Basic Info (dynamic name, no hardcoded choices)
+    name = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text="Unique identifier (e.g., 'quiz_generation', 'assignment_generation', 'course_introduction')"
+    )
+    display_name = models.CharField(
+        max_length=200,
+        help_text="Human-readable name (e.g., 'Quiz Generation', 'Assignment Generation')"
+    )
+    description = models.TextField(
+        blank=True,
+        help_text="What this template is used for"
+    )
+    
+    # Default System Instruction (shown to teachers, can be overridden)
+    default_system_instruction = models.TextField(
+        help_text="Default system instruction shown to teachers. They can override this."
+    )
+    
+    # AI Configuration (from template, not overridable by teachers)
+    model_name = models.CharField(
+        max_length=100,
+        default='gemini-2.0-flash-001',
+        help_text="Gemini model to use"
+    )
+    temperature = models.FloatField(
+        default=0.7,
+        help_text="Default temperature (0.0-1.0)"
+    )
+    max_tokens = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Max tokens (null = use model's default)"
+    )
+    
+    
+    # Status
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this template is currently active"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_prompt_templates',
+        help_text="User who created this template"
+    )
+    last_modified_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='modified_prompt_templates',
+        help_text="User who last modified this template"
+    )
+    
+    class Meta:
+        verbose_name = "AI Prompt Template"
+        verbose_name_plural = "AI Prompt Templates"
+        ordering = ['display_name']
+    
+    def __str__(self):
+        return f"{self.display_name} ({'Active' if self.is_active else 'Inactive'})"

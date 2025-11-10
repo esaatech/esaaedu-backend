@@ -18,7 +18,7 @@ from .serializers import (
     AssignmentQuestionSerializer, AssignmentSubmissionSerializer, AssignmentGradingSerializer,
     AssignmentFeedbackSerializer
 )
-from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, LessonMaterial, VideoMaterial, BookPage, Lesson
+from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, LessonMaterial, VideoMaterial, BookPage, Lesson, DocumentMaterial
 from student.models import EnrolledCourse
 from datetime import datetime, timedelta
 # Import AI grading service
@@ -2480,6 +2480,56 @@ class VideoMaterialView(APIView):
                 {'error': f'Error getting video material: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def put(self, request, video_material_id):
+        """
+        PUT: Update video material (especially transcript and availability settings).
+        Allows teachers to edit transcript and toggle student visibility.
+        """
+        try:
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can update video materials'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            try:
+                video_material = VideoMaterial.objects.get(id=video_material_id)
+            except VideoMaterial.DoesNotExist:
+                return Response(
+                    {'error': 'Video material not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Check if user owns the lesson this material belongs to
+            if video_material.lesson_material:
+                lesson = video_material.lesson_material.lessons.first()
+                if lesson and lesson.course.teacher != request.user:
+                    return Response(
+                        {'error': 'You do not have permission to update this video material'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+
+            # Update using serializer (partial update)
+            serializer = VideoMaterialSerializer(video_material, data=request.data, partial=True)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+            updated_material = serializer.save()
+            
+            logger.info(f"Updated video material {video_material_id} by teacher {request.user.id}")
+
+            return Response({
+                'video_material': VideoMaterialSerializer(updated_material).data,
+                'message': 'Video material updated successfully'
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error updating video material: {e}", exc_info=True)
+            return Response(
+                {'error': f'Error updating video material: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class VideoMaterialTranscribeView(APIView):
@@ -2572,6 +2622,175 @@ class VideoMaterialTranscribeView(APIView):
             logger.error(f"Error transcribing video material: {e}\n{traceback.format_exc()}")
             return Response(
                 {'error': f'Error transcribing video: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class DocumentUploadView(APIView):
+    """
+    API view for uploading document files to Google Cloud Storage.
+    Handles file upload, validation, and creates DocumentMaterial instance.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        """
+        Upload a document file to GCS and create DocumentMaterial instance.
+        
+        Expected request:
+        - file: File object (PDF, DOCX, DOC, TXT)
+        - lesson_material_id: UUID (optional, for linking to existing LessonMaterial)
+        
+        Returns:
+        - file_url: GCS URL
+        - file_size: Size in bytes
+        - file_size_mb: Size in MB
+        - file_extension: File extension
+        - file_name: Stored filename
+        - original_filename: Original filename
+        - mime_type: MIME type
+        - document_material_id: UUID of created DocumentMaterial
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can upload documents'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Get uploaded file
+            uploaded_file = request.FILES.get('file')
+            if not uploaded_file:
+                return Response(
+                    {'error': 'No file provided'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Validate file size (max 50MB)
+            max_size = 50 * 1024 * 1024  # 50MB in bytes
+            if uploaded_file.size > max_size:
+                return Response(
+                    {'error': f'File size exceeds maximum allowed size of 50MB. File size: {round(uploaded_file.size / (1024 * 1024), 2)}MB'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Validate file extension
+            original_filename = uploaded_file.name
+            file_extension = original_filename.split('.')[-1].lower() if '.' in original_filename else ''
+            allowed_extensions = ['pdf', 'docx', 'doc', 'txt']
+            
+            if file_extension not in allowed_extensions:
+                return Response(
+                    {'error': f'File extension "{file_extension}" not allowed. Allowed extensions: {", ".join(allowed_extensions)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Determine MIME type
+            mime_type_map = {
+                'pdf': 'application/pdf',
+                'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'doc': 'application/msword',
+                'txt': 'text/plain'
+            }
+            mime_type = mime_type_map.get(file_extension, 'application/octet-stream')
+
+            # Generate unique filename for storage
+            import uuid
+            unique_filename = f"{uuid.uuid4()}-{original_filename}"
+            storage_path = f"documents/{unique_filename}"
+
+            # Upload to GCS (REQUIRED - no local fallback for documents)
+            from django.core.files.storage import default_storage
+            from django.conf import settings
+            
+            # Check if GCS is configured
+            if not hasattr(settings, 'GS_BUCKET_NAME') or not settings.GS_BUCKET_NAME:
+                return Response(
+                    {'error': 'Google Cloud Storage is not configured. Please set GCS_BUCKET_NAME and GCS_PROJECT_ID environment variables.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            try:
+                # Save file to GCS storage
+                saved_path = default_storage.save(storage_path, uploaded_file)
+                
+                # Get file URL from GCS
+                file_url = default_storage.url(saved_path)
+                # Ensure full URL format for GCS
+                if not file_url.startswith('http'):
+                    file_url = f"https://storage.googleapis.com/{settings.GS_BUCKET_NAME}/{saved_path}"
+                
+                logger.info(f"File uploaded successfully: {saved_path}")
+                
+            except Exception as e:
+                logger.error(f"Error uploading file to storage: {e}")
+                return Response(
+                    {'error': f'Failed to upload file: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            # Get optional lesson_material_id
+            lesson_material_id = request.data.get('lesson_material_id')
+            lesson_material = None
+            
+            if lesson_material_id:
+                try:
+                    lesson_material = LessonMaterial.objects.get(
+                        id=lesson_material_id,
+                        material_type='document'
+                    )
+                except LessonMaterial.DoesNotExist:
+                    return Response(
+                        {'error': f'LessonMaterial with id {lesson_material_id} not found or not a document type'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+
+            # Create DocumentMaterial instance
+            try:
+                document_material = DocumentMaterial.objects.create(
+                    file_name=saved_path,
+                    original_filename=original_filename,
+                    file_url=file_url,
+                    file_size=uploaded_file.size,
+                    file_extension=file_extension,
+                    mime_type=mime_type,
+                    uploaded_by=request.user,
+                    lesson_material=lesson_material
+                )
+                
+                logger.info(f"DocumentMaterial created: {document_material.id}")
+                
+            except Exception as e:
+                logger.error(f"Error creating DocumentMaterial: {e}")
+                # Try to delete uploaded file if DocumentMaterial creation fails
+                try:
+                    default_storage.delete(saved_path)
+                except:
+                    pass
+                return Response(
+                    {'error': f'Failed to create document material: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            # Return success response
+            return Response({
+                'file_url': file_url,
+                'file_size': uploaded_file.size,
+                'file_size_mb': round(uploaded_file.size / (1024 * 1024), 2),
+                'file_extension': file_extension,
+                'file_name': saved_path,
+                'original_filename': original_filename,
+                'mime_type': mime_type,
+                'document_material_id': str(document_material.id),
+                'message': 'File uploaded successfully'
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in document upload: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Error during file upload: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
