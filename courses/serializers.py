@@ -693,10 +693,20 @@ class QuizDetailSerializer(serializers.ModelSerializer):
     """
     Serializer for detailed quiz view with questions
     """
-    lesson_id = serializers.UUIDField(source='lesson.id', read_only=True)
-    lesson_title = serializers.CharField(source='lesson.title', read_only=True)
+    lesson_id = serializers.SerializerMethodField()
+    lesson_title = serializers.SerializerMethodField()
     question_count = serializers.IntegerField(read_only=True)
     total_points = serializers.IntegerField(read_only=True)
+    
+    def get_lesson_id(self, obj):
+        """Get the first lesson ID (for backward compatibility)"""
+        first_lesson = obj.lessons.first()
+        return first_lesson.id if first_lesson else None
+    
+    def get_lesson_title(self, obj):
+        """Get the first lesson title (for backward compatibility)"""
+        first_lesson = obj.lessons.first()
+        return first_lesson.title if first_lesson else None
     
     class Meta:
         model = Quiz

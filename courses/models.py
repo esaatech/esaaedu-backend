@@ -710,11 +710,11 @@ class Project(models.Model):
 
 class Quiz(models.Model):
     """
-    Quiz associated with a lesson
+    Quiz associated with lessons (can be used by multiple lessons)
     """
     # Basic Information
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    lesson = models.OneToOneField(Lesson, on_delete=models.CASCADE, related_name='quiz')
+    lessons = models.ManyToManyField(Lesson, related_name='quizzes', blank=True)
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     
@@ -757,19 +757,22 @@ class Quiz(models.Model):
         return self.questions.count()
     
     class Meta:
-        ordering = ['lesson__course', 'lesson__order']
+        ordering = ['title', 'created_at']
     
     def __str__(self):
-        return f"Quiz: {self.title} ({self.lesson.course.title})"
+        lesson_names = ', '.join([lesson.title for lesson in self.lessons.all()[:3]])
+        if self.lessons.count() > 3:
+            lesson_names += '...'
+        return f"Quiz: {self.title} ({lesson_names or 'No lessons'})"
 
 
 class Assignment(models.Model):
     """
-    Assignment associated with a lesson - similar to Quiz but for assignments
+    Assignment associated with lessons (can be used by multiple lessons)
     """
     # Basic Information
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    lesson = models.OneToOneField(Lesson, on_delete=models.CASCADE, related_name='assignment')
+    lessons = models.ManyToManyField(Lesson, related_name='assignments', blank=True)
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
     
@@ -828,14 +831,17 @@ class Assignment(models.Model):
         return self.questions.count()
     
     class Meta:
-        ordering = ['lesson__course', 'lesson__order']
+        ordering = ['title', 'created_at']
         indexes = [
             models.Index(fields=['assignment_type']),
             models.Index(fields=['due_date']),
         ]
     
     def __str__(self):
-        return f"Assignment: {self.title} ({self.lesson.course.title})"
+        lesson_names = ', '.join([lesson.title for lesson in self.lessons.all()[:3]])
+        if self.lessons.count() > 3:
+            lesson_names += '...'
+        return f"Assignment: {self.title} ({lesson_names or 'No lessons'})"
 
 
 class Question(models.Model):

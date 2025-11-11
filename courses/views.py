@@ -917,8 +917,11 @@ def lesson_quiz(request, lesson_id):
         try:
             # Check if quiz exists for this lesson
             try:
-                quiz = Quiz.objects.get(lesson=lesson)
-                print(f"✅ Quiz found: {quiz.title} (ID: {quiz.id})")
+                quiz = Quiz.objects.filter(lessons=lesson).first()
+                if quiz:
+                    print(f"✅ Quiz found: {quiz.title} (ID: {quiz.id})")
+                else:
+                    raise Quiz.DoesNotExist
             except Quiz.DoesNotExist:
                 print(f"ℹ️ No quiz found for lesson {lesson.title}")
                 return Response(
@@ -995,8 +998,9 @@ def lesson_quiz(request, lesson_id):
     
     elif request.method == 'POST':
         try:
-            # Check if quiz already exists
-            if hasattr(lesson, 'quiz'):
+            # Check if quiz already exists for this lesson
+            existing_quiz = Quiz.objects.filter(lessons=lesson).first()
+            if existing_quiz:
                 print(f"❌ Quiz already exists for lesson {lesson.title}")
                 return Response(
                     {'error': 'Quiz already exists for this lesson'},
@@ -1006,7 +1010,8 @@ def lesson_quiz(request, lesson_id):
             print(f"🎯 Creating new quiz for lesson {lesson.title}")
             serializer = QuizCreateUpdateSerializer(data=request.data)
             if serializer.is_valid():
-                quiz = serializer.save(lesson=lesson)
+                quiz = serializer.save()
+                quiz.lessons.add(lesson)
                 print(f"✅ Quiz created successfully: {quiz.title}")
                 
                 # Return enhanced quiz data (same format as GET)
@@ -1041,8 +1046,8 @@ def quiz_detail(request, quiz_id):
             status=status.HTTP_404_NOT_FOUND
         )
     
-    # Only the course teacher can manage this quiz
-    if quiz.lesson.course.teacher != request.user:
+    # Only the course teacher can manage this quiz (check if user teaches any lesson)
+    if not quiz.lessons.filter(course__teacher=request.user).exists():
         return Response(
             {'error': 'Only the course teacher can manage this quiz'},
             status=status.HTTP_403_FORBIDDEN
@@ -1102,8 +1107,8 @@ def quiz_questions(request, quiz_id):
             status=status.HTTP_404_NOT_FOUND
         )
     
-    # Only the course teacher can manage quiz questions
-    if quiz.lesson.course.teacher != request.user:
+    # Only the course teacher can manage quiz questions (check if user teaches any lesson)
+    if not quiz.lessons.filter(course__teacher=request.user).exists():
         return Response(
             {'error': 'Only the course teacher can manage quiz questions'},
             status=status.HTTP_403_FORBIDDEN
@@ -1170,8 +1175,8 @@ def question_detail(request, question_id):
             status=status.HTTP_404_NOT_FOUND
         )
     
-    # Only the course teacher can manage this question
-    if question.quiz.lesson.course.teacher != request.user:
+    # Only the course teacher can manage this question (check if user teaches any lesson)
+    if not question.quiz.lessons.filter(course__teacher=request.user).exists():
         return Response(
             {'error': 'Only the course teacher can manage this question'},
             status=status.HTTP_403_FORBIDDEN
@@ -1820,10 +1825,10 @@ def teacher_students_master(request):
             # Get assignment summary for this student (count only submissions that are submitted and ungraded FOR THIS SPECIFIC COURSE)
             from courses.models import AssignmentSubmission
             
-            # Filter by student AND course (through the assignment's lesson)
+            # Filter by student AND course (through the assignment's lessons)
             ungraded_submissions = AssignmentSubmission.objects.filter(
                 student=student_user,
-                assignment__lesson__course=enrollment.course,
+                assignment__lessons__course=enrollment.course,
                 status='submitted',
                 is_graded=False
             )
@@ -2046,19 +2051,22 @@ def teacher_quiz_submissions(request):
         student_id = request.GET.get('student_id')
         student_filter = {}
         if student_id:
-            student_filter['quiz__attempts__student_id'] = student_id
+            student_filter['quizzes__attempts__student_id'] = student_id
         
         # Get all lessons with quizzes for teacher's courses
         lessons_with_quizzes = Lesson.objects.filter(
             course__in=teacher_courses,
-            quiz__isnull=False,
+            quizzes__isnull=False,
             **student_filter
-        ).select_related('quiz', 'course').prefetch_related('quiz__attempts__student').distinct()
+        ).prefetch_related('quizzes', 'quizzes__attempts__student', 'course').distinct()
         
         lessons_data = []
         
         for lesson in lessons_with_quizzes:
-            quiz = lesson.quiz
+            quiz = lesson.quizzes.first() if lesson.quizzes.exists() else None
+            
+            if not quiz:
+                continue  # Skip lessons without quizzes
             
             # Get all quiz attempts for this quiz
             quiz_attempts_filter = {
@@ -2195,10 +2203,15 @@ def quiz_attempt_details(request, attempt_id):
         
         # Get the quiz attempt
         attempt = get_object_or_404(
-            QuizAttempt.objects.select_related('quiz', 'student', 'enrollment'),
-            id=attempt_id,
-            quiz__lesson__course__teacher=request.user  # Ensure teacher owns the course
+            QuizAttempt.objects.select_related('quiz', 'student', 'enrollment').prefetch_related('quiz__lessons__course'),
+            id=attempt_id
         )
+        # Check if user teaches any lesson associated with this quiz
+        if not attempt.quiz.lessons.filter(course__teacher=request.user).exists():
+            return Response(
+                {'error': 'Quiz attempt not found or you do not have permission'},
+                status=status.HTTP_403_FORBIDDEN
+            )
         
         # Get quiz questions
         questions = Question.objects.filter(quiz=attempt.quiz).order_by('order')
@@ -2280,9 +2293,9 @@ def quiz_attempt_details(request, attempt_id):
                 'question_count': questions.count()
             },
             'lesson': {
-                'id': attempt.quiz.lesson.id,
-                'title': attempt.quiz.lesson.title,
-                'course_title': attempt.quiz.lesson.course.title
+                'id': attempt.quiz.lessons.first().id if attempt.quiz.lessons.exists() else None,
+                'title': attempt.quiz.lessons.first().title if attempt.quiz.lessons.exists() else 'N/A',
+                'course_title': attempt.quiz.lessons.first().course.title if attempt.quiz.lessons.exists() else 'N/A'
             },
             'questions': questions_data,
             'grade': {
@@ -2328,10 +2341,15 @@ def save_quiz_grade(request, attempt_id):
         
         # Get the quiz attempt
         attempt = get_object_or_404(
-            QuizAttempt.objects.select_related('quiz', 'student', 'enrollment'),
-            id=attempt_id,
-            quiz__lesson__course__teacher=request.user  # Ensure teacher owns the course
+            QuizAttempt.objects.select_related('quiz', 'student', 'enrollment').prefetch_related('quiz__lessons__course'),
+            id=attempt_id
         )
+        # Check if user teaches any lesson associated with this quiz
+        if not attempt.quiz.lessons.filter(course__teacher=request.user).exists():
+            return Response(
+                {'error': 'Quiz attempt not found or you do not have permission'},
+                status=status.HTTP_403_FORBIDDEN
+            )
         
         # Get request data
         data = request.data
@@ -2818,7 +2836,7 @@ class StudentLessonDetailView(APIView):
             
             # Check if lesson has quiz
             try:
-                quiz = lesson.quiz
+                quiz = lesson.quizzes.first() if lesson.quizzes.exists() else None
                 print(f"🔍 Quiz found: {quiz.title if quiz else 'None'}")
                 if quiz:
                     print(f"🔍 Quiz questions count: {quiz.questions.count()}")
@@ -2859,7 +2877,7 @@ class StudentLessonDetailView(APIView):
             # Pre-compute quiz data (moved from serializer)
             quiz_data = None
             try:
-                quiz = lesson.quiz
+                quiz = lesson.quizzes.first() if lesson.quizzes.exists() else None
                 if quiz:
                     
                     # Get questions
@@ -2929,7 +2947,7 @@ class StudentLessonDetailView(APIView):
             assignment_data = None
             try:
                 from courses.models import Assignment, AssignmentQuestion
-                assignment = getattr(lesson, 'assignment', None)
+                assignment = lesson.assignments.first() if lesson.assignments.exists() else None
                 print(f"🔍 Assignment found: {assignment.title if assignment else 'None'}")
                 
                 if assignment:
@@ -3343,7 +3361,12 @@ def submit_quiz_attempt(request, lesson_id):
     try:
         # Get the lesson and quiz
         lesson = get_object_or_404(Lesson, id=lesson_id)
-        quiz = get_object_or_404(Quiz, lesson=lesson)
+        quiz = Quiz.objects.filter(lessons=lesson).first()
+        if not quiz:
+            return Response(
+                {'error': 'Quiz not found for this lesson'},
+                status=status.HTTP_404_NOT_FOUND
+            )
         
         # Check if student is enrolled in this course
         student_profile = request.user.student_profile
@@ -3593,7 +3616,7 @@ class TeacherDashboardAPIView(APIView):
         
         # Count submissions for teacher's courses that are submitted but not graded
         pending_count = AssignmentSubmission.objects.filter(
-            assignment__lesson__course__teacher=teacher,
+            assignment__lessons__course__teacher=teacher,
             status='submitted',
             is_graded=False
         ).count()

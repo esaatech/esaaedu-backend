@@ -347,11 +347,21 @@ class AssignmentListSerializer(serializers.ModelSerializer):
     """
     Lightweight serializer for assignment lists
     """
-    lesson_title = serializers.CharField(source='lesson.title', read_only=True)
-    course_title = serializers.CharField(source='lesson.course.title', read_only=True)
+    lesson_title = serializers.SerializerMethodField()
+    course_title = serializers.SerializerMethodField()
     question_count = serializers.SerializerMethodField()
     submission_count = serializers.SerializerMethodField()
     graded_count = serializers.SerializerMethodField()
+    
+    def get_lesson_title(self, obj):
+        """Get the first lesson title (for backward compatibility)"""
+        first_lesson = obj.lessons.first()
+        return first_lesson.title if first_lesson else None
+    
+    def get_course_title(self, obj):
+        """Get the first lesson's course title (for backward compatibility)"""
+        first_lesson = obj.lessons.first()
+        return first_lesson.course.title if first_lesson else None
     
     class Meta:
         model = Assignment
@@ -376,13 +386,23 @@ class AssignmentDetailSerializer(serializers.ModelSerializer):
     """
     Detailed serializer for assignment with questions
     """
-    lesson_title = serializers.CharField(source='lesson.title', read_only=True)
-    course_title = serializers.CharField(source='lesson.course.title', read_only=True)
+    lesson_title = serializers.SerializerMethodField()
+    course_title = serializers.SerializerMethodField()
     questions = AssignmentQuestionDetailSerializer(many=True, read_only=True)
     question_count = serializers.SerializerMethodField()
     submission_count = serializers.SerializerMethodField()
     graded_count = serializers.SerializerMethodField()
     pending_count = serializers.SerializerMethodField()
+    
+    def get_lesson_title(self, obj):
+        """Get the first lesson title (for backward compatibility)"""
+        first_lesson = obj.lessons.first()
+        return first_lesson.title if first_lesson else None
+    
+    def get_course_title(self, obj):
+        """Get the first lesson's course title (for backward compatibility)"""
+        first_lesson = obj.lessons.first()
+        return first_lesson.course.title if first_lesson else None
     
     class Meta:
         model = Assignment
@@ -411,6 +431,8 @@ class AssignmentCreateUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating and updating assignments
     """
+    lesson = serializers.UUIDField(write_only=True, required=False)
+    
     class Meta:
         model = Assignment
         fields = [
@@ -420,11 +442,54 @@ class AssignmentCreateUpdateSerializer(serializers.ModelSerializer):
     
     def validate_lesson(self, value):
         """Ensure the lesson belongs to the requesting teacher"""
-        request = self.context.get('request')
-        if request and hasattr(request, 'user'):
-            if value.course.teacher != request.user:
-                raise serializers.ValidationError("You can only create assignments for your own courses.")
+        if value:
+            request = self.context.get('request')
+            if request and hasattr(request, 'user'):
+                from courses.models import Lesson
+                try:
+                    lesson = Lesson.objects.get(id=value)
+                    if lesson.course.teacher != request.user:
+                        raise serializers.ValidationError("You can only create assignments for your own courses.")
+                except Lesson.DoesNotExist:
+                    raise serializers.ValidationError("Lesson not found.")
         return value
+    
+    def create(self, validated_data):
+        """Create assignment and add lesson to ManyToMany relationship"""
+        lesson_id = validated_data.pop('lesson', None)
+        assignment = Assignment.objects.create(**validated_data)
+        
+        if lesson_id:
+            from courses.models import Lesson
+            try:
+                lesson = Lesson.objects.get(id=lesson_id)
+                assignment.lessons.add(lesson)
+            except Lesson.DoesNotExist:
+                pass  # Lesson validation already checked this
+        
+        return assignment
+    
+    def update(self, instance, validated_data):
+        """Update assignment and handle lesson changes"""
+        lesson_id = validated_data.pop('lesson', None)
+        
+        # Update assignment fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        
+        # Update lesson relationship if provided
+        if lesson_id is not None:
+            from courses.models import Lesson
+            try:
+                lesson = Lesson.objects.get(id=lesson_id)
+                # Clear existing and add new (or add if not already there)
+                if lesson not in instance.lessons.all():
+                    instance.lessons.add(lesson)
+            except Lesson.DoesNotExist:
+                pass
+        
+        return instance
     
     def validate_due_date(self, value):
         """Validate due date is in the future"""

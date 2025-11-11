@@ -381,7 +381,13 @@ class QuizQuestionFeedbackListSerializer(serializers.ModelSerializer):
     teacher_name = serializers.CharField(source='teacher.get_full_name', read_only=True)
     student_name = serializers.CharField(source='quiz_attempt.student.get_full_name', read_only=True)
     quiz_title = serializers.CharField(source='quiz_attempt.quiz.title', read_only=True)
-    lesson_title = serializers.CharField(source='quiz_attempt.quiz.lesson.title', read_only=True)
+    lesson_title = serializers.SerializerMethodField()
+    
+    def get_lesson_title(self, obj):
+        """Get the first lesson title for the quiz"""
+        quiz = obj.quiz_attempt.quiz
+        first_lesson = quiz.lessons.first() if quiz else None
+        return first_lesson.title if first_lesson else None
     
     class Meta:
         model = QuizQuestionFeedback
@@ -441,7 +447,13 @@ class QuizAttemptFeedbackListSerializer(serializers.ModelSerializer):
     teacher_name = serializers.CharField(source='teacher.get_full_name', read_only=True)
     student_name = serializers.CharField(source='quiz_attempt.student.get_full_name', read_only=True)
     quiz_title = serializers.CharField(source='quiz_attempt.quiz.title', read_only=True)
-    lesson_title = serializers.CharField(source='quiz_attempt.quiz.lesson.title', read_only=True)
+    lesson_title = serializers.SerializerMethodField()
+    
+    def get_lesson_title(self, obj):
+        """Get the first lesson title for the quiz"""
+        quiz = obj.quiz_attempt.quiz
+        first_lesson = quiz.lessons.first() if quiz else None
+        return first_lesson.title if first_lesson else None
     
     class Meta:
         model = QuizAttemptFeedback

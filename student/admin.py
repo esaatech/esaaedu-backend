@@ -391,7 +391,7 @@ class QuizQuestionFeedbackAdmin(admin.ModelAdmin):
         'points_possible', 'created_at'
     ]
     list_filter = [
-        'is_correct', 'created_at', 'teacher', 'quiz_attempt__quiz__lesson__course'
+        'is_correct', 'created_at', 'teacher', 'quiz_attempt__quiz__lessons__course'
     ]
     search_fields = [
         'feedback_text', 'quiz_attempt__student__first_name',
@@ -433,7 +433,7 @@ class QuizAttemptFeedbackAdmin(admin.ModelAdmin):
     ]
     list_filter = [
         'overall_rating', 'created_at', 'teacher', 
-        'quiz_attempt__quiz__lesson__course'
+        'quiz_attempt__quiz__lessons__course'
     ]
     search_fields = [
         'feedback_text', 'quiz_attempt__student__first_name',

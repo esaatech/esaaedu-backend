@@ -316,8 +316,8 @@ class EnrolledCourse(models.Model):
         # Update quiz average
         quiz_attempts = QuizAttempt.objects.filter(
             student=self.student_profile.user,
-            quiz__lesson__course=self.course
-        )
+            quiz__lessons__course=self.course
+        ).distinct()
         if quiz_attempts.exists():
             self.average_quiz_score = quiz_attempts.aggregate(
                 avg_score=models.Avg('score')

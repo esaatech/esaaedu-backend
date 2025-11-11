@@ -92,7 +92,9 @@ class StudentLessonService:
         Get quiz data including questions and student attempts
         """
         try:
-            quiz = Quiz.objects.get(lesson=lesson)
+            quiz = Quiz.objects.filter(lessons=lesson).first()
+            if not quiz:
+                return None
             questions = quiz.questions.all().order_by('order')
             
             # Get student's attempts for this quiz
@@ -258,21 +260,24 @@ class StudentLessonService:
                 # Get basic quiz info (without questions for performance)
                 quiz_basic = None
                 try:
-                    quiz = Quiz.objects.get(lesson=lesson)
-                    attempts = QuizAttempt.objects.filter(
-                        student=student_profile.user,
-                        quiz=quiz
-                    )
-                    
-                    quiz_basic = {
-                        'id': str(quiz.id),
-                        'title': quiz.title,
-                        'has_quiz': True,
-                        'attempts_count': attempts.count(),
-                        'max_attempts': quiz.max_attempts,
-                        'has_passed': attempts.filter(passed=True).exists(),
-                    }
-                except Quiz.DoesNotExist:
+                    quiz = Quiz.objects.filter(lessons=lesson).first()
+                    if quiz:
+                        attempts = QuizAttempt.objects.filter(
+                            student=student_profile.user,
+                            quiz=quiz
+                        )
+                        
+                        quiz_basic = {
+                            'id': str(quiz.id),
+                            'title': quiz.title,
+                            'has_quiz': True,
+                            'attempts_count': attempts.count(),
+                            'max_attempts': quiz.max_attempts,
+                            'has_passed': attempts.filter(passed=True).exists(),
+                        }
+                    else:
+                        quiz_basic = {'has_quiz': False}
+                except Exception:
                     quiz_basic = {'has_quiz': False}
                 
                 lesson_data = {

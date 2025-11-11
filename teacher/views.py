@@ -1319,14 +1319,16 @@ class AssignmentManagementView(APIView):
             # If assignment_id is provided, return single assignment detail
             if assignment_id:
                 try:
-                    assignment = Assignment.objects.select_related(
-                        'lesson', 'lesson__course'
-                    ).prefetch_related(
-                        'questions', 'submissions', 'submissions__student'
-                    ).get(
-                        id=assignment_id,
-                        lesson__course__teacher=request.user
-                    )
+                    assignment = Assignment.objects.prefetch_related(
+                        'lessons', 'lessons__course', 'questions', 'submissions', 'submissions__student'
+                    ).get(id=assignment_id)
+                    
+                    # Check if user teaches any lesson associated with this assignment
+                    if not assignment.lessons.filter(course__teacher=request.user).exists():
+                        return Response(
+                            {'error': 'Assignment not found or you do not have permission'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
                     
                     serializer = AssignmentDetailSerializer(assignment, context={'request': request})
                     return Response({
@@ -1341,17 +1343,17 @@ class AssignmentManagementView(APIView):
             
             # Get assignments for teacher's courses
             assignments = Assignment.objects.filter(
-                lesson__course__teacher=request.user
-            ).select_related('lesson', 'lesson__course').prefetch_related('questions', 'submissions')
+                lessons__course__teacher=request.user
+            ).prefetch_related('lessons', 'lessons__course', 'questions', 'submissions')
             
             # Apply filters
             course_id = request.query_params.get('course_id')
             if course_id:
-                assignments = assignments.filter(lesson__course_id=course_id)
+                assignments = assignments.filter(lessons__course_id=course_id)
             
             lesson_id = request.query_params.get('lesson_id')
             if lesson_id:
-                assignments = assignments.filter(lesson_id=lesson_id)
+                assignments = assignments.filter(lessons__id=lesson_id)
             
             assignment_type = request.query_params.get('assignment_type')
             if assignment_type:
@@ -1436,10 +1438,13 @@ class AssignmentManagementView(APIView):
             
             # Get the assignment and check ownership
             try:
-                assignment = Assignment.objects.get(
-                    id=assignment_id, 
-                    lesson__course__teacher=request.user
-                )
+                assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
+                # Check if user teaches any lesson associated with this assignment
+                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                    return Response(
+                        {'error': 'Assignment not found or you do not have permission to update it'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             except Assignment.DoesNotExist:
                 return Response(
                     {'error': 'Assignment not found or you do not have permission to update it'},
@@ -1515,11 +1520,12 @@ class AssignmentManagementView(APIView):
                 )
             
             # Store assignment data for response
+            first_lesson = assignment.lessons.first()
             assignment_data = {
                 'id': str(assignment.id),
                 'title': assignment.title,
-                'lesson': assignment.lesson.title,
-                'course': assignment.lesson.course.title
+                'lesson': first_lesson.title if first_lesson else 'N/A',
+                'course': first_lesson.course.title if first_lesson else 'N/A'
             }
             
             # Delete the assignment
@@ -1561,10 +1567,13 @@ class AssignmentQuestionManagementView(APIView):
             
             # Get assignment and check ownership
             try:
-                assignment = Assignment.objects.get(
-                    id=assignment_id, 
-                    lesson__course__teacher=request.user
-                )
+                assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
+                # Check if user teaches any lesson associated with this assignment
+                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                    return Response(
+                        {'error': 'Assignment not found or you do not have permission to access it'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             except Assignment.DoesNotExist:
                 return Response(
                     {'error': 'Assignment not found or you do not have permission to access it'},
@@ -1602,10 +1611,13 @@ class AssignmentQuestionManagementView(APIView):
             
             # Get assignment and check ownership
             try:
-                assignment = Assignment.objects.get(
-                    id=assignment_id, 
-                    lesson__course__teacher=request.user
-                )
+                assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
+                # Check if user teaches any lesson associated with this assignment
+                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                    return Response(
+                        {'error': 'Assignment not found or you do not have permission to modify it'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             except Assignment.DoesNotExist:
                 return Response(
                     {'error': 'Assignment not found or you do not have permission to modify it'},
@@ -1649,10 +1661,13 @@ class AssignmentQuestionManagementView(APIView):
             
             # Get assignment and check ownership
             try:
-                assignment = Assignment.objects.get(
-                    id=assignment_id, 
-                    lesson__course__teacher=request.user
-                )
+                assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
+                # Check if user teaches any lesson associated with this assignment
+                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                    return Response(
+                        {'error': 'Assignment not found or you do not have permission to modify it'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             except Assignment.DoesNotExist:
                 return Response(
                     {'error': 'Assignment not found or you do not have permission to modify it'},
@@ -1709,10 +1724,13 @@ class AssignmentQuestionManagementView(APIView):
             
             # Get assignment and check ownership
             try:
-                assignment = Assignment.objects.get(
-                    id=assignment_id, 
-                    lesson__course__teacher=request.user
-                )
+                assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
+                # Check if user teaches any lesson associated with this assignment
+                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                    return Response(
+                        {'error': 'Assignment not found or you do not have permission to modify it'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             except Assignment.DoesNotExist:
                 return Response(
                     {'error': 'Assignment not found or you do not have permission to modify it'},
@@ -1781,10 +1799,13 @@ class AssignmentGradingView(APIView):
             # If submission_id is provided, return single submission detail
             if submission_id:
                 try:
-                    assignment = Assignment.objects.get(
-                        id=assignment_id, 
-                        lesson__course__teacher=request.user
-                    )
+                    assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
+                    # Check if user teaches any lesson associated with this assignment
+                    if not assignment.lessons.filter(course__teacher=request.user).exists():
+                        return Response(
+                            {'error': 'Assignment not found or you do not have permission to access it'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
                     
                     submission = AssignmentSubmission.objects.select_related(
                         'student', 'graded_by'
@@ -1924,9 +1945,15 @@ class AssignmentGradingView(APIView):
                 try:
                     # Get the student's enrollment for this course
                     from student.models import EnrolledCourse
+                    first_lesson = assignment.lessons.first()
+                    if not first_lesson:
+                        return Response(
+                            {'error': 'Assignment has no associated lesson'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
                     enrollment = EnrolledCourse.objects.get(
                         student_profile__user=submission.student,
-                        course=assignment.lesson.course
+                        course=first_lesson.course
                     )
                     
                     # Calculate assignment score percentage
@@ -2083,10 +2110,15 @@ class AssignmentAIGradingView(APIView):
             
             # Get assignment and check ownership
             try:
-                assignment = Assignment.objects.select_related('lesson', 'lesson__course').get(
-                    id=assignment_id, 
-                    lesson__course__teacher=request.user
+                assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(
+                    id=assignment_id
                 )
+                # Check if user teaches any lesson associated with this assignment
+                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                    return Response(
+                        {'error': 'Assignment not found or you do not have permission to grade it'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             except Assignment.DoesNotExist:
                 return Response(
                     {'error': 'Assignment not found or you do not have permission to grade it'},
@@ -2120,15 +2152,16 @@ class AssignmentAIGradingView(APIView):
             if not assignment_context:
                 assignment_context = {}
                 try:
-                    lesson = assignment.lesson
-                    assignment_context['lesson_title'] = lesson.title
-                    if hasattr(lesson, 'content'):
-                        assignment_context['lesson_content'] = lesson.content
-                    if hasattr(lesson, 'description'):
-                        assignment_context['lesson_description'] = lesson.description
-                    
-                    course = lesson.course
-                    assignment_context['course_title'] = course.title
+                    first_lesson = assignment.lessons.first()
+                    if first_lesson:
+                        assignment_context['lesson_title'] = first_lesson.title
+                        if hasattr(first_lesson, 'content'):
+                            assignment_context['lesson_content'] = first_lesson.content
+                        if hasattr(first_lesson, 'description'):
+                            assignment_context['lesson_description'] = first_lesson.description
+                        
+                        course = first_lesson.course
+                        assignment_context['course_title'] = course.title
                     assignment_context['assignment_title'] = assignment.title
                     assignment_context['assignment_description'] = assignment.description
                 except Exception as e:

@@ -716,10 +716,15 @@ def quiz_question_feedback(request, quiz_attempt_id, question_id):
         # Get the quiz attempt and verify teacher access
         from courses.models import QuizAttempt
         quiz_attempt = get_object_or_404(
-            QuizAttempt.objects.select_related('quiz__lesson__course'),
-            id=quiz_attempt_id,
-            quiz__lesson__course__teacher=request.user
+            QuizAttempt.objects.select_related('quiz').prefetch_related('quiz__lessons__course'),
+            id=quiz_attempt_id
         )
+        # Check if user teaches any lesson associated with this quiz
+        if not quiz_attempt.quiz.lessons.filter(course__teacher=request.user).exists():
+            return Response(
+                {'error': 'Quiz attempt not found or you do not have permission'},
+                status=status.HTTP_403_FORBIDDEN
+            )
         
         # Get the question
         from courses.models import Question
@@ -797,10 +802,15 @@ def quiz_attempt_feedback(request, quiz_attempt_id):
         # Get the quiz attempt and verify teacher access
         from courses.models import QuizAttempt
         quiz_attempt = get_object_or_404(
-            QuizAttempt.objects.select_related('quiz__lesson__course'),
-            id=quiz_attempt_id,
-            quiz__lesson__course__teacher=request.user
+            QuizAttempt.objects.select_related('quiz').prefetch_related('quiz__lessons__course'),
+            id=quiz_attempt_id
         )
+        # Check if user teaches any lesson associated with this quiz
+        if not quiz_attempt.quiz.lessons.filter(course__teacher=request.user).exists():
+            return Response(
+                {'error': 'Quiz attempt not found or you do not have permission'},
+                status=status.HTTP_403_FORBIDDEN
+            )
         
         if request.method == 'GET':
             # Retrieve existing feedback
@@ -889,11 +899,11 @@ def student_feedback_overview(request, student_id):
         # Get all feedback for this student
         question_feedbacks = QuizQuestionFeedback.objects.filter(
             quiz_attempt__enrollment__in=enrollments
-        ).select_related('quiz_attempt__quiz__lesson', 'teacher').order_by('-created_at')
+        ).select_related('quiz_attempt__quiz', 'teacher').prefetch_related('quiz_attempt__quiz__lessons').order_by('-created_at')
         
         attempt_feedbacks = QuizAttemptFeedback.objects.filter(
             quiz_attempt__enrollment__in=enrollments
-        ).select_related('quiz_attempt__quiz__lesson', 'teacher').order_by('-created_at')
+        ).select_related('quiz_attempt__quiz', 'teacher').prefetch_related('quiz_attempt__quiz__lessons').order_by('-created_at')
         
         # Use serializer for consistent data formatting
         data = {
@@ -1054,12 +1064,12 @@ class TeacherStudentRecord(APIView):
         from courses.models import QuizAttempt
         attempts = QuizAttempt.objects.filter(
             enrollment__in=enrollments
-        ).select_related('quiz', 'quiz__lesson').order_by('-completed_at')
+        ).select_related('quiz').prefetch_related('quiz__lessons').order_by('-completed_at')
         
         return [{
             'id': attempt.id,
             'quiz_title': attempt.quiz.title,
-            'lesson_title': attempt.quiz.lesson.title,
+            'lesson_title': attempt.quiz.lessons.first().title if attempt.quiz.lessons.exists() else 'N/A',
             'course_title': attempt.enrollment.course.title,
             'score': attempt.score,
             'passed': attempt.passed,
@@ -1072,8 +1082,8 @@ class TeacherStudentRecord(APIView):
         from courses.models import AssignmentSubmission
         submissions = AssignmentSubmission.objects.filter(
             enrollment__in=enrollments
-        ).exclude(status='draft').select_related('assignment', 'assignment__lesson').prefetch_related(
-            'assignment__questions'
+        ).exclude(status='draft').select_related('assignment').prefetch_related(
+            'assignment__lessons', 'assignment__questions'
         ).order_by('-submitted_at')
         
         assignment_data = []
@@ -1099,7 +1109,7 @@ class TeacherStudentRecord(APIView):
                 'id': submission.id,  # submission ID
                 'assignment_id': str(submission.assignment.id),  # assignment ID
                 'assignment_title': submission.assignment.title,
-                'lesson_title': submission.assignment.lesson.title,
+                'lesson_title': submission.assignment.lessons.first().title if submission.assignment.lessons.exists() else 'N/A',
                 'course_title': submission.enrollment.course.title,
                 'assignment_type': submission.assignment.assignment_type,
                 'due_date': submission.assignment.due_date.isoformat() if submission.assignment.due_date else None,
@@ -2096,7 +2106,7 @@ class AssessmentView(APIView):
         
         quiz_attempts = QuizAttempt.objects.filter(
             enrollment__in=enrollments
-        ).select_related('quiz', 'quiz__lesson', 'student').order_by('-started_at')
+        ).select_related('quiz', 'student').prefetch_related('quiz__lessons').order_by('-started_at')
         
         return [self._build_quiz_summary(attempt) for attempt in quiz_attempts]
     
@@ -2167,9 +2177,10 @@ class AssessmentView(APIView):
                 # Get quiz attempt with all related data
                 quiz_attempt = get_object_or_404(
                     QuizAttempt.objects.select_related(
-                        'quiz', 'quiz__lesson', 'quiz__lesson__course', 'student'
+                        'quiz', 'student'
                     ).prefetch_related(
                         'quiz__questions',
+                        'quiz__lessons',
                         'question_feedbacks__teacher',
                         'attempt_feedbacks__teacher'
                     ),
@@ -2200,12 +2211,12 @@ class AssessmentView(APIView):
                 )
                 quiz_attempts = QuizAttempt.objects.filter(
                     enrollment__in=enrollments
-                ).select_related('quiz', 'quiz__lesson').order_by('-started_at')
+                ).select_related('quiz').prefetch_related('quiz__lessons').order_by('-started_at')
             else:
                 # Teacher/Admin can see all quiz attempts they have access to
                 quiz_attempts = QuizAttempt.objects.filter(
-                    quiz__lesson__course__teacher=request.user
-                ).select_related('quiz', 'quiz__lesson', 'student').order_by('-started_at')
+                    quiz__lessons__course__teacher=request.user
+                ).select_related('quiz', 'student').prefetch_related('quiz__lessons').order_by('-started_at')
             
             # Pagination
             paginator = StudentPagination()
@@ -2276,8 +2287,8 @@ class AssessmentView(APIView):
             'quiz_info': {
                 'quiz_id': str(quiz_attempt.quiz.id),
                 'quiz_title': quiz_attempt.quiz.title,
-                'lesson_title': quiz_attempt.quiz.lesson.title,
-                'course_title': quiz_attempt.quiz.lesson.course.title,
+                'lesson_title': quiz_attempt.quiz.lessons.first().title if quiz_attempt.quiz.lessons.exists() else 'N/A',
+                'course_title': quiz_attempt.quiz.lessons.first().course.title if quiz_attempt.quiz.lessons.exists() else 'N/A',
                 'attempt_number': quiz_attempt.attempt_number,
                 'time_limit': quiz_attempt.quiz.time_limit,
                 'time_taken': time_taken,
@@ -2313,8 +2324,8 @@ class AssessmentView(APIView):
         return {
             'quiz_attempt_id': str(quiz_attempt.id),
             'quiz_title': quiz_attempt.quiz.title,
-            'lesson_title': quiz_attempt.quiz.lesson.title,
-            'course_title': quiz_attempt.quiz.lesson.course.title,
+            'lesson_title': quiz_attempt.quiz.lessons.first().title if quiz_attempt.quiz.lessons.exists() else 'N/A',
+            'course_title': quiz_attempt.quiz.lessons.first().course.title if quiz_attempt.quiz.lessons.exists() else 'N/A',
             'student_name': quiz_attempt.student.get_full_name(),
             'score_percentage': float(quiz_attempt.final_score) if quiz_attempt.final_score else 0,
             'passed': quiz_attempt.passed,
@@ -2455,8 +2466,8 @@ class DashboardAssessmentView(APIView):
                 quiz_assessments.append({
                     'quiz_attempt_id': str(attempt.id),
                     'quiz_title': attempt.quiz.title,
-                    'lesson_title': attempt.quiz.lesson.title if attempt.quiz.lesson else 'N/A',
-                    'course_title': attempt.quiz.lesson.course.title if attempt.quiz.lesson else 'N/A',
+                    'lesson_title': attempt.quiz.lessons.first().title if attempt.quiz.lessons.exists() else 'N/A',
+                    'course_title': attempt.quiz.lessons.first().course.title if attempt.quiz.lessons.exists() else 'N/A',
                     'student_name': f"{student_profile.child_first_name} {student_profile.child_last_name}",
                     'score_percentage': float(attempt.final_score) if attempt.final_score else 0.0,
                     'passed': attempt.passed,
@@ -2489,8 +2500,8 @@ class DashboardAssessmentView(APIView):
                 assignment_assessments.append({
                     'assignment_attempt_id': str(sub.id),
                     'assignment_title': sub.assignment.title,
-                    'lesson_title': sub.assignment.lesson.title if sub.assignment and sub.assignment.lesson else 'N/A',
-                    'course_title': sub.assignment.lesson.course.title if sub.assignment and sub.assignment.lesson else 'N/A',
+                    'lesson_title': sub.assignment.lessons.first().title if sub.assignment and sub.assignment.lessons.exists() else 'N/A',
+                    'course_title': sub.assignment.lessons.first().course.title if sub.assignment and sub.assignment.lessons.exists() else 'N/A',
                     'student_name': f"{student_profile.child_first_name} {student_profile.child_last_name}",
                     'score_percentage': float(sub.percentage) if sub.percentage is not None and is_graded else None,
                     'passed': bool(sub.passed) if is_graded else None,  # Only show pass/fail if graded
@@ -2677,8 +2688,8 @@ class QuizDetailView(APIView):
                 'quiz_info': {
                     'quiz_attempt_id': str(quiz_attempt.id),
                     'quiz_title': quiz_attempt.quiz.title,
-                    'lesson_title': quiz_attempt.quiz.lesson.title if quiz_attempt.quiz.lesson else 'N/A',
-                    'course_title': quiz_attempt.quiz.lesson.course.title if quiz_attempt.quiz.lesson else 'N/A',
+                    'lesson_title': quiz_attempt.quiz.lessons.first().title if quiz_attempt.quiz.lessons.exists() else 'N/A',
+                    'course_title': quiz_attempt.quiz.lessons.first().course.title if quiz_attempt.quiz.lessons.exists() else 'N/A',
                     'student_name': f"{student_profile.child_first_name} {student_profile.child_last_name}",
                     'attempt_number': quiz_attempt.attempt_number,
                     'started_at': quiz_attempt.started_at.isoformat(),
@@ -2841,10 +2852,17 @@ class AssignmentSubmissionView(APIView):
             is_draft = validated_data.get('is_draft', False)
             
             # Get student's enrollment in the course (allow both active and completed like quizzes)
+            first_lesson = assignment.lessons.first() if assignment.lessons.exists() else None
+            if not first_lesson:
+                return Response(
+                    {'error': 'Assignment has no associated lesson'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
             try:
                 enrollment = EnrolledCourse.objects.get(
                     student_profile__user=request.user,
-                    course=assignment.lesson.course,
+                    course=first_lesson.course,
                     status__in=['active', 'completed']
                 )
             except EnrolledCourse.DoesNotExist:

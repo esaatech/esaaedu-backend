@@ -110,10 +110,20 @@ class LessonMaterialAdmin(admin.ModelAdmin):
 
 @admin.register(Quiz)
 class QuizAdmin(admin.ModelAdmin):
-    list_display = ['title', 'lesson', 'passing_score', 'max_attempts', 'question_count', 'created_at']
+    list_display = ['title', 'get_lessons', 'passing_score', 'max_attempts', 'question_count', 'created_at']
     list_filter = ['passing_score', 'max_attempts', 'show_correct_answers', 'created_at']
-    search_fields = ['title', 'description', 'lesson__title']
+    search_fields = ['title', 'description', 'lessons__title']
     readonly_fields = ['id', 'question_count', 'total_points', 'created_at', 'updated_at']
+    filter_horizontal = ['lessons']
+    
+    def get_lessons(self, obj):
+        """Display lessons associated with this quiz"""
+        lessons = obj.lessons.all()[:3]
+        lesson_names = ', '.join([lesson.title for lesson in lessons])
+        if obj.lessons.count() > 3:
+            lesson_names += f' ... (+{obj.lessons.count() - 3} more)'
+        return lesson_names or 'No lessons'
+    get_lessons.short_description = 'Lessons'
 
 
 @admin.register(Question)
@@ -502,15 +512,16 @@ class ProjectSubmissionAdmin(admin.ModelAdmin):
 
 @admin.register(Assignment)
 class AssignmentAdmin(admin.ModelAdmin):
-    list_display = ['title', 'lesson', 'assignment_type', 'passing_score', 'max_attempts', 'due_date', 'question_count', 'submission_count', 'created_at']
+    list_display = ['title', 'get_lessons', 'assignment_type', 'passing_score', 'max_attempts', 'due_date', 'question_count', 'submission_count', 'created_at']
     list_filter = ['assignment_type', 'passing_score', 'max_attempts', 'show_correct_answers', 'randomize_questions', 'created_at']
-    search_fields = ['title', 'description', 'lesson__title', 'lesson__course__title', 'lesson__course__teacher__email']
+    search_fields = ['title', 'description', 'lessons__title', 'lessons__course__title', 'lessons__course__teacher__email']
     readonly_fields = ['id', 'created_at', 'updated_at', 'question_count', 'submission_count']
     date_hierarchy = 'created_at'
+    filter_horizontal = ['lessons']
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('lesson', 'title', 'description', 'assignment_type')
+            'fields': ('lessons', 'title', 'description', 'assignment_type')
         }),
         ('Assignment Settings', {
             'fields': ('due_date', 'passing_score', 'max_attempts', 'show_correct_answers', 'randomize_questions')
@@ -533,17 +544,26 @@ class AssignmentAdmin(admin.ModelAdmin):
         return obj.submissions.count()
     submission_count.short_description = 'Submissions'
     
+    def get_lessons(self, obj):
+        """Display lessons associated with this assignment"""
+        lessons = obj.lessons.all()[:3]
+        lesson_names = ', '.join([lesson.title for lesson in lessons])
+        if obj.lessons.count() > 3:
+            lesson_names += f' ... (+{obj.lessons.count() - 3} more)'
+        return lesson_names or 'No lessons'
+    get_lessons.short_description = 'Lessons'
+    
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related(
-            'lesson', 'lesson__course', 'lesson__course__teacher'
-        ).prefetch_related('questions', 'submissions')
+        return super().get_queryset(request).prefetch_related(
+            'lessons', 'lessons__course', 'lessons__course__teacher', 'questions', 'submissions'
+        )
 
 
 @admin.register(AssignmentQuestion)
 class AssignmentQuestionAdmin(admin.ModelAdmin):
     list_display = ['question_text_short', 'assignment', 'type', 'points', 'order', 'created_at']
     list_filter = ['type', 'points', 'assignment__assignment_type', 'created_at']
-    search_fields = ['question_text', 'assignment__title', 'assignment__lesson__title', 'assignment__lesson__course__title']
+    search_fields = ['question_text', 'assignment__title', 'assignment__lessons__title', 'assignment__lessons__course__title']
     readonly_fields = ['id', 'created_at', 'updated_at']
     date_hierarchy = 'created_at'
     
@@ -571,7 +591,7 @@ class AssignmentQuestionAdmin(admin.ModelAdmin):
 class AssignmentSubmissionAdmin(admin.ModelAdmin):
     list_display = ['student_name', 'assignment_title', 'attempt_number', 'status', 'points_earned', 'points_possible', 'percentage', 'passed', 'is_graded', 'is_teacher_draft', 'submitted_at']
     list_filter = ['status', 'is_graded', 'is_teacher_draft', 'passed', 'attempt_number', 'assignment__assignment_type', 'submitted_at', 'graded_at']
-    search_fields = ['student__email', 'student__first_name', 'student__last_name', 'assignment__title', 'assignment__lesson__title']
+    search_fields = ['student__email', 'student__first_name', 'student__last_name', 'assignment__title', 'assignment__lessons__title']
     readonly_fields = ['id', 'submitted_at', 'graded_at', 'percentage', 'passed']
     date_hierarchy = 'submitted_at'
     actions = ['mark_as_draft', 'mark_as_submitted', 'mark_as_graded']
