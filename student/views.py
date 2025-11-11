@@ -2482,8 +2482,10 @@ class DashboardAssessmentView(APIView):
                 student=request.user,
                 status__in=['submitted', 'graded']  # Only show submitted and graded assignments
             ).select_related(
-                'assignment__lesson__course',
+                'assignment',
                 'graded_by'
+            ).prefetch_related(
+                'assignment__lessons__course'
             )
 
             total_assignments = assignment_submissions_qs.count()
@@ -2939,10 +2941,11 @@ class AssignmentSubmissionDetailView(APIView):
         try:
             # Get the assignment submission
             submission = AssignmentSubmission.objects.select_related(
-                'assignment__lesson__course',
+                'assignment',
                 'graded_by'
             ).prefetch_related(
-                'assignment__questions'
+                'assignment__questions',
+                'assignment__lessons__course'
             ).get(
                 id=submission_id,
                 student=request.user
