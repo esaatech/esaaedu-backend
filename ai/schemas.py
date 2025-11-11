@@ -383,3 +383,40 @@ def get_quiz_generation_schema() -> Dict[str, Any]:
         "required": ["title", "description", "questions"]
     }
 
+
+def get_course_detail_schema() -> Dict[str, Any]:
+    """
+    Schema for course detail generation structured output
+    Returns basic course information: title, descriptions, category, and difficulty level
+    
+    Returns:
+        JSON Schema dict for course detail generation
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "Course title"
+            },
+            "short_description": {
+                "type": "string",
+                "description": "Short course description (brief overview, 1-2 sentences)"
+            },
+            "detailed_description": {
+                "type": "string",
+                "description": "Detailed course description (comprehensive overview, multiple paragraphs)"
+            },
+            "category": {
+                "type": "string",
+                "description": "Course category (e.g., 'Programming', 'Mathematics', 'Science', 'Arts', etc.)"
+            },
+            "difficulty_level": {
+                "type": "string",
+                "enum": ["beginner", "intermediate", "advanced"],
+                "description": "Course difficulty level: beginner, intermediate, or advanced"
+            }
+        },
+        "required": ["title", "short_description", "detailed_description", "category", "difficulty_level"]
+    }
+

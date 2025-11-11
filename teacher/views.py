@@ -2297,6 +2297,109 @@ Focus on creating value for students and highlighting what makes the course uniq
             )
 
 
+class AIGenerateCourseDetailView(APIView):
+    """
+    REST API endpoint for generating course details using AI.
+    
+    POST: Generate course details
+    - Receives system_instruction, user_request, and optional persona from frontend
+    - Returns generated course detail data (not saved to DB)
+    
+    Endpoint: POST /api/teacher/courses/{course_id}/ai/generate-course-detail/
+    
+    Request Body:
+    {
+        "system_instruction": "You are an expert course creator...",
+        "user_request": "Create a course on Python programming for beginners",
+        "persona": "fun and engaging",  // Optional
+        "temperature": 0.7  // Optional
+    }
+    
+    Response:
+    {
+        "title": "...",
+        "short_description": "...",
+        "detailed_description": "...",
+        "category": "...",
+        "difficulty_level": "beginner"
+    }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request, course_id):
+        """
+        POST: Generate course details using AI.
+        
+        Does NOT save to database - frontend handles saving.
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can use AI generation'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get course and check ownership (optional - course might not exist yet)
+            # If course doesn't exist, we'll still allow generation for new courses
+            course = None
+            if course_id:
+                try:
+                    course = Course.objects.select_related('teacher').get(
+                        id=course_id,
+                        teacher=request.user
+                    )
+                except Course.DoesNotExist:
+                    # Allow generation even if course doesn't exist (for new course creation)
+                    pass
+            
+            # Validate request data
+            system_instruction = request.data.get('system_instruction', '').strip()
+            if not system_instruction:
+                return Response(
+                    {'error': 'system_instruction is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            user_request = request.data.get('user_request', '').strip()
+            if not user_request:
+                return Response(
+                    {'error': 'user_request is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            persona = request.data.get('persona', '').strip() or None
+            temperature = float(request.data.get('temperature', 0.7))
+            
+            # Initialize service
+            from ai.gemini_course_detail_service import GeminiCourseDetailService
+            service = GeminiCourseDetailService()
+            
+            # Generate course details
+            result = service.generate(
+                system_instruction=system_instruction,
+                user_request=user_request,
+                persona=persona,
+                temperature=temperature
+            )
+            
+            return Response(result, status=status.HTTP_200_OK)
+            
+        except ValueError as e:
+            logger.error(f"Validation error in AI course detail generation: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in AI course detail generation: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Error during AI generation: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 class AIGenerateCourseLessonsView(APIView):
     """
     REST API endpoint for generating course lessons using AI.
