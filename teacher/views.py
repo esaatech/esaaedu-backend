@@ -1501,10 +1501,13 @@ class AssignmentManagementView(APIView):
             
             # Get the assignment and check ownership
             try:
-                assignment = Assignment.objects.get(
-                    id=assignment_id, 
-                    lesson__course__teacher=request.user
-                )
+                assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
+                # Check if user teaches any lesson associated with this assignment
+                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                    return Response(
+                        {'error': 'Assignment not found or you do not have permission to delete it'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             except Assignment.DoesNotExist:
                 return Response(
                     {'error': 'Assignment not found or you do not have permission to delete it'},
@@ -1832,10 +1835,13 @@ class AssignmentGradingView(APIView):
             
             # Get assignment and check ownership
             try:
-                assignment = Assignment.objects.get(
-                    id=assignment_id, 
-                    lesson__course__teacher=request.user
-                )
+                assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
+                # Check if user teaches any lesson associated with this assignment
+                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                    return Response(
+                        {'error': 'Assignment not found or you do not have permission to access it'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             except Assignment.DoesNotExist:
                 return Response(
                     {'error': 'Assignment not found or you do not have permission to access it'},
@@ -1902,10 +1908,13 @@ class AssignmentGradingView(APIView):
             
             # Get assignment and check ownership
             try:
-                assignment = Assignment.objects.get(
-                    id=assignment_id, 
-                    lesson__course__teacher=request.user
-                )
+                assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
+                # Check if user teaches any lesson associated with this assignment
+                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                    return Response(
+                        {'error': 'Assignment not found or you do not have permission to grade it'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             except Assignment.DoesNotExist:
                 return Response(
                     {'error': 'Assignment not found or you do not have permission to grade it'},
@@ -1997,10 +2006,13 @@ class AssignmentGradingView(APIView):
             
             # Get assignment and check ownership
             try:
-                assignment = Assignment.objects.get(
-                    id=assignment_id, 
-                    lesson__course__teacher=request.user
-                )
+                assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
+                # Check if user teaches any lesson associated with this assignment
+                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                    return Response(
+                        {'error': 'Assignment not found or you do not have permission to provide feedback'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             except Assignment.DoesNotExist:
                 return Response(
                     {'error': 'Assignment not found or you do not have permission to provide feedback'},
