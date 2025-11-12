@@ -313,11 +313,19 @@ def get_assignment_generation_schema() -> Dict[str, Any]:
                         },
                         "content": {
                             "type": "object",
-                            "description": "Question-specific content. For fill_blank: {\"blanks\": [\"string\"], \"correct_answers\": [\"string\"]}. For essay: {\"rubric\": \"string\"} or empty object."
+                            "description": "Question-specific content. For fill_blank: {\"blanks\": [\"string\"], \"correct_answers\": {\"blank1\": \"answer1\", \"blank2\": \"answer2\"}}. For essay: {\"instructions\": \"string\" (optional instructions for students)} - CRITICAL: DO NOT include 'rubric' field. For essay questions, ALL grading information must be in the explanation field only, never in content.rubric. For short_answer: {\"correct_answer\": \"string\", \"accept_variations\": boolean}.",
+                            "properties": {
+                                "instructions": {"type": "string"},
+                                "blanks": {"type": "array", "items": {"type": "string"}},
+                                "correct_answers": {"type": "object"},
+                                "correct_answer": {"type": "string"},
+                                "accept_variations": {"type": "boolean"}
+                            },
+                            "additionalProperties": False
                         },
                         "explanation": {
                             "type": "string",
-                            "description": "Explanation shown after answering (optional)"
+                            "description": "For essay questions: A detailed model answer/correct answer that demonstrates what a complete, high-quality response looks like. This should include specific examples, explanations, and key points that students should cover. If there's no single correct answer, provide comprehensive guidance that helps graders evaluate student responses. For other question types: Explanation shown after answering (optional)."
                         }
                     },
                     "required": ["question_text", "type", "points"]

@@ -2530,31 +2530,8 @@ class VideoMaterialView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Check if video material already exists for this URL (caching)
-            video_material = None
-            try:
-                video_material = VideoMaterial.objects.get(video_url=video_url)
-                logger.info(f"Found existing video material for URL: {video_url}")
-            except VideoMaterial.DoesNotExist:
-                pass
-
-            # If exists, return it (or update lesson_material link if provided)
-            if video_material:
-                if lesson_material_id and not video_material.lesson_material:
-                    try:
-                        lesson_material = LessonMaterial.objects.get(
-                            id=lesson_material_id,
-                            material_type='video'
-                        )
-                        video_material.lesson_material = lesson_material
-                        video_material.save()
-                    except LessonMaterial.DoesNotExist:
-                        pass
-
-                serializer = VideoMaterialSerializer(video_material)
-                return Response(serializer.data, status=status.HTTP_200_OK)
-
-            # Create new video material
+            # Always create a new video material instance
+            # Each LessonMaterial gets its own VideoMaterial with independent transcript
             create_data = {'video_url': video_url}
             if lesson_material_id:
                 create_data['lesson_material'] = lesson_material_id
@@ -2606,13 +2583,36 @@ class VideoMaterialView(APIView):
                     )
             elif request.query_params.get('video_url'):
                 video_url = request.query_params.get('video_url')
+                lesson_material_id = request.query_params.get('lesson_material_id')
+                
+                # Since video_url is no longer unique, we need lesson_material_id to identify the specific VideoMaterial
+                if not lesson_material_id:
+                    return Response(
+                        {'error': 'lesson_material_id query parameter is required when querying by video_url'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
                 try:
-                    video_material = VideoMaterial.objects.get(video_url=video_url)
+                    video_material = VideoMaterial.objects.get(
+                        video_url=video_url,
+                        lesson_material_id=lesson_material_id
+                    )
                 except VideoMaterial.DoesNotExist:
                     return Response(
-                        {'error': 'Video material not found for this URL'},
+                        {'error': 'Video material not found for this URL and lesson material'},
                         status=status.HTTP_404_NOT_FOUND
                     )
+                except VideoMaterial.MultipleObjectsReturned:
+                    # This shouldn't happen, but handle it just in case
+                    video_material = VideoMaterial.objects.filter(
+                        video_url=video_url,
+                        lesson_material_id=lesson_material_id
+                    ).first()
+                    if not video_material:
+                        return Response(
+                            {'error': 'Video material not found for this URL and lesson material'},
+                            status=status.HTTP_404_NOT_FOUND
+                        )
             else:
                 return Response(
                     {'error': 'video_material_id or video_url query parameter required'},
@@ -2658,8 +2658,28 @@ class VideoMaterialView(APIView):
                         status=status.HTTP_403_FORBIDDEN
                     )
 
+            # Convert lesson_material_id to lesson_material if provided
+            update_data = request.data.copy()
+            if 'lesson_material_id' in update_data:
+                lesson_material_id = update_data.pop('lesson_material_id')
+                try:
+                    lesson_material = LessonMaterial.objects.get(id=lesson_material_id, material_type='video')
+                    # Verify teacher owns the lesson
+                    lesson = lesson_material.lessons.first()
+                    if lesson and lesson.course.teacher != request.user:
+                        return Response(
+                            {'error': 'You do not have permission to link this video material to this lesson'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
+                    update_data['lesson_material'] = lesson_material_id
+                except LessonMaterial.DoesNotExist:
+                    return Response(
+                        {'error': 'Lesson material not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+
             # Update using serializer (partial update)
-            serializer = VideoMaterialSerializer(video_material, data=request.data, partial=True)
+            serializer = VideoMaterialSerializer(video_material, data=update_data, partial=True)
             if not serializer.is_valid():
                 return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -3018,11 +3038,16 @@ class AIGenerateQuizView(APIView):
                 )
             
             # Collect content from all materials
-            content_parts = []
+            # Support both text content and direct file uploads to Gemini
+            text_content_parts = []
+            file_parts = []
             transcription_service = VideoTranscriptionService()
             
             for material in materials:
                 material_content = None
+                document_part = None
+                
+                logger.info(f"Processing material {material.id}: type={material.material_type}, title={material.title}")
                 
                 if material.material_type == 'note':
                     # Notes: use content/description
@@ -3076,18 +3101,88 @@ class AIGenerateQuizView(APIView):
                     else:
                         material_content = material.description or ''
                 
+                elif material.material_type == 'document':
+                    # For documents: try direct file upload to Gemini
+                    try:
+                        document_material = DocumentMaterial.objects.filter(
+                            lesson_material=material
+                        ).first()
+                        
+                        # Log what we found
+                        if document_material:
+                            logger.info(f"Found DocumentMaterial for {material.id}: file_url={document_material.file_url}, mime_type={document_material.mime_type}")
+                        else:
+                            logger.warning(f"No DocumentMaterial found for document material {material.id}, checking LessonMaterial.file_url")
+                        
+                        # Try DocumentMaterial first, then fallback to LessonMaterial.file_url
+                        file_url = None
+                        mime_type = None
+                        
+                        if document_material and document_material.file_url:
+                            file_url = document_material.file_url
+                            mime_type = document_material.mime_type or 'application/pdf'
+                        elif material.file_url:
+                            # Fallback: use file_url directly from LessonMaterial
+                            file_url = material.file_url
+                            # Try to infer mime_type from file_extension
+                            if material.file_extension:
+                                mime_type_map = {
+                                    'pdf': 'application/pdf',
+                                    'doc': 'application/msword',
+                                    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                    'txt': 'text/plain',
+                                    'rtf': 'application/rtf'
+                                }
+                                mime_type = mime_type_map.get(material.file_extension.lower(), 'application/pdf')
+                            else:
+                                mime_type = 'application/pdf'
+                            logger.info(f"Using LessonMaterial.file_url as fallback: {file_url}")
+                        
+                        if file_url:
+                            # Create Part object for direct file upload (like video transcription)
+                            from vertexai.generative_models import Part
+                            try:
+                                document_part = Part.from_uri(
+                                    uri=file_url,
+                                    mime_type=mime_type
+                                )
+                                logger.info(f"Successfully created file part for document {material.id}: {file_url}")
+                            except Exception as e:
+                                logger.error(f"Failed to create file part for document {material.id}: {e}", exc_info=True)
+                                # Fallback to description if file part creation fails
+                                material_content = material.description or ''
+                                logger.warning(f"Falling back to description for material {material.id}")
+                        else:
+                            # No file URL found anywhere
+                            logger.warning(f"No file_url found for document material {material.id}, using description")
+                            material_content = material.description or ''
+                    except Exception as e:
+                        logger.error(f"Error processing document material {material.id}: {e}", exc_info=True)
+                        material_content = material.description or ''
+                
                 else:
                     # Other materials: use description
                     material_content = material.description or ''
                 
-                # Add material content to parts
-                if material_content and material_content.strip():
-                    content_parts.append(f"=== {material.title} ({material.material_type}) ===\n{material_content}")
+                # Add to appropriate list
+                if document_part:
+                    file_parts.append(document_part)
+                    logger.info(f"Added document file part for: {material.title} (total file_parts: {len(file_parts)})")
+                elif material_content and material_content.strip():
+                    text_content_parts.append(f"=== {material.title} ({material.material_type}) ===\n{material_content}")
+                    logger.info(f"Added text content for: {material.title} (total text parts: {len(text_content_parts)})")
+                else:
+                    logger.warning(f"No content added for material {material.id} ({material.material_type}): document_part={document_part is not None}, material_content={'empty' if not material_content else 'has content'}")
             
-            # Combine all content
-            combined_content = "\n\n".join(content_parts)
+            # Combine text content
+            combined_content = "\n\n".join(text_content_parts) if text_content_parts else None
             
-            if not combined_content.strip():
+            # Log summary before validation
+            logger.info(f"Content collection summary: text_parts={len(text_content_parts)}, file_parts={len(file_parts)}, combined_content_length={len(combined_content) if combined_content else 0}")
+            
+            # Validate that we have at least some content
+            if not combined_content and not file_parts:
+                logger.error(f"No content found in selected materials. Materials processed: {materials.count()}, text_parts: {len(text_content_parts)}, file_parts: {len(file_parts)}")
                 return Response(
                     {'error': 'No content found in selected materials'},
                     status=status.HTTP_400_BAD_REQUEST
@@ -3130,7 +3225,15 @@ Generate comprehensive quiz questions that test understanding of the lesson mate
                 if type_requirement.lower() not in system_instruction.lower():
                     system_instruction = f"{system_instruction}\n{type_requirement}"
             
+            # Get template attributes from request (with fallbacks)
             temperature = float(request.data.get('temperature', 0.7))
+            model_name = request.data.get('model_name', '').strip() or None
+            max_tokens = request.data.get('max_tokens')
+            if max_tokens is not None:
+                try:
+                    max_tokens = int(max_tokens)
+                except (ValueError, TypeError):
+                    max_tokens = None
             
             # Initialize service and generate quiz
             service = GeminiQuizService()
@@ -3138,8 +3241,11 @@ Generate comprehensive quiz questions that test understanding of the lesson mate
                 system_instruction=system_instruction,
                 lesson_title=lesson.title,
                 lesson_description=lesson.description or '',
-                content=combined_content,
+                content=combined_content if combined_content else None,
+                file_parts=file_parts if file_parts else None,
                 temperature=temperature,
+                max_tokens=max_tokens,
+                model_name=model_name,
                 total_questions=total_questions,
                 multiple_choice_count=multiple_choice_count,
                 true_false_count=true_false_count
@@ -3236,12 +3342,17 @@ class AIGenerateAssignmentView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Collect content from all materials (same logic as quiz)
-            content_parts = []
+            # Collect content from all materials
+            # Support both text content and direct file uploads to Gemini
+            text_content_parts = []
+            file_parts = []
             transcription_service = VideoTranscriptionService()
             
             for material in materials:
                 material_content = None
+                document_part = None
+                
+                logger.info(f"Processing material {material.id}: type={material.material_type}, title={material.title}")
                 
                 if material.material_type == 'note':
                     material_content = material.description or ''
@@ -3289,16 +3400,87 @@ class AIGenerateAssignmentView(APIView):
                     else:
                         material_content = material.description or ''
                 
+                elif material.material_type == 'document':
+                    # For documents: try direct file upload to Gemini
+                    try:
+                        document_material = DocumentMaterial.objects.filter(
+                            lesson_material=material
+                        ).first()
+                        
+                        # Log what we found
+                        if document_material:
+                            logger.info(f"Found DocumentMaterial for {material.id}: file_url={document_material.file_url}, mime_type={document_material.mime_type}")
+                        else:
+                            logger.warning(f"No DocumentMaterial found for document material {material.id}, checking LessonMaterial.file_url")
+                        
+                        # Try DocumentMaterial first, then fallback to LessonMaterial.file_url
+                        file_url = None
+                        mime_type = None
+                        
+                        if document_material and document_material.file_url:
+                            file_url = document_material.file_url
+                            mime_type = document_material.mime_type or 'application/pdf'
+                        elif material.file_url:
+                            # Fallback: use file_url directly from LessonMaterial
+                            file_url = material.file_url
+                            # Try to infer mime_type from file_extension
+                            if material.file_extension:
+                                mime_type_map = {
+                                    'pdf': 'application/pdf',
+                                    'doc': 'application/msword',
+                                    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                    'txt': 'text/plain',
+                                    'rtf': 'application/rtf'
+                                }
+                                mime_type = mime_type_map.get(material.file_extension.lower(), 'application/pdf')
+                            else:
+                                mime_type = 'application/pdf'
+                            logger.info(f"Using LessonMaterial.file_url as fallback: {file_url}")
+                        
+                        if file_url:
+                            # Create Part object for direct file upload (like video transcription)
+                            from vertexai.generative_models import Part
+                            try:
+                                document_part = Part.from_uri(
+                                    uri=file_url,
+                                    mime_type=mime_type
+                                )
+                                logger.info(f"Successfully created file part for document {material.id}: {file_url}")
+                            except Exception as e:
+                                logger.error(f"Failed to create file part for document {material.id}: {e}", exc_info=True)
+                                # Fallback to description if file part creation fails
+                                material_content = material.description or ''
+                                logger.warning(f"Falling back to description for material {material.id}")
+                        else:
+                            # No file URL found anywhere
+                            logger.warning(f"No file_url found for document material {material.id}, using description")
+                            material_content = material.description or ''
+                    except Exception as e:
+                        logger.error(f"Error processing document material {material.id}: {e}", exc_info=True)
+                        material_content = material.description or ''
+                
                 else:
                     material_content = material.description or ''
                 
-                if material_content and material_content.strip():
-                    content_parts.append(f"=== {material.title} ({material.material_type}) ===\n{material_content}")
+                # Add to appropriate list
+                if document_part:
+                    file_parts.append(document_part)
+                    logger.info(f"Added document file part for: {material.title} (total file_parts: {len(file_parts)})")
+                elif material_content and material_content.strip():
+                    text_content_parts.append(f"=== {material.title} ({material.material_type}) ===\n{material_content}")
+                    logger.info(f"Added text content for: {material.title} (total text parts: {len(text_content_parts)})")
+                else:
+                    logger.warning(f"No content added for material {material.id} ({material.material_type}): document_part={document_part is not None}, material_content={'empty' if not material_content else 'has content'}")
             
-            # Combine all content
-            combined_content = "\n\n".join(content_parts)
+            # Combine text content
+            combined_content = "\n\n".join(text_content_parts) if text_content_parts else None
             
-            if not combined_content.strip():
+            # Log summary before validation
+            logger.info(f"Content collection summary: text_parts={len(text_content_parts)}, file_parts={len(file_parts)}, combined_content_length={len(combined_content) if combined_content else 0}")
+            
+            # Validate that we have at least some content
+            if not combined_content and not file_parts:
+                logger.error(f"No content found in selected materials. Materials processed: {materials.count()}, text_parts: {len(text_content_parts)}, file_parts: {len(file_parts)}")
                 return Response(
                     {'error': 'No content found in selected materials'},
                     status=status.HTTP_400_BAD_REQUEST
@@ -3346,7 +3528,15 @@ Generate comprehensive assignment questions that require students to demonstrate
                 if type_requirement.lower() not in system_instruction.lower():
                     system_instruction = f"{system_instruction}\n{type_requirement}"
             
+            # Get template attributes from request (with fallbacks)
             temperature = float(request.data.get('temperature', 0.7))
+            model_name = request.data.get('model_name', '').strip() or None
+            max_tokens = request.data.get('max_tokens')
+            if max_tokens is not None:
+                try:
+                    max_tokens = int(max_tokens)
+                except (ValueError, TypeError):
+                    max_tokens = None
             
             # Initialize service and generate assignment
             service = GeminiAssignmentService()
@@ -3354,8 +3544,11 @@ Generate comprehensive assignment questions that require students to demonstrate
                 system_instruction=system_instruction,
                 lesson_title=lesson.title,
                 lesson_description=lesson.description or '',
-                content=combined_content,
+                content=combined_content if combined_content else None,
+                file_parts=file_parts if file_parts else None,
                 temperature=temperature,
+                max_tokens=max_tokens,
+                model_name=model_name,
                 total_questions=total_questions,
                 essay_count=essay_count,
                 fill_blank_count=fill_blank_count

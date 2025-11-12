@@ -21,7 +21,8 @@ Usage:
 import logging
 import sys
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Union
+from vertexai.generative_models import Part
 
 # Handle both module import and direct execution
 try:
@@ -54,9 +55,11 @@ class GeminiQuizService:
         system_instruction: str,
         lesson_title: str,
         lesson_description: str,
-        content: str,
+        content: Union[str, None] = None,
+        file_parts: Optional[List[Part]] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        model_name: Optional[str] = None,
         total_questions: int = 10,
         multiple_choice_count: int = 7,
         true_false_count: int = 3
@@ -68,9 +71,11 @@ class GeminiQuizService:
             system_instruction: System instruction/prompt from frontend
             lesson_title: Title of the lesson
             lesson_description: Description of the lesson
-            content: Combined text content from all selected materials (required)
+            content: Combined text content from all selected materials OR None if using file_parts
+            file_parts: Optional list of Part objects (for direct file uploads like PDFs, Word docs)
             temperature: Temperature for generation (0.0-1.0, default: 0.7)
             max_tokens: Maximum tokens in response (optional)
+            model_name: Optional model name to use (overrides default from config)
             
         Returns:
             Dictionary containing generated quiz data:
@@ -89,8 +94,11 @@ class GeminiQuizService:
         if not lesson_title:
             raise ValueError("lesson_title is required")
         # lesson_description is optional - can be empty string
-        if not content or not content.strip():
-            raise ValueError("content is required")
+        # Either content (text) or file_parts must be provided
+        if not content and not file_parts:
+            raise ValueError("Either content (text) or file_parts must be provided")
+        if isinstance(content, str) and not content.strip() and not file_parts:
+            raise ValueError("Content cannot be empty if no file_parts provided")
         
         try:
             # Validate question counts
@@ -105,18 +113,22 @@ class GeminiQuizService:
                     # Increase to match total
                     true_false_count = total_questions - multiple_choice_count
             
-            # Build prompt with lesson info, content, and question requirements
+            # Build prompt with lesson info and question requirements
             # Handle optional lesson_description gracefully
             lesson_desc_section = f"Lesson Description: {lesson_description}\n" if lesson_description else ""
+            
+            # Build content section based on whether we have text or files
+            content_section = ""
+            if isinstance(content, str) and content.strip():
+                content_section = f"Content:\n{content}\n\n"
+            elif file_parts:
+                content_section = "Content: See attached document(s).\n\n"
+            
             prompt = f"""Generate a comprehensive quiz for the following lesson:
 
 Lesson Title: {lesson_title}
 {lesson_desc_section}
-
-Content:
-{content}
-
-Generate exactly {total_questions} quiz questions that test understanding of the lesson content:
+{content_section}Generate exactly {total_questions} quiz questions that test understanding of the lesson content:
 - Exactly {multiple_choice_count} multiple choice questions
 - Exactly {true_false_count} true/false questions
 
@@ -125,13 +137,15 @@ Each question should have clear correct answers and helpful explanations. Ensure
             # Get schema for structured output
             response_schema = get_quiz_generation_schema()
             
-            # Call base service with text-only input
+            # Call base service with text and/or file parts
             response = self.gemini_service.generate(
                 system_instruction=system_instruction,
                 prompt=prompt,
                 response_schema=response_schema,
                 temperature=temperature,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                file_parts=file_parts,
+                model_name=model_name
             )
             
             # Extract parsed data

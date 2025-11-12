@@ -453,8 +453,8 @@ class VideoMaterial(models.Model):
         help_text="Link to LessonMaterial if this is part of a lesson"
     )
     
-    # Video Information (for caching transcriptions by URL)
-    video_url = models.URLField(unique=True, help_text="URL of the video (YouTube or other)")
+    # Video Information
+    video_url = models.URLField(help_text="URL of the video (YouTube or other)")
     video_id = models.CharField(max_length=100, blank=True, null=True, help_text="Video ID (e.g., YouTube video ID)")
     is_youtube = models.BooleanField(default=False, help_text="Whether this is a YouTube video")
     

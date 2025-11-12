@@ -1610,7 +1610,12 @@ class VideoMaterialSerializer(serializers.ModelSerializer):
         """
         Update video material, especially transcript and availability settings.
         Auto-update transcript_length and word_count if transcript changes.
+        Also allows updating lesson_material link.
         """
+        # Update lesson_material if provided
+        if 'lesson_material' in validated_data:
+            instance.lesson_material = validated_data['lesson_material']
+        
         # Update transcript if provided
         if 'transcript' in validated_data:
             instance.transcript = validated_data['transcript']

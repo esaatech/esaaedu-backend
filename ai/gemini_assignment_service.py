@@ -21,7 +21,8 @@ Usage:
 import logging
 import sys
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Union
+from vertexai.generative_models import Part
 
 # Handle both module import and direct execution
 try:
@@ -54,9 +55,11 @@ class GeminiAssignmentService:
         system_instruction: str,
         lesson_title: str,
         lesson_description: str,
-        content: str,
+        content: Union[str, List[Part], None] = None,
+        file_parts: Optional[List[Part]] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        model_name: Optional[str] = None,
         total_questions: int = 5,
         essay_count: int = 2,
         fill_blank_count: int = 3
@@ -68,9 +71,11 @@ class GeminiAssignmentService:
             system_instruction: System instruction/prompt from frontend
             lesson_title: Title of the lesson
             lesson_description: Description of the lesson
-            content: Combined text content from all selected materials (required)
+            content: Combined text content from all selected materials OR None if using file_parts
+            file_parts: Optional list of Part objects (for direct file uploads like PDFs, Word docs)
             temperature: Temperature for generation (0.0-1.0, default: 0.7)
             max_tokens: Maximum tokens in response (optional)
+            model_name: Optional model name to use (overrides default from config)
             
         Returns:
             Dictionary containing generated assignment data:
@@ -89,8 +94,11 @@ class GeminiAssignmentService:
         if not lesson_title:
             raise ValueError("lesson_title is required")
         # lesson_description is optional - can be empty string
-        if not content or not content.strip():
-            raise ValueError("content is required")
+        # Either content (text) or file_parts must be provided
+        if not content and not file_parts:
+            raise ValueError("Either content (text) or file_parts must be provided")
+        if isinstance(content, str) and not content.strip() and not file_parts:
+            raise ValueError("Content cannot be empty if no file_parts provided")
         
         try:
             # Validate question counts
@@ -105,33 +113,54 @@ class GeminiAssignmentService:
                     # Increase to match total
                     fill_blank_count = total_questions - essay_count
             
-            # Build prompt with lesson info, content, and question requirements
+            # Build prompt with lesson info and question requirements
             # Handle optional lesson_description gracefully
             lesson_desc_section = f"Lesson Description: {lesson_description}\n" if lesson_description else ""
+            
+            # Build content section based on whether we have text or files
+            content_section = ""
+            if isinstance(content, str) and content.strip():
+                content_section = f"Content:\n{content}\n\n"
+            elif file_parts:
+                content_section = "Content: See attached document(s).\n\n"
+            
             prompt = f"""Generate a comprehensive assignment for the following lesson:
 
 Lesson Title: {lesson_title}
 {lesson_desc_section}
-
-Content:
-{content}
-
-Generate exactly {total_questions} assignment questions that require students to demonstrate understanding and application of the lesson content:
+{content_section}Generate exactly {total_questions} assignment questions that require students to demonstrate understanding and application of the lesson content:
 - Exactly {essay_count} essay questions
 - Exactly {fill_blank_count} fill-in-the-blank questions
 
-Each question should have clear requirements and helpful explanations. Essay questions should include grading rubrics or criteria. Fill-in-the-blank questions should test key concepts from the material."""
+CRITICAL INSTRUCTIONS FOR ESSAY QUESTIONS:
+- For each essay question, provide a detailed model answer in the "explanation" field ONLY. This model answer should:
+  * Demonstrate what a complete, high-quality response looks like
+  * Include specific examples, explanations, and key points students should cover
+  * Show the expected depth and breadth of knowledge
+  * If there's no single correct answer, provide comprehensive guidance that helps graders evaluate student responses
+  * The model answer should be detailed enough that graders can use it to assess student responses
+- CRITICAL: DO NOT include a "rubric" field in content. The schema does not allow rubric field. All grading information must be in the explanation field only.
+- Optionally include instructions in content.instructions for students (e.g., "Write a 200-word essay...")
+- The content object for essay questions should only contain "instructions" if provided, nothing else.
+
+For fill-in-the-blank questions:
+- Provide clear blanks and correct answers
+- Test key concepts from the material
+
+Each question should have clear requirements and helpful explanations. Essay questions must include a detailed model answer in the explanation field that serves as both the correct answer and grading guide. Remember: NO rubric field in content for essay questions."""
             
             # Get schema for structured output
             response_schema = get_assignment_generation_schema()
             
-            # Call base service with text-only input
+            # Call base service with text and/or file parts
             response = self.gemini_service.generate(
                 system_instruction=system_instruction,
                 prompt=prompt,
                 response_schema=response_schema,
                 temperature=temperature,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                file_parts=file_parts,
+                model_name=model_name
             )
             
             # Extract parsed data
@@ -165,8 +194,12 @@ Each question should have clear requirements and helpful explanations. Essay que
                     if 'correct_answers' not in validated_q['content']:
                         validated_q['content']['correct_answers'] = {}
                 elif validated_q['type'] == 'essay':
-                    if 'rubric' not in validated_q['content']:
-                        validated_q['content']['rubric'] = ''
+                    # Essay questions only need instructions (optional)
+                    # Model answer goes in explanation field, not content
+                    # Remove rubric if AI mistakenly includes it (schema should prevent this, but defensive)
+                    if 'rubric' in validated_q['content']:
+                        logger.warning(f"Removing rubric field from essay question - should not be included")
+                        del validated_q['content']['rubric']
                     if 'instructions' not in validated_q['content']:
                         validated_q['content']['instructions'] = ''
                 elif validated_q['type'] == 'short_answer':

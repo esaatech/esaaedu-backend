@@ -43,10 +43,10 @@ Direct Testing:
 import logging
 import json
 import os
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from google.cloud import aiplatform
 from google.oauth2 import service_account
-from vertexai.generative_models import GenerativeModel
+from vertexai.generative_models import GenerativeModel, Part
 from google.api_core import exceptions as google_exceptions
 from decouple import config
 
@@ -140,12 +140,13 @@ class GeminiService:
         
         return None
     
-    def _get_model(self, system_instruction: Optional[str] = None) -> GenerativeModel:
+    def _get_model(self, system_instruction: Optional[str] = None, model_name: Optional[str] = None) -> GenerativeModel:
         """
         Get GenerativeModel instance.
         
         Args:
             system_instruction: Optional system instruction to pass to model
+            model_name: Optional model name to use (overrides self.model_name)
             
         Returns:
             Configured GenerativeModel instance
@@ -156,8 +157,11 @@ class GeminiService:
         if system_instruction:
             model_kwargs['system_instruction'] = system_instruction
         
+        # Use provided model_name or fall back to instance default
+        model_to_use = model_name if model_name else self.model_name
+        
         return GenerativeModel(
-            model_name=self.model_name,
+            model_name=model_to_use,
             **model_kwargs
         )
     
@@ -168,6 +172,8 @@ class GeminiService:
         response_schema: Optional[Dict[str, Any]] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        file_parts: Optional[List[Part]] = None,
+        model_name: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -179,6 +185,8 @@ class GeminiService:
             response_schema: Optional JSON schema for structured output
             temperature: Temperature for generation (0.0-1.0, default: 0.7)
             max_tokens: Maximum tokens in response (optional)
+            file_parts: Optional list of Part objects (for file uploads like PDFs, videos)
+            model_name: Optional model name to use (overrides default from config)
             **kwargs: Additional generation config parameters
             
         Returns:
@@ -197,8 +205,8 @@ class GeminiService:
             raise ValueError("prompt is required")
         
         try:
-            # Get model with system instruction
-            model = self._get_model(system_instruction=system_instruction)
+            # Get model with system instruction and optional model_name
+            model = self._get_model(system_instruction=system_instruction, model_name=model_name)
             
             # Build generation config
             generation_config = {
@@ -223,13 +231,19 @@ IMPORTANT: Please respond with valid JSON matching this schema:
 
 Return ONLY valid JSON, no additional text before or after."""
             
+            # Build content list: prompt + file parts (if any)
+            content_list = [final_prompt]
+            if file_parts:
+                content_list.extend(file_parts)
+                logger.debug(f"Including {len(file_parts)} file part(s) in request")
+            
             # Generate content
             logger.debug(f"Generating content with model: {self.model_name}")
             logger.debug(f"System instruction: {system_instruction[:100]}...")
             logger.debug(f"Prompt: {final_prompt[:100]}...")
             
             response = model.generate_content(
-                final_prompt,
+                content_list,
                 generation_config=generation_config
             )
             
@@ -259,10 +273,13 @@ Return ONLY valid JSON, no additional text before or after."""
                     logger.error(f"Raw response: {raw_text}")
                     raise ValueError(f"Invalid JSON response from AI: {e}")
             
+            # Use the actual model name that was used (from parameter or default)
+            actual_model_name = model_name if model_name else self.model_name
+            
             return {
                 'raw': raw_text,
                 'parsed': parsed_data,
-                'model': self.model_name
+                'model': actual_model_name
             }
             
         except google_exceptions.GoogleAPIError as e:
