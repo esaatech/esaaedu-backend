@@ -2837,7 +2837,6 @@ class StudentLessonDetailView(APIView):
             # Check if lesson has quiz
             try:
                 quiz = lesson.quizzes.first() if lesson.quizzes.exists() else None
-                print(f"🔍 Quiz found: {quiz.title if quiz else 'None'}")
                 if quiz:
                     print(f"🔍 Quiz questions count: {quiz.questions.count()}")
                     print(f"🔍 Quiz details: time_limit={quiz.time_limit}, passing_score={quiz.passing_score}")
@@ -2857,7 +2856,7 @@ class StudentLessonDetailView(APIView):
             # Check if lesson has materials
             try:
                 from courses.models import LessonMaterial
-                materials = LessonMaterialModel.objects.filter(lesson=lesson)
+                materials = lesson.lesson_materials.all()
                 print(f"🔍 Materials found: {materials.count()}")
                 for material in materials:
                     print(f"🔍 Material: {material.title} - {material.material_type}")
@@ -2935,25 +2934,18 @@ class StudentLessonDetailView(APIView):
                         'last_attempt': attempts[0].score if attempts else None,
                         'last_attempt_passed': attempts[0].passed if attempts else None,
                     }
-                    print(f"🔍 Quiz data prepared: {quiz_data}")
-                else:
-                    print(f"🔍 No quiz found for lesson")
             except Exception as e:
-                print(f"❌ Error preparing quiz data: {e}")
-                import traceback
-                print(f"❌ Traceback: {traceback.format_exc()}")
+                pass
             
             # Pre-compute assignment data (similar to quiz data)
             assignment_data = None
             try:
                 from courses.models import Assignment, AssignmentQuestion
                 assignment = lesson.assignments.first() if lesson.assignments.exists() else None
-                print(f"🔍 Assignment found: {assignment.title if assignment else 'None'}")
                 
                 if assignment:
                     # Get assignment questions
                     questions = assignment.questions.all().order_by('order')
-                    print(f"🔍 Assignment questions count: {questions.count()}")
                     
                     # Get student submissions if available
                     submissions = []
@@ -2964,7 +2956,6 @@ class StudentLessonDetailView(APIView):
                             assignment=assignment,
                             enrollment__student_profile__user=request.user
                         ).order_by('-submitted_at')
-                        print(f"🔍 Student submissions found: {submissions.count()}")
                         
                         # Include the latest submission data
                         if submissions:
@@ -2981,7 +2972,6 @@ class StudentLessonDetailView(APIView):
                                 'percentage': latest_submission.percentage,
                                 'passed': latest_submission.passed,
                             }
-                            print(f"🔍 Latest submission data: {submission_data}")
                     
                     # Build assignment data
                     assignment_data = {
@@ -3014,13 +3004,8 @@ class StudentLessonDetailView(APIView):
                         'last_submission_passed': submissions[0].passed if submissions else None,
                         'submission': submission_data,  # Include the submission data
                     }
-                    print(f"🔍 Assignment data prepared: {assignment_data}")
-                else:
-                    print(f"🔍 No assignment found for lesson")
             except Exception as e:
-                print(f"❌ Error preparing assignment data: {e}")
-                import traceback
-                print(f"❌ Traceback: {traceback.format_exc()}")
+                pass
             
             # Pre-compute class event data (moved from serializer)
             class_event_data = None
@@ -3028,12 +3013,9 @@ class StudentLessonDetailView(APIView):
                 try:
                     from courses.models import ClassEvent
                     class_events = ClassEvent.objects.filter(lesson=lesson)
-                    print(f"🔍 Class events found: {class_events.count()}")
                     
                     if class_events.exists():
                         class_event = class_events.first()
-                        print(f"🔍 Class event found: {class_event.title}")
-                        
                         now = timezone.now()
                         
                         # Calculate event status
@@ -3055,26 +3037,26 @@ class StudentLessonDetailView(APIView):
                             'status': event_status,
                             'can_join_early': class_event.start_time - timedelta(minutes=5) <= now,
                         }
-                        print(f"🔍 Class event data prepared: {class_event_data}")
                 except Exception as e:
-                    print(f"❌ Error preparing class event data: {e}")
-                    import traceback
-                    print(f"❌ Traceback: {traceback.format_exc()}")
+                    pass
             
             # Pre-compute materials data (moved from serializer)
             materials_data = []
             is_material_available = False
             try:
-                from courses.models import LessonMaterial
+                from courses.models import LessonMaterial, VideoMaterial
                 # Use the many-to-many relationship properly
                 materials = lesson.lesson_materials.all()
-                print(f"🔍 Materials found: {materials.count()}")
                 
-                # Only include materials for live classes
-                if lesson.type == 'live_class' and materials.exists():
-                    is_material_available = True
-                    materials_data = [
-                        {
+                # Include materials for all lesson types if they exist
+                if materials.exists():
+                    # For live classes, set is_material_available flag
+                    if lesson.type == 'live_class':
+                        is_material_available = True
+                    
+                    materials_data = []
+                    for m in materials:
+                        material_data = {
                             'id': str(m.id),
                             'title': m.title,
                             'description': m.description,
@@ -3087,31 +3069,45 @@ class StudentLessonDetailView(APIView):
                             'created_at': m.created_at,
                             # Book-specific fields
                             'total_pages': m.book_pages.count() if m.material_type == 'book' else None,
-                        } for m in materials
-                    ]
-                    
-                    for material in materials:
-                        print(f"🔍 Material: {material.title} - {material.material_type}")
-                else:
-                    print(f"🔍 No materials for non-live class or no materials found")
+                        }
+                        
+                        # For video materials, check if transcript is available to students
+                        # If transcript_available_to_students is False, skip adding this material to the list
+                        if m.material_type == 'video':
+                            try:
+                                video_material = VideoMaterial.objects.filter(lesson_material=m).first()
+                                if video_material:
+                                    # Skip this material if transcript is not available to students
+                                    if not video_material.transcript_available_to_students:
+                                        continue  # Skip adding this material to the list
+                                    
+                                    # Only include transcript if available to students
+                                    if video_material.transcript:
+                                        material_data['transcript'] = video_material.transcript
+                                        material_data['transcript_available_to_students'] = True
+                                        material_data['word_count'] = video_material.word_count
+                                # If no video_material found, still include the material (it might be a regular video without transcript)
+                            except Exception:
+                                # If there's an error checking video material, skip it to be safe
+                                continue
+                        
+                        materials_data.append(material_data)
             except Exception as e:
-                print(f"❌ Error preparing materials data: {e}")
+                pass
             
             # Get teacher info
             teacher_name = None
             try:
                 teacher_name = lesson.course.teacher.get_full_name() if lesson.course.teacher else 'Unknown'
-                print(f"🔍 Teacher name: {teacher_name}")
-            except Exception as e:
-                print(f"❌ Error getting teacher name: {e}")
+            except Exception:
+                pass
             
             # Get prerequisites
             prerequisites_data = []
             try:
-                prerequisites = list(lesson.prerequisites.values_list('id', flat=True))
-                print(f"🔍 Prerequisites found: {prerequisites_data}")
-            except Exception as e:
-                print(f"❌ Error getting prerequisites: {e}")
+                prerequisites_data = list(lesson.prerequisites.values_list('id', flat=True))
+            except Exception:
+                pass
             
             # Pass all pre-computed data to serializer context
             context = {
@@ -3128,14 +3124,51 @@ class StudentLessonDetailView(APIView):
             serializer = LessonDetailSerializer(lesson, context=context)
             serialized_data = serializer.data
             
-            
+            # Filter transcript from content if transcript_available_to_students is False
+            # Only include transcript if we can confirm it's available to students
+            if lesson.type == 'video_audio' and serialized_data.get('content'):
+                content = serialized_data.get('content', {})
+                if 'transcript' in content:
+                    # Check if transcript should be available
+                    # Find VideoMaterial linked to this lesson's materials
+                    transcript_available = False
+                    try:
+                        from courses.models import VideoMaterial
+                        # First, try to find VideoMaterial through lesson materials
+                        lesson_materials = lesson.lesson_materials.filter(material_type='video')
+                        
+                        for lm in lesson_materials:
+                            vm = VideoMaterial.objects.filter(lesson_material=lm).first()
+                            if vm and vm.video_url == lesson.video_url:
+                                # Only allow transcript if explicitly available to students
+                                if vm.transcript_available_to_students:
+                                    transcript_available = True
+                                break
+                        
+                        # If not found through materials, try direct video_url match
+                        if not transcript_available:
+                            video_materials = VideoMaterial.objects.filter(video_url=lesson.video_url)
+                            # Check all VideoMaterials - only allow if at least one has it available
+                            for vm in video_materials:
+                                if vm.transcript_available_to_students:
+                                    transcript_available = True
+                                    break
+                        
+                        # Remove transcript if not available to students
+                        if not transcript_available:
+                            content_copy = content.copy()
+                            content_copy.pop('transcript', None)
+                            serialized_data['content'] = content_copy
+                    except Exception:
+                        # If there's any error, remove transcript to be safe
+                        if 'transcript' in content:
+                            content_copy = content.copy()
+                            content_copy.pop('transcript', None)
+                            serialized_data['content'] = content_copy
             
             return Response(serialized_data)
             
         except Exception as e:
-            print(f"❌ ERROR in StudentLessonDetailView.get: {str(e)}")
-            import traceback
-            print(f"❌ Traceback: {traceback.format_exc()}")
             return Response(
                 {'error': f'Failed to get lesson details: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -3309,6 +3342,17 @@ class MaterialContentView(APIView):
                         ).first()
                     
                     if video_material:
+                        # Check if material title suggests it's a transcript material
+                        # If so, always include transcript even if not available to students
+                        is_transcript_material = (
+                            material.title and 'transcrib' in material.title.lower()
+                        ) or (
+                            material.description and 'transcrib' in material.description.lower()
+                        )
+                        
+                        # Include transcript if available to students OR if it's a transcript material
+                        include_transcript = video_material.transcript_available_to_students or is_transcript_material
+                        
                         response_data['video_material'] = {
                             'id': str(video_material.id),
                             'video_url': video_material.video_url,
@@ -3316,11 +3360,11 @@ class MaterialContentView(APIView):
                             'is_youtube': video_material.is_youtube,
                             'has_transcript': video_material.has_transcript,
                             'transcript_available_to_students': video_material.transcript_available_to_students,
-                            # Only include transcript if it's available to students
-                            'transcript': video_material.transcript if video_material.transcript_available_to_students else None,
-                            'word_count': video_material.word_count if video_material.transcript_available_to_students else None,
-                            'language': video_material.language if video_material.transcript_available_to_students else None,
-                            'language_name': video_material.language_name if video_material.transcript_available_to_students else None,
+                            # Include transcript if available to students OR if material is a transcript material
+                            'transcript': video_material.transcript if include_transcript and video_material.transcript else None,
+                            'word_count': video_material.word_count if include_transcript else None,
+                            'language': video_material.language if include_transcript else None,
+                            'language_name': video_material.language_name if include_transcript else None,
                         }
                 except Exception as e:
                     print(f"⚠️ Could not load video material details: {e}")
@@ -4189,6 +4233,17 @@ class LessonMaterial(APIView):
                 # Return only metadata for fast loading
                 materials_data = []
                 for material in materials:
+                    # For students, filter out video materials where transcript_available_to_students is False
+                    if request.user.role == 'student' and material.material_type == 'video':
+                        try:
+                            from courses.models import VideoMaterial
+                            video_material = VideoMaterial.objects.filter(lesson_material=material).first()
+                            if video_material and not video_material.transcript_available_to_students:
+                                continue  # Skip this material for students
+                        except Exception:
+                            # If there's an error, skip to be safe
+                            continue
+                    
                     material_data = {
                         'id': str(material.id),
                         'title': material.title,
@@ -4217,27 +4272,41 @@ class LessonMaterial(APIView):
                     materials_data.append(material_data)
             else:
                 # Return full material data (existing behavior)
-                materials_data = [{
-                    'id': str(material.id),
-                    'title': material.title,
-                    'description': material.description,
-                    'material_type': material.material_type,
-                    'file_url': material.file_url,
-                    'file_size': material.file_size,
-                    'file_size_mb': material.file_size_mb,
-                    'file_extension': material.file_extension,
-                    'is_required': material.is_required,
-                    'is_downloadable': material.is_downloadable,
-                    'order': material.order,
-                    'created_at': material.created_at.isoformat(),
-                    'updated_at': material.updated_at.isoformat()
-                } for material in materials]
+                materials_data = []
+                for material in materials:
+                    # For students, filter out video materials where transcript_available_to_students is False
+                    if request.user.role == 'student' and material.material_type == 'video':
+                        try:
+                            from courses.models import VideoMaterial
+                            video_material = VideoMaterial.objects.filter(lesson_material=material).first()
+                            if video_material and not video_material.transcript_available_to_students:
+                                continue  # Skip this material for students
+                        except Exception:
+                            # If there's an error, skip to be safe
+                            continue
+                    
+                    material_data = {
+                        'id': str(material.id),
+                        'title': material.title,
+                        'description': material.description,
+                        'material_type': material.material_type,
+                        'file_url': material.file_url,
+                        'file_size': material.file_size,
+                        'file_size_mb': material.file_size_mb,
+                        'file_extension': material.file_extension,
+                        'is_required': material.is_required,
+                        'is_downloadable': material.is_downloadable,
+                        'order': material.order,
+                        'created_at': material.created_at.isoformat(),
+                        'updated_at': material.updated_at.isoformat()
+                    }
+                    materials_data.append(material_data)
             
             return Response({
                 'lesson_id': str(lesson.id),
                 'lesson_title': lesson.title,
                 'materials': materials_data,
-                'total_count': materials.count(),
+                'total_count': len(materials_data),  # Use filtered count instead of original count
                 'lightweight': lightweight
             }, status=status.HTTP_200_OK)
             
