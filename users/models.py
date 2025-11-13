@@ -10,6 +10,7 @@ class User(AbstractUser):
     class Role(models.TextChoices):
         STUDENT = 'student', 'Student'
         TEACHER = 'teacher', 'Teacher'
+        PARENT = 'parent', 'Parent'
         ADMIN = 'admin', 'Admin'
     
     # Firebase UID is the primary identifier
@@ -43,6 +44,10 @@ class User(AbstractUser):
     @property
     def is_student(self):
         return self.role == self.Role.STUDENT
+    
+    @property
+    def is_parent(self):
+        return self.role == self.Role.PARENT
 
 
 class TeacherProfile(models.Model):
@@ -130,3 +135,43 @@ class StudentProfile(models.Model):
                 (today.month, today.day) < (self.date_of_birth.month, self.date_of_birth.day)
             )
         return None
+
+
+class ParentProfile(models.Model):
+    """
+    Extended profile information for parents
+    """
+    user = models.OneToOneField(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='parent_profile'
+    )
+    
+    phone_number = models.CharField(max_length=20, blank=True)
+    profile_image = models.URLField(blank=True, help_text="URL to profile image")
+    
+    # Parent preferences
+    preferred_communication_method = models.CharField(
+        max_length=50, 
+        blank=True, 
+        choices=[
+            ('email', 'Email'),
+            ('phone', 'Phone'),
+            ('sms', 'SMS'),
+        ],
+        default='email'
+    )
+    
+    # Notification preferences
+    notifications_enabled = models.BooleanField(default=True)
+    email_notifications = models.BooleanField(default=True)
+    sms_notifications = models.BooleanField(default=False)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'parent_profiles'
+        
+    def __str__(self):
+        return f"Parent Profile: {self.user.get_full_name() or self.user.email}"

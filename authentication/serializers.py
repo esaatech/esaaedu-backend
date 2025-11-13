@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from users.models import TeacherProfile, StudentProfile
+from users.models import TeacherProfile, StudentProfile, ParentProfile
 
 User = get_user_model()
 
@@ -67,12 +67,30 @@ class AuthTokenSerializer(serializers.Serializer):
     )
 
 
+class ParentProfileSerializer(serializers.ModelSerializer):
+    """
+    Serializer for ParentProfile model
+    """
+    user = UserSerializer(read_only=True)
+    
+    class Meta:
+        model = ParentProfile
+        fields = [
+            'user', 'phone_number', 'profile_image',
+            'preferred_communication_method', 'notifications_enabled',
+            'email_notifications', 'sms_notifications',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+
 class UserProfileSerializer(serializers.ModelSerializer):
     """
     Combined user profile serializer that includes role-specific profile data
     """
     teacher_profile = TeacherProfileSerializer(read_only=True)
     student_profile = StudentProfileSerializer(read_only=True)
+    parent_profile = ParentProfileSerializer(read_only=True)
     full_name = serializers.SerializerMethodField()
     
     class Meta:
@@ -80,7 +98,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'firebase_uid', 'email', 'first_name', 'last_name',
             'full_name', 'role', 'is_active', 'created_at', 'last_login_at',
-            'teacher_profile', 'student_profile'
+            'teacher_profile', 'student_profile', 'parent_profile'
         ]
         read_only_fields = ['id', 'firebase_uid', 'created_at', 'last_login_at']
     

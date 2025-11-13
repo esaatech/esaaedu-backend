@@ -8,7 +8,7 @@ from firebase_admin import auth
 from .authentication import FirebaseAuthentication
 from .serializers import (
     AuthTokenSerializer, UserProfileSerializer, RoleUpdateSerializer,
-    TeacherProfileSerializer, StudentProfileSerializer
+    TeacherProfileSerializer, StudentProfileSerializer, ParentProfileSerializer
 )
 from users.models import TeacherProfile, StudentProfile
 import logging
@@ -707,6 +707,242 @@ def teacher_login(request):
         )
     except Exception as e:
         logger.error(f"Teacher login error: {e}")
+        return Response(
+            {'error': 'Login failed', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def parent_signup(request):
+    """
+    Parent signup endpoint - creates a new parent user and profile
+    """
+    print(f"👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧 PARENT SIGNUP ENDPOINT CALLED 👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧")
+    print(f"👨‍👩‍👧 Request method: {request.method}")
+    print(f"👨‍👩‍👧 Request path: {request.path}")
+    try:
+        # Get Firebase token and profile data
+        token = request.data.get('token')
+        if not token:
+            return Response(
+                {'error': 'Firebase token is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Verify Firebase token
+        try:
+            decoded_token = auth.verify_id_token(token)
+            firebase_uid = decoded_token['uid']
+            email = decoded_token.get('email', '')
+            
+            print(f"👨‍👩‍👧 Parent signup - Firebase UID: {firebase_uid}, Email: {email}")
+            
+        except Exception as e:
+            logger.error(f"Invalid token verification: {str(e)}")
+            return Response(
+                {'error': 'Invalid Firebase token'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        # Check if user already exists
+        existing_user = User.objects.filter(firebase_uid=firebase_uid).first()
+        if existing_user:
+            print(f"👨‍👩‍👧 User already exists with role: {existing_user.role}")
+            
+            # If user exists and is already a parent, return error
+            if existing_user.role == User.Role.PARENT:
+                print(f"👨‍👩‍👧 User is already a parent - returning error")
+                return Response(
+                    {'error': 'Parent account already exists'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # If user exists but is a student (from auth backend auto-creation), 
+            # update them to be a parent
+            if existing_user.role == User.Role.STUDENT:
+                print(f"👨‍👩‍👧 Converting existing student user to parent")
+                
+                # Delete any existing student profile since they're becoming a parent
+                try:
+                    if hasattr(existing_user, 'student_profile'):
+                        existing_user.student_profile.delete()
+                        print(f"👨‍👩‍👧 Deleted existing student profile")
+                except Exception as e:
+                    print(f"👨‍👩‍👧 No student profile to delete: {e}")
+                
+                existing_user.role = User.Role.PARENT
+                
+                # Update user info if provided
+                user_data = request.data.get('user_data', {})
+                if user_data.get('first_name'):
+                    existing_user.first_name = user_data['first_name']
+                if user_data.get('last_name'):
+                    existing_user.last_name = user_data['last_name']
+                
+                existing_user.save()
+                user = existing_user
+                print(f"👨‍👩‍👧 Updated existing user to parent: {user.role}")
+            else:
+                return Response(
+                    {'error': 'User exists with different role'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            print(f"👨‍👩‍👧 Creating new parent user")
+            # Extract user data and parent profile data
+            user_data = request.data.get('user_data', {})
+            
+            # Extract user information
+            first_name = user_data.get('first_name', '')
+            last_name = user_data.get('last_name', '')
+            
+            # Create User with PARENT role
+            print(f"👨‍👩‍👧 About to create user with role: {User.Role.PARENT}")
+            user = User.objects.create_user(
+                firebase_uid=firebase_uid,
+                email=email,
+                first_name=first_name,
+                last_name=last_name,
+                username=email,
+                role=User.Role.PARENT
+            )
+
+        # Get parent profile data for later use
+        parent_data = request.data.get('parent_data', {})
+        print(f"👨‍👩‍👧 Received parent_data: {parent_data}")
+        
+        # Immediately verify the user was created with correct role
+        print(f"👨‍👩‍👧 Created parent user: {user.id}")
+        print(f"👨‍👩‍👧 User role after creation: {user.role}")
+        print(f"👨‍👩‍👧 User is_parent: {user.is_parent}")
+        print(f"👨‍👩‍👧 User is_student: {user.is_student}")
+        
+        # Re-fetch user from database to double-check
+        user_from_db = User.objects.get(id=user.id)
+        print(f"👨‍👩‍👧 User role from DB: {user_from_db.role}")
+        
+        # Create or get parent profile
+        from users.models import ParentProfile
+        print(f"👨‍👩‍👧 About to create/get ParentProfile for user: {user.id}")
+        parent_profile, created = ParentProfile.objects.get_or_create(user=user)
+        if created:
+            print(f"👨‍👩‍👧 Created new parent profile: {parent_profile.id}")
+        else:
+            print(f"👨‍👩‍👧 Using existing parent profile: {parent_profile.id}")
+        
+        # Update parent profile with provided data
+        if parent_data:
+            profile_serializer = ParentProfileSerializer(
+                parent_profile,
+                data=parent_data,
+                partial=True
+            )
+            if profile_serializer.is_valid():
+                profile_serializer.save()
+                print(f"👨‍👩‍👧 Updated parent profile: {profile_serializer.data}")
+            else:
+                print(f"👨‍👩‍👧 Parent profile serializer errors: {profile_serializer.errors}")
+
+        # Serialize and return the complete parent data
+        user_serializer = UserProfileSerializer(user)
+        
+        response_data = {
+            'user': user_serializer.data,
+            'message': 'Parent account created successfully'
+        }
+        
+        print(f"👨‍👩‍👧 Parent signup successful: {user.email}")
+        print(f"👨‍👩‍👧 Final response user role: {user_serializer.data.get('role')}")
+        print(f"👨‍👩‍👧 Final response user data: {user_serializer.data}")
+        
+        return Response(response_data, status=status.HTTP_201_CREATED)
+        
+    except Exception as e:
+        logger.error(f"Parent signup error: {str(e)}")
+        return Response(
+            {'error': 'Signup failed'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def parent_login(request):
+    """
+    Parent login endpoint - verifies Firebase token and returns parent profile
+    """
+    # Validate request data
+    serializer = AuthTokenSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(
+            {'error': 'Token is required'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    token = serializer.validated_data['token']
+    
+    try:
+        # Verify the Firebase ID token
+        decoded_token = auth.verify_id_token(token)
+        firebase_uid = decoded_token.get('uid')
+        email = decoded_token.get('email')
+        
+        if not firebase_uid or not email:
+            return Response(
+                {'error': 'Invalid token: missing required fields'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Find existing user
+        try:
+            user = User.objects.get(firebase_uid=firebase_uid)
+            
+            # Ensure user is a parent
+            if user.role != User.Role.PARENT:
+                if user.role == User.Role.STUDENT:
+                    return Response(
+                        {'error': 'This account is registered as a Student. Please use the Student Portal to sign in.'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                elif user.role == User.Role.TEACHER:
+                    return Response(
+                        {'error': 'This account is registered as a Teacher. Please use the Teacher Portal to sign in.'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                else:
+                    return Response(
+                        {'error': 'This account is not registered as a Parent. Please check your account type.'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            
+            # Update last login
+            from django.utils import timezone
+            user.last_login_at = timezone.now()
+            user.save(update_fields=['last_login_at'])
+            
+            # Return user profile
+            user_serializer = UserProfileSerializer(user)
+            return Response({
+                'message': 'Parent login successful',
+                'user': user_serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Parent account not found. Please sign up first.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+    except auth.InvalidIdTokenError as e:
+        logger.warning(f"Invalid token in parent login: {e}")
+        return Response(
+            {'error': 'Invalid authentication token'},
+            status=status.HTTP_401_UNAUTHORIZED
+        )
+    except Exception as e:
+        logger.error(f"Parent login error: {e}")
         return Response(
             {'error': 'Login failed', 'details': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR

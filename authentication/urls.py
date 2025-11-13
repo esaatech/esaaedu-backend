@@ -15,6 +15,10 @@ urlpatterns = [
     path('teacher/signup/', views.teacher_signup, name='teacher_signup'),
     path('teacher/login/', views.teacher_login, name='teacher_login'),
     
+    # Parent-focused endpoints
+    path('parent/signup/', views.parent_signup, name='parent_signup'),
+    path('parent/login/', views.parent_login, name='parent_login'),
+    
     # User profile endpoints
     path('user/', views.AuthenticatedUserView.as_view(), name='current_user'),
     path('profile/', views.UserProfileView.as_view(), name='user_profile'),
