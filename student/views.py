@@ -3059,3 +3059,239 @@ class AssignmentSubmissionDetailView(APIView):
                 {'error': f'Failed to submit feedback response: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# ===== PARENT DASHBOARD =====
+
+class ParentDashboardView(APIView):
+    """
+    Parent dashboard view - returns comprehensive data for parent dashboard
+    Currently returns placeholder data as per requirements
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """
+        Get parent dashboard data
+        Returns placeholder values for now
+        """
+        try:
+            # Get student profile (parents use student credentials)
+            student_profile = getattr(request.user, 'student_profile', None)
+            
+            if not student_profile:
+                return Response(
+                    {'error': 'Student profile not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Placeholder data matching the frontend structure
+            response_data = {
+                'children': [
+                    {
+                        'id': '1',
+                        'name': 'Emma Thompson',
+                        'grade': 'Grade 5',
+                        'avatar': 'ET',
+                        'weekly_progress': 85,
+                        'lessons_completed': 12,
+                        'total_lessons': 15,
+                        'avg_score': 92,
+                        'streak': 5
+                    },
+                    {
+                        'id': '2',
+                        'name': 'Jake Thompson',
+                        'grade': 'Grade 3',
+                        'avatar': 'JT',
+                        'weekly_progress': 72,
+                        'lessons_completed': 9,
+                        'total_lessons': 12,
+                        'avg_score': 88,
+                        'streak': 3
+                    }
+                ],
+                'recent_activities': [
+                    {
+                        'id': '1',
+                        'subject': 'Mathematics',
+                        'activity': 'Quiz: Fractions',
+                        'status': 'completed',
+                        'score': 95,
+                        'time': '2 hours ago',
+                        'color': 'bg-blue-500'
+                    },
+                    {
+                        'id': '2',
+                        'subject': 'English',
+                        'activity': 'Reading Assignment',
+                        'status': 'completed',
+                        'score': 88,
+                        'time': '5 hours ago',
+                        'color': 'bg-purple-500'
+                    },
+                    {
+                        'id': '3',
+                        'subject': 'Science',
+                        'activity': 'Lab Report',
+                        'status': 'in-progress',
+                        'score': None,
+                        'time': '1 day ago',
+                        'color': 'bg-green-500'
+                    },
+                    {
+                        'id': '4',
+                        'subject': 'History',
+                        'activity': 'Essay Draft',
+                        'status': 'pending',
+                        'score': None,
+                        'time': '2 days ago',
+                        'color': 'bg-orange-500'
+                    }
+                ],
+                'upcoming_tasks': [
+                    {
+                        'id': '1',
+                        'subject': 'Mathematics',
+                        'task': 'Chapter 5 Test',
+                        'due': 'Tomorrow',
+                        'priority': 'high'
+                    },
+                    {
+                        'id': '2',
+                        'subject': 'Science',
+                        'task': 'Plant Growth Project',
+                        'due': '3 days',
+                        'priority': 'medium'
+                    },
+                    {
+                        'id': '3',
+                        'subject': 'English',
+                        'task': 'Book Report',
+                        'due': '1 week',
+                        'priority': 'low'
+                    }
+                ],
+                'performance_data': [
+                    {
+                        'subject': 'Math',
+                        'score': 92,
+                        'trend': 'up'
+                    },
+                    {
+                        'subject': 'English',
+                        'score': 88,
+                        'trend': 'up'
+                    },
+                    {
+                        'subject': 'Science',
+                        'score': 95,
+                        'trend': 'up'
+                    },
+                    {
+                        'subject': 'History',
+                        'score': 85,
+                        'trend': 'down'
+                    },
+                    {
+                        'subject': 'Art',
+                        'score': 90,
+                        'trend': 'stable'
+                    }
+                ],
+                'single_course_data': {
+                    'course_name': 'Advanced Mathematics',
+                    'current_score': 92,
+                    'trend': 'up',
+                    'weekly_progress': [78, 82, 85, 88, 90, 92],
+                    'breakdown': [
+                        {
+                            'category': 'Homework',
+                            'score': 95,
+                            'weight': 30,
+                            'color': 'bg-blue-500'
+                        },
+                        {
+                            'category': 'Quizzes',
+                            'score': 90,
+                            'weight': 25,
+                            'color': 'bg-purple-500'
+                        },
+                        {
+                            'category': 'Tests',
+                            'score': 88,
+                            'weight': 35,
+                            'color': 'bg-green-500'
+                        },
+                        {
+                            'category': 'Participation',
+                            'score': 96,
+                            'weight': 10,
+                            'color': 'bg-orange-500'
+                        }
+                    ],
+                    'recent_grades': [
+                        {
+                            'assignment': 'Chapter 5 Quiz',
+                            'date': 'Nov 10',
+                            'score': 95,
+                            'type': 'quiz'
+                        },
+                        {
+                            'assignment': 'Homework Set 12',
+                            'date': 'Nov 9',
+                            'score': 100,
+                            'type': 'homework'
+                        },
+                        {
+                            'assignment': 'Mid-term Exam',
+                            'date': 'Nov 5',
+                            'score': 88,
+                            'type': 'test'
+                        },
+                        {
+                            'assignment': 'Problem Set 11',
+                            'date': 'Nov 3',
+                            'score': 92,
+                            'type': 'homework'
+                        }
+                    ]
+                },
+                'notifications': [
+                    {
+                        'id': '1',
+                        'type': 'message',
+                        'text': 'New message from Ms. Johnson',
+                        'time': '1 hour ago',
+                        'unread': True
+                    },
+                    {
+                        'id': '2',
+                        'type': 'grade',
+                        'text': 'Math quiz graded: 95/100',
+                        'time': '3 hours ago',
+                        'unread': True
+                    },
+                    {
+                        'id': '3',
+                        'type': 'reminder',
+                        'text': 'Science project due tomorrow',
+                        'time': '5 hours ago',
+                        'unread': False
+                    }
+                ],
+                'weekly_stats': {
+                    'days_active': 5,
+                    'days_complete': ['M', 'T', 'W', 'T', 'F']
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': 'Failed to fetch parent dashboard data', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

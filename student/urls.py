@@ -44,6 +44,9 @@ urlpatterns = [
     path('assignments/<uuid:assignment_id>/submit/', views.AssignmentSubmissionView.as_view(), name='assignment_submit'),
     path('assignment-submissions/<uuid:submission_id>/', views.AssignmentSubmissionDetailView.as_view(), name='assignment_submission_detail'),
     
+    # Parent Dashboard
+    path('parent/dashboard/', views.ParentDashboardView.as_view(), name='parent_dashboard'),
+    
     # TODO: Add other student-related endpoints as needed
     # path('attendance/', views.student_attendance, name='student_attendance'),
     # path('attendance/<uuid:attendance_id>/', views.student_attendance_detail, name='student_attendance_detail'),
