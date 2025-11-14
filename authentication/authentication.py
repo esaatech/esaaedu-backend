@@ -51,8 +51,9 @@ class FirebaseAuthentication(BaseAuthentication):
             if not token:
                 return None
                 
-            # Verify the Firebase ID token
-            decoded_token = auth.verify_id_token(token)
+            # Verify the Firebase ID token with retry for clock skew issues
+            decoded_token = self._verify_token_with_retry(token)
+            
             firebase_uid = decoded_token.get('uid')
             email = decoded_token.get('email')
             
@@ -70,6 +71,53 @@ class FirebaseAuthentication(BaseAuthentication):
         except Exception as e:
             logger.error(f"Authentication error: {e}")
             raise AuthenticationFailed('Authentication failed')
+    
+    def _verify_token_with_retry(self, token, max_retries=2, retry_delay=1):
+        """
+        Verify Firebase ID token with retry logic for clock skew issues.
+        
+        Args:
+            token: Firebase ID token string
+            max_retries: Maximum number of retry attempts (default: 2)
+            retry_delay: Delay between retries in seconds (default: 1)
+        
+        Returns:
+            Decoded token dictionary
+            
+        Raises:
+            auth.InvalidIdTokenError: If token is invalid after all retries
+            Exception: Other errors
+        """
+        import time
+        
+        decoded_token = None
+        last_error = None
+        
+        for attempt in range(max_retries + 1):
+            try:
+                # Try to verify token - Firebase Admin SDK handles clock skew internally
+                # but we add retry logic for edge cases
+                decoded_token = auth.verify_id_token(token, check_revoked=False)
+                return decoded_token  # Success
+            except auth.InvalidIdTokenError as e:
+                error_str = str(e).lower()
+                # Check if it's a clock skew error
+                if 'too early' in error_str or 'clock' in error_str:
+                    if attempt < max_retries:
+                        # Wait a bit and retry (gives time for clock sync)
+                        logger.warning(f"Clock skew detected, retrying token verification (retry {attempt + 1} of {max_retries})")
+                        time.sleep(retry_delay)
+                        last_error = e
+                        continue
+                # Not a clock skew error or out of retries
+                raise
+            except Exception as e:
+                # Other errors, don't retry
+                raise
+        
+        # Should never reach here, but just in case
+        if decoded_token is None:
+            raise last_error if last_error else Exception("Failed to verify token")
     
     def extract_token(self, auth_header):
         """

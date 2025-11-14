@@ -2,6 +2,12 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import User, TeacherProfile, StudentProfile
 
+# Lazy import for StudentWeeklyPerformance to avoid errors if migration hasn't been run
+try:
+    from .models import StudentWeeklyPerformance
+except Exception:
+    StudentWeeklyPerformance = None
+
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
@@ -104,3 +110,35 @@ class StudentProfileAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+
+if StudentWeeklyPerformance:
+    @admin.register(StudentWeeklyPerformance)
+    class StudentWeeklyPerformanceAdmin(admin.ModelAdmin):
+        list_display = [
+            'student_profile', 'year', 'week_number', 'week_start_date',
+            'overall_average', 'quiz_average', 'assignment_average',
+            'quiz_count', 'assignment_count', 'updated_at'
+        ]
+        list_filter = ['year', 'week_number', 'updated_at']
+        search_fields = ['student_profile__user__email', 'student_profile__child_first_name', 'student_profile__child_last_name']
+        readonly_fields = ['created_at', 'updated_at']
+        ordering = ['-year', '-week_number']
+        
+        fieldsets = (
+            ('Student & Week', {
+                'fields': ('student_profile', 'year', 'week_number', 'week_start_date')
+            }),
+            ('Weekly Performance', {
+                'fields': (
+                    'quiz_average', 'quiz_count',
+                    'assignment_average', 'assignment_count',
+                    'overall_average'
+                ),
+                'description': 'Weekly performance aggregates (automatically calculated)'
+            }),
+            ('Metadata', {
+                'fields': ('created_at', 'updated_at'),
+                'classes': ('collapse',)
+            }),
+        )

@@ -1,8 +1,9 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
-from django.db.models import Avg, Sum, Count
+from django.db.models import Avg, Sum, Count, Q
 from django.utils import timezone
 from decimal import Decimal
+from datetime import datetime, timedelta
 
 
 class User(AbstractUser):
@@ -297,6 +298,200 @@ class StudentProfile(models.Model):
         except Exception as e:
             print(f"Error recalculating overall average for {self.user.email}: {e}")
             return False
+
+
+class StudentWeeklyPerformance(models.Model):
+    """
+    Weekly performance aggregates for students
+    Stores pre-calculated weekly averages to avoid expensive queries on dashboard load
+    Automatically maintained via signals when quizzes/assignments are completed/graded
+    """
+    student_profile = models.ForeignKey(
+        StudentProfile,
+        on_delete=models.CASCADE,
+        related_name='weekly_performance'
+    )
+    
+    # Week identification (ISO week format)
+    week_start_date = models.DateField(
+        help_text="Monday of the week (ISO week start)"
+    )
+    year = models.IntegerField(
+        help_text="Year of the week"
+    )
+    week_number = models.IntegerField(
+        help_text="ISO week number (1-53)"
+    )
+    
+    # Weekly aggregates
+    quiz_average = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Average quiz score percentage for this week"
+    )
+    quiz_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of quizzes completed this week"
+    )
+    
+    assignment_average = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Average assignment score percentage for this week"
+    )
+    assignment_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of assignments completed/graded this week"
+    )
+    
+    overall_average = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Combined weighted average of quiz and assignment scores for this week"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'student_weekly_performance'
+        unique_together = ['student_profile', 'year', 'week_number']
+        ordering = ['-year', '-week_number']
+        indexes = [
+            models.Index(fields=['student_profile', 'year', 'week_number']),
+            models.Index(fields=['student_profile', 'week_start_date']),
+        ]
+        verbose_name = 'Student Weekly Performance'
+        verbose_name_plural = 'Student Weekly Performances'
+    
+    def __str__(self):
+        return f"{self.student_profile.user.email} - {self.year}-W{self.week_number:02d}"
+    
+    def recalculate_week_averages(self):
+        """
+        Recalculate averages for this specific week from QuizAttempt and AssignmentSubmission records.
+        Called automatically when a quiz/assignment is completed in this week.
+        """
+        from courses.models import QuizAttempt, AssignmentSubmission
+        
+        # Get the week date range (Monday to Sunday)
+        week_end = self.week_start_date + timedelta(days=6)
+        
+        # Calculate quiz average for this week
+        quiz_attempts = QuizAttempt.objects.filter(
+            student=self.student_profile.user,
+            completed_at__isnull=False,
+            completed_at__date__gte=self.week_start_date,
+            completed_at__date__lte=week_end,
+            score__isnull=False
+        )
+        
+        quiz_aggregate = quiz_attempts.aggregate(
+            avg_score=Avg('score'),
+            count=Count('id')
+        )
+        
+        self.quiz_count = quiz_aggregate['count'] or 0
+        self.quiz_average = round(Decimal(str(quiz_aggregate['avg_score'])), 2) if quiz_aggregate['avg_score'] else None
+        
+        # Calculate assignment average for this week
+        # Use graded_at if available, otherwise submitted_at
+        assignment_submissions = AssignmentSubmission.objects.filter(
+            student=self.student_profile.user,
+            is_graded=True,
+            percentage__isnull=False
+        ).filter(
+            Q(graded_at__isnull=False, graded_at__date__gte=self.week_start_date, graded_at__date__lte=week_end) |
+            Q(graded_at__isnull=True, submitted_at__date__gte=self.week_start_date, submitted_at__date__lte=week_end)
+        )
+        
+        assignment_aggregate = assignment_submissions.aggregate(
+            avg_score=Avg('percentage'),
+            count=Count('id')
+        )
+        
+        self.assignment_count = assignment_aggregate['count'] or 0
+        self.assignment_average = round(Decimal(str(assignment_aggregate['avg_score'])), 2) if assignment_aggregate['avg_score'] else None
+        
+        # Calculate combined overall average (weighted)
+        if self.quiz_average is not None and self.assignment_average is not None:
+            total_weight = self.quiz_count + self.assignment_count
+            if total_weight > 0:
+                weighted_sum = (Decimal(str(self.quiz_average)) * self.quiz_count +
+                               Decimal(str(self.assignment_average)) * self.assignment_count)
+                self.overall_average = round(weighted_sum / total_weight, 2)
+            else:
+                self.overall_average = None
+        elif self.quiz_average is not None:
+            self.overall_average = self.quiz_average
+        elif self.assignment_average is not None:
+            self.overall_average = self.assignment_average
+        else:
+            self.overall_average = None
+        
+        self.save()
+        return True
+    
+    @staticmethod
+    def get_or_create_week_performance(student_profile, date):
+        """
+        Get or create a StudentWeeklyPerformance record for the week containing the given date.
+        
+        Args:
+            student_profile: StudentProfile instance
+            date: datetime or date object - the date to find the week for
+            
+        Returns:
+            tuple: (StudentWeeklyPerformance instance, created boolean)
+        """
+        if isinstance(date, datetime):
+            date = date.date()
+        
+        # Calculate ISO week (Monday is start of week)
+        # Get Monday of the week
+        days_since_monday = date.weekday()  # Monday is 0
+        week_start = date - timedelta(days=days_since_monday)
+        
+        # Get ISO year and week number
+        iso_year, iso_week, _ = date.isocalendar()
+        
+        # Get or create the weekly performance record
+        weekly_perf, created = StudentWeeklyPerformance.objects.get_or_create(
+            student_profile=student_profile,
+            year=iso_year,
+            week_number=iso_week,
+            defaults={
+                'week_start_date': week_start,
+            }
+        )
+        
+        return weekly_perf, created
+    
+    @staticmethod
+    def update_weekly_performance(student_profile, completion_date):
+        """
+        Update weekly performance aggregates for the week containing the completion_date.
+        This is called from signal handlers when a quiz/assignment is completed.
+        
+        Args:
+            student_profile: StudentProfile instance
+            completion_date: datetime - when the quiz/assignment was completed/graded
+        """
+        try:
+            weekly_perf, _ = StudentWeeklyPerformance.get_or_create_week_performance(
+                student_profile,
+                completion_date
+            )
+            weekly_perf.recalculate_week_averages()
+        except Exception as e:
+            print(f"Error updating weekly performance for {student_profile.user.email}: {e}")
 
 
 class ParentProfile(models.Model):

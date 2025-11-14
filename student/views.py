@@ -3189,7 +3189,7 @@ class ParentDashboardView(APIView):
         """
         # TODO: Calculate average from QuizAttempt and AssignmentSubmission scores
         # For now, return placeholder
-        return 0
+        
     
     
     
@@ -3425,14 +3425,50 @@ class ParentDashboardView(APIView):
     
     def get_weekly_stats(self, student_profile, enrolled_courses):
         """
-        Get weekly activity statistics
-        Tracks days active, login streaks, etc.
+        Get weekly performance statistics (quiz and assignment averages over time)
+        Returns the last 6 weeks of performance data for trend visualization
         """
-        # TODO: Calculate weekly stats
-        # - Days active this week (based on lesson access, quiz attempts, etc. from enrolled courses)
-        # - Which days of the week were active
-        # For now, return placeholder
-        return {
-            'days_active': 0,
-            'days_complete': [],
-        }
+        try:
+            from users.models import StudentWeeklyPerformance
+        except Exception:
+            # Table doesn't exist yet (migration not run)
+            return {
+                'weekly_trend': [],
+                'total_weeks': 0,
+            }
+        
+        try:
+            # Get last 6 weeks of performance data
+            weekly_performance = StudentWeeklyPerformance.objects.filter(
+                student_profile=student_profile
+            ).order_by('-year', '-week_number')[:6]
+            
+            # Format data for frontend
+            weekly_trend = []
+            for wp in weekly_performance:
+                weekly_trend.append({
+                    'week': f"W{wp.week_number}",
+                    'year': wp.year,
+                    'week_number': wp.week_number,
+                    'overall_avg': float(wp.overall_average) if wp.overall_average is not None else None,
+                    'quiz_avg': float(wp.quiz_average) if wp.quiz_average is not None else None,
+                    'assignment_avg': float(wp.assignment_average) if wp.assignment_average is not None else None,
+                    'quiz_count': wp.quiz_count,
+                    'assignment_count': wp.assignment_count,
+                })
+            
+            # Reverse to show oldest to newest (W1, W2, ..., W6)
+            weekly_trend.reverse()
+            
+            return {
+                'weekly_trend': weekly_trend,
+                'total_weeks': len(weekly_trend),
+            }
+        except Exception as e:
+            print(f"Error fetching weekly stats: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'weekly_trend': [],
+                'total_weeks': 0,
+            }
