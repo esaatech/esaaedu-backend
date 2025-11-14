@@ -409,7 +409,7 @@ def student_signup(request):
         
         logger.info(f"Updating student profile with data: {profile_update_data}")
         
-        # Update student profile with provided data
+         # Update student profile with provided data
         if profile_update_data:
             profile_serializer = StudentProfileSerializer(
                 student_profile,
