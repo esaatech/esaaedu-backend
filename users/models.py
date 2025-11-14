@@ -1,5 +1,8 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.db.models import Avg, Sum, Count
+from django.utils import timezone
+from decimal import Decimal
 
 
 class User(AbstractUser):
@@ -117,6 +120,43 @@ class StudentProfile(models.Model):
     notifications_enabled = models.BooleanField(default=True)
     email_notifications = models.BooleanField(default=True)
     
+    # Performance Aggregates (denormalized for fast dashboard queries)
+    # These are updated automatically via signals when quizzes/assignments are submitted/graded
+    total_quizzes_completed = models.PositiveIntegerField(
+        default=0,
+        help_text="Total number of completed quiz attempts across all courses"
+    )
+    total_assignments_completed = models.PositiveIntegerField(
+        default=0,
+        help_text="Total number of completed assignment submissions across all courses"
+    )
+    overall_quiz_average_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Overall average quiz score percentage across all courses"
+    )
+    overall_assignment_average_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Overall average assignment score percentage across all courses"
+    )
+    overall_average_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Combined average of quiz and assignment scores"
+    )
+    last_performance_update = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp of last performance aggregate update"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -135,6 +175,128 @@ class StudentProfile(models.Model):
                 (today.month, today.day) < (self.date_of_birth.month, self.date_of_birth.day)
             )
         return None
+    
+    def recalculate_quiz_aggregates(self):
+        """
+        Recalculate overall quiz statistics from all enrollments.
+        Uses weighted average based on number of quizzes completed per course.
+        """
+        try:
+            enrollments = self.course_enrollments.filter(
+                status__in=['active', 'completed']
+            )
+            
+            total_score_weighted = Decimal('0.0')
+            total_quizzes = 0
+            
+            for enrollment in enrollments:
+                if enrollment.average_quiz_score is not None:
+                    # Use enrollment's tracked quiz count as weight
+                    quiz_count = enrollment.total_quizzes_taken
+                    
+                    if quiz_count > 0:
+                        total_score_weighted += Decimal(str(enrollment.average_quiz_score)) * quiz_count
+                        total_quizzes += quiz_count
+            
+            # Update aggregates
+            self.total_quizzes_completed = total_quizzes
+            
+            if total_quizzes > 0:
+                self.overall_quiz_average_score = round(total_score_weighted / total_quizzes, 2)
+            else:
+                self.overall_quiz_average_score = None
+            
+            self.last_performance_update = timezone.now()
+            self.save(update_fields=[
+                'total_quizzes_completed',
+                'overall_quiz_average_score',
+                'last_performance_update'
+            ])
+            
+            # Recalculate overall average (quiz + assignment)
+            self.recalculate_overall_average()
+            
+            return True
+        except Exception as e:
+            print(f"Error recalculating quiz aggregates for {self.user.email}: {e}")
+            return False
+    
+    def recalculate_assignment_aggregates(self):
+        """
+        Recalculate overall assignment statistics from all enrollments.
+        Uses weighted average based on number of assignments completed per course.
+        """
+        try:
+            enrollments = self.course_enrollments.filter(
+                status__in=['active', 'completed']
+            )
+            
+            total_score_weighted = Decimal('0.0')
+            total_assignments = 0
+            
+            for enrollment in enrollments:
+                if enrollment.average_assignment_score is not None:
+                    # Use completed assignments count as weight
+                    count = enrollment.total_assignments_completed
+                    if count > 0:
+                        total_score_weighted += Decimal(str(enrollment.average_assignment_score)) * count
+                        total_assignments += count
+            
+            # Update aggregates
+            self.total_assignments_completed = total_assignments
+            
+            if total_assignments > 0:
+                self.overall_assignment_average_score = round(total_score_weighted / total_assignments, 2)
+            else:
+                self.overall_assignment_average_score = None
+            
+            self.last_performance_update = timezone.now()
+            self.save(update_fields=[
+                'total_assignments_completed',
+                'overall_assignment_average_score',
+                'last_performance_update'
+            ])
+            
+            # Recalculate overall average (quiz + assignment)
+            self.recalculate_overall_average()
+            
+            return True
+        except Exception as e:
+            print(f"Error recalculating assignment aggregates for {self.user.email}: {e}")
+            return False
+    
+    def recalculate_overall_average(self):
+        """
+        Recalculate the combined overall average of quiz and assignment scores.
+        """
+        try:
+            quiz_score = self.overall_quiz_average_score
+            assignment_score = self.overall_assignment_average_score
+            
+            # Calculate weighted average if both exist
+            if quiz_score is not None and assignment_score is not None:
+                quiz_weight = self.total_quizzes_completed
+                assignment_weight = self.total_assignments_completed
+                total_weight = quiz_weight + assignment_weight
+                
+                if total_weight > 0:
+                    weighted_sum = (Decimal(str(quiz_score)) * quiz_weight + 
+                                   Decimal(str(assignment_score)) * assignment_weight)
+                    self.overall_average_score = round(weighted_sum / total_weight, 2)
+                else:
+                    self.overall_average_score = None
+            elif quiz_score is not None:
+                self.overall_average_score = quiz_score
+            elif assignment_score is not None:
+                self.overall_average_score = assignment_score
+            else:
+                self.overall_average_score = None
+            
+            self.save(update_fields=['overall_average_score'])
+            return True
+        except Exception as e:
+            print(f"Error recalculating overall average for {self.user.email}: {e}")
+            return False
 
 
 class ParentProfile(models.Model):

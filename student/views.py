@@ -3066,14 +3066,14 @@ class AssignmentSubmissionDetailView(APIView):
 class ParentDashboardView(APIView):
     """
     Parent dashboard view - returns comprehensive data for parent dashboard
-    Currently returns placeholder data as per requirements
+    Organized into separate methods for each dashboard section
     """
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):
         """
         Get parent dashboard data
-        Returns placeholder values for now
+        Aggregates data from all dashboard sections
         """
         try:
             # Get student profile (parents use student credentials)
@@ -3085,205 +3085,26 @@ class ParentDashboardView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Placeholder data matching the frontend structure
+            # Get enrolled courses for data aggregation
+            # Don't use select_related or prefetch_related to avoid any prefetch issues
+            enrolled_courses_queryset = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                status='active'
+            ).only('id', 'completed_lessons_count', 'total_lessons_count', 'course_id', 'student_profile_id')
+            
+            # Convert to list immediately to force evaluation and avoid prefetch issues
+            # This ensures the queryset is fully evaluated before any methods try to use it
+            enrolled_courses_objects = list(enrolled_courses_queryset)
+            
+            # Build response data using separate methods
             response_data = {
-                'children': [
-                    {
-                        'id': '1',
-                        'name': 'Emma Thompson',
-                        'grade': 'Grade 5',
-                        'avatar': 'ET',
-                        'weekly_progress': 85,
-                        'lessons_completed': 12,
-                        'total_lessons': 15,
-                        'avg_score': 92,
-                        'streak': 5
-                    },
-                    {
-                        'id': '2',
-                        'name': 'Jake Thompson',
-                        'grade': 'Grade 3',
-                        'avatar': 'JT',
-                        'weekly_progress': 72,
-                        'lessons_completed': 9,
-                        'total_lessons': 12,
-                        'avg_score': 88,
-                        'streak': 3
-                    }
-                ],
-                'recent_activities': [
-                    {
-                        'id': '1',
-                        'subject': 'Mathematics',
-                        'activity': 'Quiz: Fractions',
-                        'status': 'completed',
-                        'score': 95,
-                        'time': '2 hours ago',
-                        'color': 'bg-blue-500'
-                    },
-                    {
-                        'id': '2',
-                        'subject': 'English',
-                        'activity': 'Reading Assignment',
-                        'status': 'completed',
-                        'score': 88,
-                        'time': '5 hours ago',
-                        'color': 'bg-purple-500'
-                    },
-                    {
-                        'id': '3',
-                        'subject': 'Science',
-                        'activity': 'Lab Report',
-                        'status': 'in-progress',
-                        'score': None,
-                        'time': '1 day ago',
-                        'color': 'bg-green-500'
-                    },
-                    {
-                        'id': '4',
-                        'subject': 'History',
-                        'activity': 'Essay Draft',
-                        'status': 'pending',
-                        'score': None,
-                        'time': '2 days ago',
-                        'color': 'bg-orange-500'
-                    }
-                ],
-                'upcoming_tasks': [
-                    {
-                        'id': '1',
-                        'subject': 'Mathematics',
-                        'task': 'Chapter 5 Test',
-                        'due': 'Tomorrow',
-                        'priority': 'high'
-                    },
-                    {
-                        'id': '2',
-                        'subject': 'Science',
-                        'task': 'Plant Growth Project',
-                        'due': '3 days',
-                        'priority': 'medium'
-                    },
-                    {
-                        'id': '3',
-                        'subject': 'English',
-                        'task': 'Book Report',
-                        'due': '1 week',
-                        'priority': 'low'
-                    }
-                ],
-                'performance_data': [
-                    {
-                        'subject': 'Math',
-                        'score': 92,
-                        'trend': 'up'
-                    },
-                    {
-                        'subject': 'English',
-                        'score': 88,
-                        'trend': 'up'
-                    },
-                    {
-                        'subject': 'Science',
-                        'score': 95,
-                        'trend': 'up'
-                    },
-                    {
-                        'subject': 'History',
-                        'score': 85,
-                        'trend': 'down'
-                    },
-                    {
-                        'subject': 'Art',
-                        'score': 90,
-                        'trend': 'stable'
-                    }
-                ],
-                'single_course_data': {
-                    'course_name': 'Advanced Mathematics',
-                    'current_score': 92,
-                    'trend': 'up',
-                    'weekly_progress': [78, 82, 85, 88, 90, 92],
-                    'breakdown': [
-                        {
-                            'category': 'Homework',
-                            'score': 95,
-                            'weight': 30,
-                            'color': 'bg-blue-500'
-                        },
-                        {
-                            'category': 'Quizzes',
-                            'score': 90,
-                            'weight': 25,
-                            'color': 'bg-purple-500'
-                        },
-                        {
-                            'category': 'Tests',
-                            'score': 88,
-                            'weight': 35,
-                            'color': 'bg-green-500'
-                        },
-                        {
-                            'category': 'Participation',
-                            'score': 96,
-                            'weight': 10,
-                            'color': 'bg-orange-500'
-                        }
-                    ],
-                    'recent_grades': [
-                        {
-                            'assignment': 'Chapter 5 Quiz',
-                            'date': 'Nov 10',
-                            'score': 95,
-                            'type': 'quiz'
-                        },
-                        {
-                            'assignment': 'Homework Set 12',
-                            'date': 'Nov 9',
-                            'score': 100,
-                            'type': 'homework'
-                        },
-                        {
-                            'assignment': 'Mid-term Exam',
-                            'date': 'Nov 5',
-                            'score': 88,
-                            'type': 'test'
-                        },
-                        {
-                            'assignment': 'Problem Set 11',
-                            'date': 'Nov 3',
-                            'score': 92,
-                            'type': 'homework'
-                        }
-                    ]
-                },
-                'notifications': [
-                    {
-                        'id': '1',
-                        'type': 'message',
-                        'text': 'New message from Ms. Johnson',
-                        'time': '1 hour ago',
-                        'unread': True
-                    },
-                    {
-                        'id': '2',
-                        'type': 'grade',
-                        'text': 'Math quiz graded: 95/100',
-                        'time': '3 hours ago',
-                        'unread': True
-                    },
-                    {
-                        'id': '3',
-                        'type': 'reminder',
-                        'text': 'Science project due tomorrow',
-                        'time': '5 hours ago',
-                        'unread': False
-                    }
-                ],
-                'weekly_stats': {
-                    'days_active': 5,
-                    'days_complete': ['M', 'T', 'W', 'T', 'F']
-                }
+                'children': self.get_children_data(student_profile, enrolled_courses_objects),
+                'recent_activities': self.get_recent_activities(student_profile, enrolled_courses_objects),
+                'upcoming_tasks': self.get_upcoming_tasks(student_profile, enrolled_courses_objects),
+                'performance_data': self.get_performance_data(student_profile, enrolled_courses_objects),
+                'single_course_data': self.get_single_course_data(student_profile, enrolled_courses_objects),
+                'notifications': self.get_notifications(student_profile, enrolled_courses_objects),
+                'weekly_stats': self.get_weekly_stats(student_profile, enrolled_courses_objects),
             }
             
             return Response(response_data, status=status.HTTP_200_OK)
@@ -3295,3 +3116,323 @@ class ParentDashboardView(APIView):
                 {'error': 'Failed to fetch parent dashboard data', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def get_children_data(self, student_profile, enrolled_courses):
+        """
+        Get children list data
+        For now, returns the current student as a single child
+        Future: Can be extended to support multiple children per parent
+        """
+        # Get name from student profile
+        child_first_name = student_profile.child_first_name or student_profile.user.first_name or ''
+        child_last_name = student_profile.child_last_name or student_profile.user.last_name or ''
+        full_name = f"{child_first_name} {child_last_name}".strip() or student_profile.user.email
+        
+        # Generate avatar initials
+        if child_first_name and child_last_name:
+            avatar = f"{child_first_name[0]}{child_last_name[0]}".upper()
+        elif child_first_name:
+            avatar = child_first_name[0].upper()
+        elif student_profile.user.first_name:
+            avatar = student_profile.user.first_name[0].upper()
+        else:
+            avatar = student_profile.user.email[0].upper()
+        
+        # Get grade level
+        grade = student_profile.grade_level or 'Not specified'
+        
+        # Calculate metrics from enrolled courses
+        #weekly_progress = self._calculate_weekly_progress(enrolled_courses)
+        lessons_completed, total_lessons = self._calculate_lessons_progress(enrolled_courses)
+        
+        # Get average scores from StudentProfile
+        avg_score = float(student_profile.overall_average_score) if student_profile.overall_average_score is not None else 0
+        average_quiz = float(student_profile.overall_quiz_average_score) if student_profile.overall_quiz_average_score is not None else 0
+        average_assignment = float(student_profile.overall_assignment_average_score) if student_profile.overall_assignment_average_score is not None else 0
+        
+        return [{
+            'id': str(student_profile.user.id),
+            'name': full_name,
+            'grade': grade,
+            'avatar': avatar,
+            #'weekly_progress': weekly_progress,
+            'lessons_completed': lessons_completed,
+            'total_lessons': total_lessons,
+            'avg_score': avg_score,
+            'average_quiz': average_quiz,
+            'average_assignment': average_assignment,
+        }]
+    
+    def _calculate_weekly_progress(self, enrolled_courses):
+        """
+        Calculate weekly progress percentage
+        Helper method for get_children_data
+        """
+        # TODO: Calculate progress from lessons completed this week
+        # For now, return placeholder
+        return 0
+    
+    def _calculate_lessons_progress(self, enrolled_courses):
+        """
+        Calculate total lessons completed vs total lessons
+        Helper method for get_children_data
+        """
+        # enrolled_courses is already a list, so we can safely iterate
+        total_completed = sum(enrollment.completed_lessons_count for enrollment in enrolled_courses)
+        total_lessons = sum(enrollment.total_lessons_count for enrollment in enrolled_courses)
+        return (total_completed, total_lessons)
+    
+    def _calculate_average_score(self, enrolled_courses):
+        """
+        Calculate average score from quizzes and assignments
+        Helper method for get_children_data
+        """
+        # TODO: Calculate average from QuizAttempt and AssignmentSubmission scores
+        # For now, return placeholder
+        return 0
+    
+    
+    
+    def get_weekly_progress(self, student_profile, enrolled_courses):
+        """
+        Get weekly progress data for a child
+        Calculates progress from enrolled courses and lesson completions
+        """
+        # TODO: Calculate weekly progress from enrolled courses
+        # - Get lessons completed this week
+        # - Calculate progress percentage
+        # - Get average scores
+        # - Calculate streak
+        # For now, return placeholder
+        return {}
+    
+    def get_recent_activities(self, student_profile, enrolled_courses):
+        """
+        Get recent activities (quizzes, assignments, lessons)
+        From enrolled courses, get recent quiz attempts and assignment submissions
+        """
+        # TODO: Query recent activities from enrolled courses
+        # - Get recent QuizAttempt records from enrolled courses
+        # - Get recent AssignmentSubmission records from enrolled courses
+        # - Format with subject (course title), activity name, status, score, time
+        # For now, return placeholder
+        return [
+            {
+                'id': 'placeholder-1',
+                'subject': 'Mathematics',
+                'activity': 'Quiz: Fractions',
+                'status': 'completed',
+                'score': 95,
+                'time': '2 hours ago',
+                'color': 'bg-blue-500',
+            },
+            {
+                'id': 'placeholder-2',
+                'subject': 'English',
+                'activity': 'Reading Assignment',
+                'status': 'completed',
+                'score': 88,
+                'time': '5 hours ago',
+                'color': 'bg-purple-500',
+            },
+            {
+                'id': 'placeholder-3',
+                'subject': 'Science',
+                'activity': 'Lab Report',
+                'status': 'in-progress',
+                'score': None,
+                'time': '1 day ago',
+                'color': 'bg-green-500',
+            },
+        ]
+    
+    def get_upcoming_tasks(self, student_profile, enrolled_courses):
+        """
+        Get upcoming tasks (assignments with due dates)
+        From enrolled courses, get assignments with upcoming due dates
+        """
+        # TODO: Query upcoming tasks from enrolled courses
+        # - Get assignments with due_date in the future from enrolled courses
+        # - Calculate days until due
+        # - Determine priority based on due date proximity
+        # For now, return placeholder
+        return [
+            {
+                'id': 'placeholder-1',
+                'subject': 'Mathematics',
+                'task': 'Chapter 5 Test',
+                'due': 'Tomorrow',
+                'priority': 'high',
+            },
+            {
+                'id': 'placeholder-2',
+                'subject': 'Science',
+                'task': 'Plant Growth Project',
+                'due': '3 days',
+                'priority': 'medium',
+            },
+            {
+                'id': 'placeholder-3',
+                'subject': 'English',
+                'task': 'Book Report',
+                'due': '1 week',
+                'priority': 'low',
+            },
+        ]
+    
+    def get_performance_data(self, student_profile, enrolled_courses):
+        """
+        Get performance data by subject/course
+        Aggregates quiz and assignment scores by course/subject
+        """
+        # TODO: Calculate performance by subject from enrolled courses
+        # - Group by course/subject from enrolled_courses
+        # - Calculate average scores per subject from QuizAttempt and AssignmentSubmission
+        # - Determine trend (up/down/stable) by comparing recent vs older scores
+        # For now, return placeholder
+        return [
+            {
+                'subject': 'Math',
+                'score': 92,
+                'trend': 'up',
+            },
+            {
+                'subject': 'English',
+                'score': 88,
+                'trend': 'up',
+            },
+            {
+                'subject': 'Science',
+                'score': 95,
+                'trend': 'up',
+            },
+            {
+                'subject': 'History',
+                'score': 85,
+                'trend': 'down',
+            },
+            {
+                'subject': 'Art',
+                'score': 90,
+                'trend': 'stable',
+            },
+        ]
+    
+    def get_single_course_data(self, student_profile, enrolled_courses):
+        """
+        Get detailed single course performance data
+        Includes weekly progress trend, grade breakdown, recent grades
+        """
+        # TODO: Get detailed data for a single course (most active or selected)
+        # - Select most active course from enrolled_courses
+        # - Weekly progress trend (last 6 weeks) from enrollment progress history
+        # - Grade breakdown by category (quizzes, assignments, tests, participation)
+        # - Recent grades/assignments from QuizAttempt and AssignmentSubmission
+        # For now, return placeholder
+        return {
+            'course_name': 'Advanced Mathematics',
+            'current_score': 92,
+            'trend': 'up',
+            'weekly_progress': [78, 82, 85, 88, 90, 92],
+            'breakdown': [
+                {
+                    'category': 'Homework',
+                    'score': 95,
+                    'weight': 30,
+                    'color': 'bg-blue-500',
+                },
+                {
+                    'category': 'Quizzes',
+                    'score': 90,
+                    'weight': 25,
+                    'color': 'bg-purple-500',
+                },
+                {
+                    'category': 'Tests',
+                    'score': 88,
+                    'weight': 35,
+                    'color': 'bg-green-500',
+                },
+                {
+                    'category': 'Participation',
+                    'score': 96,
+                    'weight': 10,
+                    'color': 'bg-orange-500',
+                },
+            ],
+            'recent_grades': [
+                {
+                    'assignment': 'Chapter 5 Quiz',
+                    'date': 'Nov 10',
+                    'score': 95,
+                    'type': 'quiz',
+                },
+                {
+                    'assignment': 'Homework Set 12',
+                    'date': 'Nov 9',
+                    'score': 100,
+                    'type': 'homework',
+                },
+                {
+                    'assignment': 'Mid-term Exam',
+                    'date': 'Nov 5',
+                    'score': 88,
+                    'type': 'test',
+                },
+                {
+                    'assignment': 'Problem Set 11',
+                    'date': 'Nov 3',
+                    'score': 92,
+                    'type': 'homework',
+                },
+            ],
+        }
+    
+    def get_notifications(self, student_profile, enrolled_courses):
+        """
+        Get notifications for parent
+        Includes grade updates, assignment feedback, messages, reminders
+        """
+        # TODO: Get notifications from various sources
+        # - New grades from quiz attempts and assignment submissions in enrolled courses
+        # - Assignment feedback from teachers
+        # - Upcoming due dates reminders from assignments in enrolled courses
+        # - Messages from teachers (if message system exists)
+        # For now, return placeholder
+        return [
+            {
+                'id': 'placeholder-1',
+                'type': 'message',
+                'text': 'New message from Ms. Johnson',
+                'time': '1 hour ago',
+                'unread': True,
+            },
+            {
+                'id': 'placeholder-2',
+                'type': 'grade',
+                'text': 'Math quiz graded: 95/100',
+                'time': '3 hours ago',
+                'unread': True,
+            },
+            {
+                'id': 'placeholder-3',
+                'type': 'reminder',
+                'text': 'Science project due tomorrow',
+                'time': '5 hours ago',
+                'unread': False,
+            },
+        ]
+    
+    def get_weekly_stats(self, student_profile, enrolled_courses):
+        """
+        Get weekly activity statistics
+        Tracks days active, login streaks, etc.
+        """
+        # TODO: Calculate weekly stats
+        # - Days active this week (based on lesson access, quiz attempts, etc. from enrolled courses)
+        # - Which days of the week were active
+        # For now, return placeholder
+        return {
+            'days_active': 0,
+            'days_complete': [],
+        }

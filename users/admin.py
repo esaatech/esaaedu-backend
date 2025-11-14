@@ -61,10 +61,18 @@ class TeacherProfileAdmin(admin.ModelAdmin):
 
 @admin.register(StudentProfile)
 class StudentProfileAdmin(admin.ModelAdmin):
-    list_display = ['user', 'child_first_name', 'child_last_name', 'grade_level', 'age', 'created_at']
+    list_display = [
+        'user', 'child_first_name', 'child_last_name', 'grade_level', 
+        'overall_quiz_average_score', 'overall_assignment_average_score', 
+        'overall_average_score', 'age', 'created_at'
+    ]
     list_filter = ['grade_level', 'notifications_enabled', 'created_at']
     search_fields = ['user__email', 'child_first_name', 'child_last_name', 'parent_name', 'parent_email']
-    readonly_fields = ['created_at', 'updated_at', 'age']
+    readonly_fields = [
+        'created_at', 'updated_at', 'age', 'last_performance_update',
+        'total_quizzes_completed', 'total_assignments_completed',
+        'overall_quiz_average_score', 'overall_assignment_average_score', 'overall_average_score'
+    ]
     
     fieldsets = (
         ('User Account', {
@@ -79,6 +87,17 @@ class StudentProfileAdmin(admin.ModelAdmin):
         }),
         ('Learning & Preferences', {
             'fields': ('learning_goals', 'interests', 'notifications_enabled', 'email_notifications')
+        }),
+        ('Performance Aggregates', {
+            'fields': (
+                'total_quizzes_completed',
+                'total_assignments_completed',
+                'overall_quiz_average_score',
+                'overall_assignment_average_score',
+                'overall_average_score',
+                'last_performance_update'
+            ),
+            'description': 'Overall performance statistics across all courses (automatically updated)'
         }),
         ('Metadata', {
             'fields': ('created_at', 'updated_at', 'age'),
