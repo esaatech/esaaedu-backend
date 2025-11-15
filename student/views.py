@@ -3252,37 +3252,152 @@ class ParentDashboardView(APIView):
     
     def get_upcoming_tasks(self, student_profile, enrolled_courses):
         """
-        Get upcoming tasks (assignments with due dates)
-        From enrolled courses, get assignments with upcoming due dates
+        Get upcoming tasks from ClassEvents and Assignments
+        Returns all upcoming tasks (not filtered by time - frontend will handle that)
         """
-        # TODO: Query upcoming tasks from enrolled courses
-        # - Get assignments with due_date in the future from enrolled courses
-        # - Calculate days until due
-        # - Determine priority based on due date proximity
-        # For now, return placeholder
-        return [
-            {
-                'id': 'placeholder-1',
-                'subject': 'Mathematics',
-                'task': 'Chapter 5 Test',
-                'due': 'Tomorrow',
-                'priority': 'high',
-            },
-            {
-                'id': 'placeholder-2',
-                'subject': 'Science',
-                'task': 'Plant Growth Project',
-                'due': '3 days',
-                'priority': 'medium',
-            },
-            {
-                'id': 'placeholder-3',
-                'subject': 'English',
-                'task': 'Book Report',
-                'due': '1 week',
-                'priority': 'low',
-            },
-        ]
+        from courses.models import ClassEvent, Assignment, AssignmentSubmission
+        from student.models import StudentLessonProgress
+        from django.utils import timezone
+        from django.db.models import Q, Exists, OuterRef
+        
+        tasks = []
+        enrolled_course_ids = [enrollment.course.id for enrollment in enrolled_courses]
+        
+        # 1. Get ClassEvents from enrolled courses
+        # Query all event types (lesson, meeting, project, break) from classes in enrolled courses
+        # Only include events where student is enrolled in the class
+        class_events = ClassEvent.objects.filter(
+            class_instance__course_id__in=enrolled_course_ids,
+            class_instance__students=student_profile.user
+        ).select_related('class_instance', 'class_instance__course', 'lesson', 'project')
+        
+        for event in class_events:
+            course_title = event.class_instance.course.title if event.class_instance and event.class_instance.course else 'Unknown Course'
+            task_title = event.title
+            
+            # For project events, use project title if available
+            if event.event_type == 'project' and event.project_title:
+                task_title = event.project_title
+            elif event.event_type == 'project' and event.project:
+                task_title = event.project.title
+            
+            # For project events, use due_date
+            # For other events (lesson, meeting, break), use start_time and end_time
+            if event.event_type == 'project':
+                due_date = event.due_date
+                if due_date:
+                    # Ensure datetime is timezone-aware and in UTC before serializing
+                    if timezone.is_naive(due_date):
+                        due_date_utc = timezone.make_aware(due_date, timezone.utc)
+                    else:
+                        due_date_utc = due_date.astimezone(timezone.utc)
+                    
+                    # Format as ISO string with 'Z' suffix to indicate UTC
+                    due_date_iso = due_date_utc.isoformat().replace('+00:00', 'Z')
+                    
+                    tasks.append({
+                        'id': str(event.id),
+                        'type': 'class_event',
+                        'event_type': event.event_type,
+                        'title': task_title,
+                        'course_name': course_title,
+                        'course_id': str(event.class_instance.course.id) if event.class_instance and event.class_instance.course else None,
+                        'due_date': due_date_iso,
+                        'start_time': None,
+                        'end_time': None,
+                    })
+            elif event.start_time and event.end_time:
+                # For non-project events, use start_time as the reference date for sorting
+                # but include both start_time and end_time for display
+                start_time = event.start_time
+                end_time = event.end_time
+                
+                # Ensure datetimes are timezone-aware and in UTC before serializing
+                if timezone.is_naive(start_time):
+                    start_time_utc = timezone.make_aware(start_time, timezone.utc)
+                else:
+                    start_time_utc = start_time.astimezone(timezone.utc)
+                
+                if timezone.is_naive(end_time):
+                    end_time_utc = timezone.make_aware(end_time, timezone.utc)
+                else:
+                    end_time_utc = end_time.astimezone(timezone.utc)
+                
+                # Format as ISO strings with 'Z' suffix
+                start_time_iso = start_time_utc.isoformat().replace('+00:00', 'Z')
+                end_time_iso = end_time_utc.isoformat().replace('+00:00', 'Z')
+                
+                # Use start_time as due_date for sorting/filtering purposes
+                tasks.append({
+                    'id': str(event.id),
+                    'type': 'class_event',
+                    'event_type': event.event_type,
+                    'title': task_title,
+                    'course_name': course_title,
+                    'course_id': str(event.class_instance.course.id) if event.class_instance and event.class_instance.course else None,
+                    'due_date': start_time_iso,  # Use start_time for sorting
+                    'start_time': start_time_iso,
+                    'end_time': end_time_iso,
+                })
+        
+        # 2. Get Assignments from completed lessons
+        # Get all completed lessons for this student across enrolled courses
+        completed_lessons = StudentLessonProgress.objects.filter(
+            enrollment__in=enrolled_courses,
+            status='completed'
+        ).values_list('lesson_id', flat=True)
+        
+        if completed_lessons:
+            # Get assignments linked to completed lessons that haven't been submitted
+            assignments = Assignment.objects.filter(
+                lessons__id__in=completed_lessons,
+                due_date__isnull=False
+            ).distinct()
+            
+            # Exclude assignments that have been submitted
+            submitted_assignments = AssignmentSubmission.objects.filter(
+                student=student_profile.user,
+                enrollment__in=enrolled_courses
+            ).values_list('assignment_id', flat=True)
+            
+            assignments = assignments.exclude(id__in=submitted_assignments)
+            
+            for assignment in assignments:
+                # Get course from assignment's lessons (assignments can be linked to multiple lessons)
+                # Get the first enrolled course that contains this assignment's lessons
+                assignment_course = None
+                assignment_course_id = None
+                for enrollment in enrolled_courses:
+                    if assignment.lessons.filter(course=enrollment.course).exists():
+                        assignment_course = enrollment.course.title
+                        assignment_course_id = str(enrollment.course.id)
+                        break
+                
+                if assignment_course and assignment.due_date:  # Only add if we found a matching enrolled course
+                    # Ensure datetime is timezone-aware and in UTC before serializing
+                    due_date = assignment.due_date
+                    if timezone.is_naive(due_date):
+                        # If naive, assume it's in UTC and make it timezone-aware
+                        due_date_utc = timezone.make_aware(due_date, timezone.utc)
+                    else:
+                        # Convert to UTC if it's timezone-aware (but in a different timezone)
+                        due_date_utc = due_date.astimezone(timezone.utc)
+                    
+                    # Format as ISO string with 'Z' suffix to indicate UTC
+                    # Django's isoformat() returns '+00:00' for UTC, replace with 'Z' for JavaScript compatibility
+                    due_date_iso = due_date_utc.isoformat().replace('+00:00', 'Z')
+                    
+                    tasks.append({
+                        'id': str(assignment.id),
+                        'type': 'assignment',
+                        'event_type': 'assignment',
+                        'title': assignment.title,
+                        'course_name': assignment_course,
+                        'course_id': assignment_course_id,
+                        'due_date': due_date_iso,
+                    })
+        
+        return tasks
     
     def get_performance_data(self, student_profile, enrolled_courses):
         """
@@ -3504,38 +3619,15 @@ class ParentDashboardView(APIView):
     
     def get_notifications(self, student_profile, enrolled_courses):
         """
-        Get notifications for parent
-        Includes grade updates, assignment feedback, messages, reminders
+        Get notifications/messages for the parent
+        Returns assessments/reports from teachers and messages from admin
+        For now, returns empty array - will be implemented later
         """
-        # TODO: Get notifications from various sources
-        # - New grades from quiz attempts and assignment submissions in enrolled courses
-        # - Assignment feedback from teachers
-        # - Upcoming due dates reminders from assignments in enrolled courses
-        # - Messages from teachers (if message system exists)
-        # For now, return placeholder
-        return [
-            {
-                'id': 'placeholder-1',
-                'type': 'message',
-                'text': 'New message from Ms. Johnson',
-                'time': '1 hour ago',
-                'unread': True,
-            },
-            {
-                'id': 'placeholder-2',
-                'type': 'grade',
-                'text': 'Math quiz graded: 95/100',
-                'time': '3 hours ago',
-                'unread': True,
-            },
-            {
-                'id': 'placeholder-3',
-                'type': 'reminder',
-                'text': 'Science project due tomorrow',
-                'time': '5 hours ago',
-                'unread': False,
-            },
-        ]
+        # TODO: Implement notifications/messages functionality
+        # - Get teacher assessments/reports for enrolled students
+        # - Get admin messages
+        # - Format with type, text, time, unread status
+        return []
     
     def get_weekly_stats(self, student_profile, enrolled_courses):
         """

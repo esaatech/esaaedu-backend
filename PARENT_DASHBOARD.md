@@ -365,4 +365,272 @@ Potential improvements:
 
 This implementation provides efficient, automatically-maintained performance aggregates for the parent dashboard. The weighted average approach ensures accurate representation of student performance across all courses, while the signal-based updates maintain data consistency automatically.
 
+---
+
+# Parent Dashboard API - Complete Implementation
+
+## Overview
+
+The Parent Dashboard API provides comprehensive data for parents to monitor their child's academic performance, upcoming tasks, and receive messages from teachers and administrators.
+
+## API Endpoint
+
+**Base URL:** `/api/student/parent/dashboard/`
+
+**Method:** `GET`
+
+**Authentication:** Required (Bearer token)
+
+**View Class:** `ParentDashboardView` (located in `student/views.py`)
+
+## Response Structure
+
+```json
+{
+  "children": [...],
+  "recent_activities": [...],
+  "upcoming_tasks": [...],
+  "performance_data": [...],
+  "single_course_data": {...},
+  "notifications": [...],
+  "weekly_stats": {...}
+}
+```
+
+## Data Sections
+
+### 1. Weekly Performance Trends
+
+**Method:** `get_weekly_stats()`
+
+**Data Source:** `StudentWeeklyPerformance` model
+
+**Returns:**
+- `weekly_trend`: Array of weekly performance data (last 6 weeks)
+- `total_weeks`: Number of weeks with data
+
+**Weekly Trend Item Structure:**
+```json
+{
+  "week": "W1",
+  "year": 2024,
+  "week_number": 1,
+  "overall_avg": 85.5,
+  "quiz_avg": 88.0,
+  "assignment_avg": 83.0,
+  "quiz_count": 5,
+  "assignment_count": 3
+}
+```
+
+**Implementation Notes:**
+- Fetches last 6 weeks ordered by year and week_number (descending)
+- Reverses order to show oldest to newest (W1 → W6)
+- Calculates overall average from quiz and assignment averages
+- Returns empty array if `StudentWeeklyPerformance` table doesn't exist
+
+### 2. Course Performance Data
+
+**Method:** `get_performance_data()`
+
+**Returns:** Array of course performance summaries
+
+**Structure:**
+```json
+{
+  "subject": "Course Name",
+  "score": 82,
+  "trend": "stable"
+}
+```
+
+**Calculation:**
+- For each enrolled course:
+  - Calculates quiz average from `QuizAttempt` records
+  - Calculates assignment average from `AssignmentSubmission` records
+  - Computes weighted overall average: `(quiz_avg × quiz_count + assignment_avg × assignment_count) / total_count`
+- Only includes courses with at least one score
+
+### 3. Detailed Course Breakdown
+
+**Method:** `get_all_courses_detailed_data()`
+
+**Endpoint:** `/api/student/parent/dashboard/courses-detailed/`
+
+**View Class:** `AllCoursesDetailedView`
+
+**Purpose:** Provides detailed breakdown for all courses (fetched asynchronously)
+
+**Returns:** Array of course details
+
+**Course Detail Structure:**
+```json
+{
+  "course_name": "Course Title",
+  "course_id": "uuid",
+  "current_score": 82,
+  "trend": "stable",
+  "breakdown": [
+    {
+      "category": "Homework",
+      "score": 80,
+      "color": "bg-blue-500"
+    },
+    {
+      "category": "Quizzes",
+      "score": 85,
+      "color": "bg-purple-500"
+    },
+    {
+      "category": "Tests",
+      "score": null,
+      "color": "bg-green-500"
+    },
+    {
+      "category": "Participation",
+      "score": null,
+      "color": "bg-orange-500"
+    }
+  ],
+  "recent_grades": [
+    {
+      "assignment": "Quiz Title",
+      "date": "Nov 13",
+      "score": 95,
+      "type": "quiz"
+    }
+  ]
+}
+```
+
+**Breakdown Categories:**
+- **Homework**: Assignment average (from `AssignmentSubmission`)
+- **Quizzes**: Quiz average (from `QuizAttempt`)
+- **Tests**: Currently null (no grade)
+- **Participation**: Currently null (no grade)
+
+**Recent Grades:**
+- Combines last 3 quiz attempts and last 3 assignment submissions
+- Sorted by date (most recent first)
+- Limited to 5 total items
+- Includes assignment name, date, score, and type
+
+### 4. Upcoming Tasks
+
+**Method:** `get_upcoming_tasks()`
+
+**Returns:** Array of upcoming tasks from ClassEvents and Assignments
+
+**Task Structure:**
+```json
+{
+  "id": "uuid",
+  "type": "class_event" | "assignment",
+  "event_type": "lesson" | "meeting" | "project" | "break" | "assignment",
+  "title": "Task Title",
+  "course_name": "Course Name",
+  "course_id": "uuid",
+  "due_date": "2024-11-16T00:00:00Z",
+  "start_time": "2024-11-16T00:00:00Z",  // For non-project events
+  "end_time": "2024-11-16T01:00:00Z"     // For non-project events
+}
+```
+
+**Data Sources:**
+
+1. **ClassEvents** (all event types):
+   - Filters events from classes where student is enrolled
+   - For projects: Uses `due_date` field
+   - For other events: Uses `start_time` as reference date
+   - Includes both `start_time` and `end_time` for non-project events
+
+2. **Assignments**:
+   - Gets assignments from completed lessons (`StudentLessonProgress` where `status='completed'`)
+   - Excludes assignments already submitted (`AssignmentSubmission` exists)
+   - Only includes assignments with `due_date` set
+   - Matches assignments to enrolled courses via lesson relationships
+
+**Timezone Handling:**
+- All datetime fields converted to UTC before serialization
+- ISO format includes 'Z' suffix for JavaScript compatibility
+- Frontend handles conversion to user's local timezone
+
+### 5. Messages/Notifications
+
+**Method:** `get_notifications()`
+
+**Returns:** Empty array (to be implemented)
+
+**Planned Structure:**
+```json
+{
+  "id": "uuid",
+  "type": "message" | "grade" | "reminder",
+  "text": "Message content",
+  "time": "1 hour ago",
+  "unread": true
+}
+```
+
+**Future Implementation:**
+- Teacher assessments/reports for enrolled students
+- Admin messages
+- Grade updates
+- Assignment feedback
+
+## Performance Optimizations
+
+### 1. Query Optimization
+
+**Enrolled Courses Query:**
+```python
+enrolled_courses_queryset = EnrolledCourse.objects.filter(
+    student_profile=student_profile,
+    status='active'
+).select_related('course').only(
+    'id', 'completed_lessons_count', 'total_lessons_count', 
+    'course_id', 'student_profile_id', 'average_quiz_score', 
+    'average_assignment_score', 'course__title', 'course__id'
+)
+```
+
+- Uses `select_related('course')` to avoid N+1 queries
+- Uses `only()` to fetch only required fields
+- Evaluates queryset to list before passing to helper methods
+
+### 2. Asynchronous Data Loading
+
+- **Initial Load**: Returns basic performance data quickly
+- **Detailed Data**: `courses-detailed` endpoint fetched asynchronously via SWR
+- Reduces initial page load time
+- Detailed breakdown loads in background
+
+### 3. Efficient Aggregations
+
+- Uses enrollment's stored averages (`average_quiz_score`, `average_assignment_score`) when available
+- Falls back to calculation only if stored values are null
+- Reduces database queries for repeated requests
+
+## Error Handling
+
+All methods include try-except blocks:
+- Returns empty arrays/objects on errors
+- Logs errors for debugging
+- Doesn't break dashboard if one section fails
+
+## Related Files
+
+- `student/views.py` - Main view implementation
+- `student/urls.py` - URL routing
+- `users/models.py` - StudentWeeklyPerformance model
+- `courses/models.py` - ClassEvent, Assignment, QuizAttempt, AssignmentSubmission models
+- `student/models.py` - StudentLessonProgress, EnrolledCourse models
+
+## API Endpoints Summary
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/student/parent/dashboard/` | GET | Main dashboard data |
+| `/api/student/parent/dashboard/courses-detailed/` | GET | Detailed course breakdowns (async) |
+
 
