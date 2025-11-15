@@ -46,6 +46,7 @@ urlpatterns = [
     
     # Parent Dashboard
     path('parent/dashboard/', views.ParentDashboardView.as_view(), name='parent_dashboard'),
+    path('parent/dashboard/courses-detailed/', views.AllCoursesDetailedView.as_view(), name='all_courses_detailed'),
     
     # TODO: Add other student-related endpoints as needed
     # path('attendance/', views.student_attendance, name='student_attendance'),

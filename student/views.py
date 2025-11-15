@@ -3086,11 +3086,15 @@ class ParentDashboardView(APIView):
                 )
             
             # Get enrolled courses for data aggregation
-            # Don't use select_related or prefetch_related to avoid any prefetch issues
+            # Use select_related to get course data for performance calculations
             enrolled_courses_queryset = EnrolledCourse.objects.filter(
                 student_profile=student_profile,
                 status='active'
-            ).only('id', 'completed_lessons_count', 'total_lessons_count', 'course_id', 'student_profile_id')
+            ).select_related('course').only(
+                'id', 'completed_lessons_count', 'total_lessons_count', 
+                'course_id', 'student_profile_id', 'average_quiz_score', 
+                'average_assignment_score', 'course__title'
+            )
             
             # Convert to list immediately to force evaluation and avoid prefetch issues
             # This ensures the queryset is fully evaluated before any methods try to use it
@@ -3285,107 +3289,217 @@ class ParentDashboardView(APIView):
         Get performance data by subject/course
         Aggregates quiz and assignment scores by course/subject
         """
-        # TODO: Calculate performance by subject from enrolled courses
-        # - Group by course/subject from enrolled_courses
-        # - Calculate average scores per subject from QuizAttempt and AssignmentSubmission
-        # - Determine trend (up/down/stable) by comparing recent vs older scores
-        # For now, return placeholder
-        return [
-            {
-                'subject': 'Math',
-                'score': 92,
-                'trend': 'up',
-            },
-            {
-                'subject': 'English',
-                'score': 88,
-                'trend': 'up',
-            },
-            {
-                'subject': 'Science',
-                'score': 95,
-                'trend': 'up',
-            },
-            {
-                'subject': 'History',
-                'score': 85,
-                'trend': 'down',
-            },
-            {
-                'subject': 'Art',
-                'score': 90,
-                'trend': 'stable',
-            },
-        ]
+        from courses.models import QuizAttempt, AssignmentSubmission
+        from django.db.models import Avg, Q
+        
+        performance_data = []
+        
+        for enrollment in enrolled_courses:
+            # Get course title
+            course_title = enrollment.course.title if hasattr(enrollment, 'course') and enrollment.course else 'Unknown Course'
+            
+            # Calculate quiz average for this enrollment
+            quiz_attempts = QuizAttempt.objects.filter(
+                enrollment=enrollment,
+                completed_at__isnull=False,
+                score__isnull=False
+            )
+            
+            quiz_avg = None
+            if quiz_attempts.exists():
+                # Use final_score property if available (handles teacher-graded quizzes)
+                quiz_scores = []
+                for attempt in quiz_attempts:
+                    score = attempt.final_score if hasattr(attempt, 'final_score') else attempt.score
+                    if score is not None:
+                        quiz_scores.append(float(score))
+                
+                if quiz_scores:
+                    quiz_avg = sum(quiz_scores) / len(quiz_scores)
+            
+            # Calculate assignment average for this enrollment
+            assignment_submissions = AssignmentSubmission.objects.filter(
+                enrollment=enrollment,
+                is_graded=True,
+                percentage__isnull=False
+            )
+            
+            assignment_avg = None
+            if assignment_submissions.exists():
+                assignment_scores = [float(sub.percentage) for sub in assignment_submissions if sub.percentage is not None]
+                if assignment_scores:
+                    assignment_avg = sum(assignment_scores) / len(assignment_scores)
+            
+            # Calculate overall average (weighted by count)
+            overall_score = None
+            if quiz_avg is not None and assignment_avg is not None:
+                # Weighted average
+                quiz_count = quiz_attempts.count()
+                assignment_count = assignment_submissions.count()
+                total_count = quiz_count + assignment_count
+                if total_count > 0:
+                    overall_score = ((quiz_avg * quiz_count) + (assignment_avg * assignment_count)) / total_count
+            elif quiz_avg is not None:
+                overall_score = quiz_avg
+            elif assignment_avg is not None:
+                overall_score = assignment_avg
+            
+            # Only include courses with at least some performance data
+            if overall_score is not None:
+                performance_data.append({
+                    'subject': course_title,
+                    'score': round(overall_score),
+                    'trend': 'stable',  # Can be enhanced later to compare with previous periods
+                })
+        
+        # If no performance data, return empty list
+        return performance_data
     
     def get_single_course_data(self, student_profile, enrolled_courses):
         """
         Get detailed single course performance data
         Includes weekly progress trend, grade breakdown, recent grades
         """
-        # TODO: Get detailed data for a single course (most active or selected)
-        # - Select most active course from enrolled_courses
-        # - Weekly progress trend (last 6 weeks) from enrollment progress history
-        # - Grade breakdown by category (quizzes, assignments, tests, participation)
-        # - Recent grades/assignments from QuizAttempt and AssignmentSubmission
-        # For now, return placeholder
-        return {
-            'course_name': 'Advanced Mathematics',
-            'current_score': 92,
-            'trend': 'up',
-            'weekly_progress': [78, 82, 85, 88, 90, 92],
-            'breakdown': [
-                {
-                    'category': 'Homework',
-                    'score': 95,
-                    'weight': 30,
-                    'color': 'bg-blue-500',
-                },
-                {
-                    'category': 'Quizzes',
-                    'score': 90,
-                    'weight': 25,
-                    'color': 'bg-purple-500',
-                },
-                {
-                    'category': 'Tests',
-                    'score': 88,
-                    'weight': 35,
-                    'color': 'bg-green-500',
-                },
-                {
-                    'category': 'Participation',
-                    'score': 96,
-                    'weight': 10,
-                    'color': 'bg-orange-500',
-                },
-            ],
-            'recent_grades': [
-                {
-                    'assignment': 'Chapter 5 Quiz',
-                    'date': 'Nov 10',
-                    'score': 95,
+        from courses.models import QuizAttempt, AssignmentSubmission
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        # Select most active course (first one with data, or first enrolled course)
+        if not enrolled_courses:
+            return {
+                'course_name': 'No Course',
+                'current_score': 0,
+                'trend': 'stable',
+                'weekly_progress': [],
+                'breakdown': [],
+                'recent_grades': [],
+            }
+        
+        # Get the first enrolled course (or most active one)
+        enrollment = enrolled_courses[0]
+        course_title = enrollment.course.title if hasattr(enrollment, 'course') and enrollment.course else 'Unknown Course'
+        
+        # Calculate current averages from enrollment or calculate them
+        quiz_avg = None
+        assignment_avg = None
+        
+        # Try to use enrollment's stored averages first
+        if enrollment.average_quiz_score is not None:
+            quiz_avg = float(enrollment.average_quiz_score)
+        else:
+            # Calculate from QuizAttempt
+            quiz_attempts = QuizAttempt.objects.filter(
+                enrollment=enrollment,
+                completed_at__isnull=False,
+                score__isnull=False
+            )
+            if quiz_attempts.exists():
+                quiz_scores = []
+                for attempt in quiz_attempts:
+                    score = attempt.final_score if hasattr(attempt, 'final_score') else attempt.score
+                    if score is not None:
+                        quiz_scores.append(float(score))
+                if quiz_scores:
+                    quiz_avg = sum(quiz_scores) / len(quiz_scores)
+        
+        if enrollment.average_assignment_score is not None:
+            assignment_avg = float(enrollment.average_assignment_score)
+        else:
+            # Calculate from AssignmentSubmission
+            assignment_submissions = AssignmentSubmission.objects.filter(
+                enrollment=enrollment,
+                is_graded=True,
+                percentage__isnull=False
+            )
+            if assignment_submissions.exists():
+                assignment_scores = [float(sub.percentage) for sub in assignment_submissions if sub.percentage is not None]
+                if assignment_scores:
+                    assignment_avg = sum(assignment_scores) / len(assignment_scores)
+        
+        # Calculate current score (overall average)
+        current_score = 0
+        if quiz_avg is not None and assignment_avg is not None:
+            quiz_count = QuizAttempt.objects.filter(enrollment=enrollment, completed_at__isnull=False, score__isnull=False).count()
+            assignment_count = AssignmentSubmission.objects.filter(enrollment=enrollment, is_graded=True, percentage__isnull=False).count()
+            total_count = quiz_count + assignment_count
+            if total_count > 0:
+                current_score = ((quiz_avg * quiz_count) + (assignment_avg * assignment_count)) / total_count
+        elif quiz_avg is not None:
+            current_score = quiz_avg
+        elif assignment_avg is not None:
+            current_score = assignment_avg
+        
+        # Build breakdown (weekly stats will be used for the chart, but we need breakdown here)
+        breakdown = [
+            {
+                'category': 'Homework',
+                'score': round(assignment_avg) if assignment_avg is not None else None,
+                'color': 'bg-blue-500',
+            },
+            {
+                'category': 'Quizzes',
+                'score': round(quiz_avg) if quiz_avg is not None else None,
+                'color': 'bg-purple-500',
+            },
+            {
+                'category': 'Tests',
+                'score': None,  # No grade for now
+                'color': 'bg-green-500',
+            },
+            {
+                'category': 'Participation',
+                'score': None,  # No grade for now
+                'color': 'bg-orange-500',
+            },
+        ]
+        
+        # Get recent grades (last 5 quiz attempts and assignments)
+        recent_grades = []
+        
+        # Recent quiz attempts
+        recent_quizzes = QuizAttempt.objects.filter(
+            enrollment=enrollment,
+            completed_at__isnull=False,
+            score__isnull=False
+        ).order_by('-completed_at')[:3]
+        
+        for quiz_attempt in recent_quizzes:
+            score = quiz_attempt.final_score if hasattr(quiz_attempt, 'final_score') else quiz_attempt.score
+            if score is not None:
+                recent_grades.append({
+                    'assignment': quiz_attempt.quiz.title if hasattr(quiz_attempt, 'quiz') and quiz_attempt.quiz else 'Quiz',
+                    'date': quiz_attempt.completed_at.strftime('%b %d') if quiz_attempt.completed_at else '',
+                    'score': round(float(score)),
                     'type': 'quiz',
-                },
-                {
-                    'assignment': 'Homework Set 12',
-                    'date': 'Nov 9',
-                    'score': 100,
+                })
+        
+        # Recent assignments
+        recent_assignments = AssignmentSubmission.objects.filter(
+            enrollment=enrollment,
+            is_graded=True,
+            percentage__isnull=False
+        ).order_by('-graded_at', '-submitted_at')[:3]
+        
+        for assignment_sub in recent_assignments:
+            if assignment_sub.percentage is not None:
+                recent_grades.append({
+                    'assignment': assignment_sub.assignment.title if hasattr(assignment_sub, 'assignment') and assignment_sub.assignment else 'Assignment',
+                    'date': (assignment_sub.graded_at or assignment_sub.submitted_at).strftime('%b %d') if (assignment_sub.graded_at or assignment_sub.submitted_at) else '',
+                    'score': round(float(assignment_sub.percentage)),
                     'type': 'homework',
-                },
-                {
-                    'assignment': 'Mid-term Exam',
-                    'date': 'Nov 5',
-                    'score': 88,
-                    'type': 'test',
-                },
-                {
-                    'assignment': 'Problem Set 11',
-                    'date': 'Nov 3',
-                    'score': 92,
-                    'type': 'homework',
-                },
-            ],
+                })
+        
+        # Sort by date (most recent first) and limit to 5
+        recent_grades.sort(key=lambda x: x.get('date', ''), reverse=True)
+        recent_grades = recent_grades[:5]
+        
+        return {
+            'course_name': course_title,
+            'current_score': round(current_score) if current_score > 0 else 0,
+            'trend': 'stable',  # Can be enhanced later
+            'weekly_progress': [],  # This will be populated from weekly_stats in frontend
+            'breakdown': breakdown,
+            'recent_grades': recent_grades,
         }
     
     def get_notifications(self, student_profile, enrolled_courses):
@@ -3472,3 +3586,190 @@ class ParentDashboardView(APIView):
                 'weekly_trend': [],
                 'total_weeks': 0,
             }
+    
+    def get_all_courses_detailed_data(self, student_profile, enrolled_courses):
+        """
+        Get detailed breakdown data for all enrolled courses
+        Returns array of course details including breakdown and recent grades
+        This is called asynchronously after initial dashboard load
+        """
+        from courses.models import QuizAttempt, AssignmentSubmission
+        
+        courses_detailed = []
+        
+        for enrollment in enrolled_courses:
+            course_title = enrollment.course.title if hasattr(enrollment, 'course') and enrollment.course else 'Unknown Course'
+            
+            # Calculate quiz average
+            quiz_avg = None
+            if enrollment.average_quiz_score is not None:
+                quiz_avg = float(enrollment.average_quiz_score)
+            else:
+                quiz_attempts = QuizAttempt.objects.filter(
+                    enrollment=enrollment,
+                    completed_at__isnull=False,
+                    score__isnull=False
+                )
+                if quiz_attempts.exists():
+                    quiz_scores = []
+                    for attempt in quiz_attempts:
+                        score = attempt.final_score if hasattr(attempt, 'final_score') else attempt.score
+                        if score is not None:
+                            quiz_scores.append(float(score))
+                    if quiz_scores:
+                        quiz_avg = sum(quiz_scores) / len(quiz_scores)
+            
+            # Calculate assignment average
+            assignment_avg = None
+            if enrollment.average_assignment_score is not None:
+                assignment_avg = float(enrollment.average_assignment_score)
+            else:
+                assignment_submissions = AssignmentSubmission.objects.filter(
+                    enrollment=enrollment,
+                    is_graded=True,
+                    percentage__isnull=False
+                )
+                if assignment_submissions.exists():
+                    assignment_scores = [float(sub.percentage) for sub in assignment_submissions if sub.percentage is not None]
+                    if assignment_scores:
+                        assignment_avg = sum(assignment_scores) / len(assignment_scores)
+            
+            # Calculate current score
+            current_score = 0
+            if quiz_avg is not None and assignment_avg is not None:
+                quiz_count = QuizAttempt.objects.filter(enrollment=enrollment, completed_at__isnull=False, score__isnull=False).count()
+                assignment_count = AssignmentSubmission.objects.filter(enrollment=enrollment, is_graded=True, percentage__isnull=False).count()
+                total_count = quiz_count + assignment_count
+                if total_count > 0:
+                    current_score = ((quiz_avg * quiz_count) + (assignment_avg * assignment_count)) / total_count
+            elif quiz_avg is not None:
+                current_score = quiz_avg
+            elif assignment_avg is not None:
+                current_score = assignment_avg
+            
+            # Build breakdown
+            breakdown = [
+                {
+                    'category': 'Homework',
+                    'score': round(assignment_avg) if assignment_avg is not None else None,
+                    'color': 'bg-blue-500',
+                },
+                {
+                    'category': 'Quizzes',
+                    'score': round(quiz_avg) if quiz_avg is not None else None,
+                    'color': 'bg-purple-500',
+                },
+                {
+                    'category': 'Tests',
+                    'score': None,
+                    'color': 'bg-green-500',
+                },
+                {
+                    'category': 'Participation',
+                    'score': None,
+                    'color': 'bg-orange-500',
+                },
+            ]
+            
+            # Get recent grades
+            recent_grades = []
+            
+            # Recent quiz attempts
+            recent_quizzes = QuizAttempt.objects.filter(
+                enrollment=enrollment,
+                completed_at__isnull=False,
+                score__isnull=False
+            ).order_by('-completed_at')[:3]
+            
+            for quiz_attempt in recent_quizzes:
+                score = quiz_attempt.final_score if hasattr(quiz_attempt, 'final_score') else quiz_attempt.score
+                if score is not None:
+                    recent_grades.append({
+                        'assignment': quiz_attempt.quiz.title if hasattr(quiz_attempt, 'quiz') and quiz_attempt.quiz else 'Quiz',
+                        'date': quiz_attempt.completed_at.strftime('%b %d') if quiz_attempt.completed_at else '',
+                        'score': round(float(score)),
+                        'type': 'quiz',
+                    })
+            
+            # Recent assignments
+            recent_assignments = AssignmentSubmission.objects.filter(
+                enrollment=enrollment,
+                is_graded=True,
+                percentage__isnull=False
+            ).order_by('-graded_at', '-submitted_at')[:3]
+            
+            for assignment_sub in recent_assignments:
+                if assignment_sub.percentage is not None:
+                    recent_grades.append({
+                        'assignment': assignment_sub.assignment.title if hasattr(assignment_sub, 'assignment') and assignment_sub.assignment else 'Assignment',
+                        'date': (assignment_sub.graded_at or assignment_sub.submitted_at).strftime('%b %d') if (assignment_sub.graded_at or assignment_sub.submitted_at) else '',
+                        'score': round(float(assignment_sub.percentage)),
+                        'type': 'homework',
+                    })
+            
+            # Sort by date and limit
+            recent_grades.sort(key=lambda x: x.get('date', ''), reverse=True)
+            recent_grades = recent_grades[:5]
+            
+            courses_detailed.append({
+                'course_name': course_title,
+                'course_id': str(enrollment.course.id) if hasattr(enrollment, 'course') and enrollment.course else None,
+                'current_score': round(current_score) if current_score > 0 else 0,
+                'trend': 'stable',
+                'breakdown': breakdown,
+                'recent_grades': recent_grades,
+            })
+        
+        return courses_detailed
+
+
+class AllCoursesDetailedView(APIView):
+    """
+    Get detailed breakdown data for all enrolled courses
+    Called asynchronously after initial dashboard load
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """
+        Get detailed data for all enrolled courses
+        """
+        try:
+            student_profile = getattr(request.user, 'student_profile', None)
+            
+            if not student_profile:
+                return Response(
+                    {'error': 'Student profile not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get enrolled courses
+            enrolled_courses_queryset = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                status='active'
+            ).select_related('course').only(
+                'id', 'course_id', 'student_profile_id', 
+                'average_quiz_score', 'average_assignment_score', 
+                'course__title', 'course__id'
+            )
+            
+            enrolled_courses_objects = list(enrolled_courses_queryset)
+            
+            # Get detailed data for all courses
+            view_instance = ParentDashboardView()
+            courses_detailed = view_instance.get_all_courses_detailed_data(
+                student_profile, 
+                enrolled_courses_objects
+            )
+            
+            return Response({
+                'courses': courses_detailed
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': 'Failed to fetch courses detailed data', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
