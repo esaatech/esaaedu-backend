@@ -3253,7 +3253,7 @@ class ParentDashboardView(APIView):
     def get_upcoming_tasks(self, student_profile, enrolled_courses):
         """
         Get upcoming tasks from ClassEvents and Assignments
-        Returns all upcoming tasks (not filtered by time - frontend will handle that)
+        Returns only upcoming tasks (filtered by date on backend for performance)
         """
         from courses.models import ClassEvent, Assignment, AssignmentSubmission
         from student.models import StudentLessonProgress
@@ -3262,13 +3262,20 @@ class ParentDashboardView(APIView):
         
         tasks = []
         enrolled_course_ids = [enrollment.course.id for enrollment in enrolled_courses]
+        now_utc = timezone.now()
         
         # 1. Get ClassEvents from enrolled courses
         # Query all event types (lesson, meeting, project, break) from classes in enrolled courses
         # Only include events where student is enrolled in the class
+        # Filter to only upcoming/ongoing events:
+        #   - For projects: due_date >= now (not yet due)
+        #   - For other events: end_time > now (includes upcoming and ongoing events)
         class_events = ClassEvent.objects.filter(
             class_instance__course_id__in=enrolled_course_ids,
             class_instance__students=student_profile.user
+        ).filter(
+            Q(event_type='project', due_date__gte=now_utc) |
+            Q(event_type__in=['lesson', 'meeting', 'break'], end_time__gt=now_utc)
         ).select_related('class_instance', 'class_instance__course', 'lesson', 'project')
         
         for event in class_events:
@@ -3349,9 +3356,11 @@ class ParentDashboardView(APIView):
         
         if completed_lessons:
             # Get assignments linked to completed lessons that haven't been submitted
+            # Only include upcoming assignments (due_date >= now)
             assignments = Assignment.objects.filter(
                 lessons__id__in=completed_lessons,
-                due_date__isnull=False
+                due_date__isnull=False,
+                due_date__gte=now_utc
             ).distinct()
             
             # Exclude assignments that have been submitted
