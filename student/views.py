@@ -11,7 +11,7 @@ from django.db.models import Q, Count, Avg
 from datetime import datetime, timedelta
 import uuid
 
-from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback
+from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback, Conversation, Message
 from courses.models import Class, ClassEvent, Course, Lesson, Quiz, QuizAttempt, Question, Assignment, AssignmentSubmission
 from settings.models import UserDashboardSettings
 from .serializers import (
@@ -34,8 +34,12 @@ from .serializers import (
     DashboardOverviewSerializer,
     # Assignment Submission Serializers
     AssignmentSubmissionSerializer,
-    AssignmentSubmissionResponseSerializer
+    AssignmentSubmissionResponseSerializer,
+    # Messaging Serializers
+    ConversationListSerializer, ConversationSerializer,
+    MessageSerializer, CreateMessageSerializer
 )
+from users.models import StudentProfile
 
 
 class StudentPagination(PageNumberPagination):
@@ -3109,6 +3113,7 @@ class ParentDashboardView(APIView):
                 'single_course_data': self.get_single_course_data(student_profile, enrolled_courses_objects),
                 'notifications': self.get_notifications(student_profile, enrolled_courses_objects),
                 'weekly_stats': self.get_weekly_stats(student_profile, enrolled_courses_objects),
+                'messages_unread_count': self.get_messages_unread_count(student_profile),
             }
             
             return Response(response_data, status=status.HTTP_200_OK)
@@ -3638,6 +3643,31 @@ class ParentDashboardView(APIView):
         # - Format with type, text, time, unread status
         return []
     
+    def get_messages_unread_count(self, student_profile):
+        """
+        Get unread message count for parent
+        Returns count of unread messages in parent-type conversations
+        """
+        try:
+            # Get parent-type conversations for this student
+            conversations = Conversation.objects.filter(
+                student_profile=student_profile,
+                recipient_type='parent'
+            )
+            
+            # Count unread messages (messages not sent by parent and not read)
+            parent_user = student_profile.user
+            unread_count = Message.objects.filter(
+                conversation__in=conversations
+            ).exclude(sender=parent_user).filter(read_at__isnull=True).count()
+            
+            return unread_count
+        except Exception as e:
+            # If there's an error, return 0 to avoid breaking the dashboard
+            import traceback
+            traceback.print_exc()
+            return 0
+    
     def get_weekly_stats(self, student_profile, enrolled_courses):
         """
         Get weekly performance statistics (quiz and assignment averages over time)
@@ -3872,5 +3902,341 @@ class AllCoursesDetailedView(APIView):
             traceback.print_exc()
             return Response(
                 {'error': 'Failed to fetch courses detailed data', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ===== PARENT MESSAGING VIEWS =====
+
+class ParentMessagePagination(PageNumberPagination):
+    """Pagination for parent message lists"""
+    page_size = 50
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
+class ParentConversationsListView(APIView):
+    """
+    List conversations for parent's student.
+    Parents can only see recipient_type='parent' conversations.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get_parent_student_profile(self, parent_user):
+        """Get student profile for parent's child"""
+        try:
+            return StudentProfile.objects.get(user=parent_user)
+        except StudentProfile.DoesNotExist:
+            return None
+    
+    def get(self, request):
+        """List conversations for parent's student"""
+        try:
+            parent_user = request.user
+            if parent_user.role != 'student':
+                return Response(
+                    {'error': 'Only parents can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get student profile (parent's child)
+            student_profile = self.get_parent_student_profile(parent_user)
+            if not student_profile:
+                return Response(
+                    {'error': 'Student profile not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get conversations - only parent type
+            conversations = Conversation.objects.filter(
+                student_profile=student_profile,
+                recipient_type='parent'
+            ).select_related('student_profile', 'student_profile__user', 'teacher')
+            
+            # Order by last message time
+            conversations = conversations.order_by('-last_message_at', '-created_at')
+            
+            # Serialize with context for unread count
+            serializer = ConversationListSerializer(
+                conversations,
+                many=True,
+                context={'request': request}
+            )
+            
+            return Response({
+                'conversations': serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': 'Failed to fetch conversations', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class ParentConversationMessagesView(APIView):
+    """
+    Get messages in a conversation or send a new message.
+    Parents can only access recipient_type='parent' conversations for their student.
+    """
+    permission_classes = [IsAuthenticated]
+    pagination_class = ParentMessagePagination
+    
+    def verify_parent_access(self, parent_user, conversation):
+        """Verify parent has access to this conversation"""
+        # Check if conversation is for parent's student
+        student_profile = self.get_parent_student_profile(parent_user)
+        if not student_profile:
+            return False
+        
+        return (
+            conversation.student_profile == student_profile and
+            conversation.recipient_type == 'parent'
+        )
+    
+    def get_parent_student_profile(self, parent_user):
+        """Get student profile for parent's child"""
+        try:
+            return StudentProfile.objects.get(user=parent_user)
+        except StudentProfile.DoesNotExist:
+            return None
+    
+    def get(self, request, conversation_id):
+        """Get messages in conversation"""
+        try:
+            parent_user = request.user
+            if parent_user.role != 'student':
+                return Response(
+                    {'error': 'Only parents can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get conversation
+            try:
+                conversation = Conversation.objects.select_related(
+                    'student_profile', 'student_profile__user', 'teacher'
+                ).get(id=conversation_id)
+            except Conversation.DoesNotExist:
+                return Response(
+                    {'error': 'Conversation not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Verify access
+            if not self.verify_parent_access(parent_user, conversation):
+                return Response(
+                    {'error': 'You do not have access to this conversation'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get messages with pagination
+            messages = conversation.messages.select_related('sender').order_by('created_at')
+            
+            paginator = self.pagination_class()
+            page = paginator.paginate_queryset(messages, request)
+            
+            if page is not None:
+                serializer = MessageSerializer(page, many=True)
+                # Return in the format expected by frontend
+                return Response({
+                    'conversation': ConversationSerializer(conversation).data,
+                    'messages': serializer.data,
+                    'pagination': {
+                        'page': paginator.page.number,
+                        'page_size': paginator.page_size,
+                        'total_pages': paginator.page.paginator.num_pages,
+                        'total_count': paginator.page.paginator.count,
+                    }
+                }, status=status.HTTP_200_OK)
+            
+            # No pagination
+            serializer = MessageSerializer(messages, many=True)
+            return Response({
+                'conversation': ConversationSerializer(conversation).data,
+                'messages': serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': 'Failed to fetch messages', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, conversation_id):
+        """Send a new message"""
+        try:
+            parent_user = request.user
+            if parent_user.role != 'student':
+                return Response(
+                    {'error': 'Only parents can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get conversation
+            try:
+                conversation = Conversation.objects.select_related(
+                    'student_profile', 'teacher'
+                ).get(id=conversation_id)
+            except Conversation.DoesNotExist:
+                return Response(
+                    {'error': 'Conversation not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Verify access
+            if not self.verify_parent_access(parent_user, conversation):
+                return Response(
+                    {'error': 'You do not have access to this conversation'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Validate message data
+            serializer = CreateMessageSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create message
+            message = Message.objects.create(
+                conversation=conversation,
+                sender=parent_user,
+                content=serializer.validated_data['content']
+            )
+            
+            # Update conversation's last_message_at
+            conversation.last_message_at = timezone.now()
+            conversation.save(update_fields=['last_message_at'])
+            
+            # Serialize response
+            response_serializer = MessageSerializer(message)
+            
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': 'Failed to send message', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class ParentMarkMessageReadView(APIView):
+    """Mark a message as read (parent)"""
+    permission_classes = [IsAuthenticated]
+    
+    def get_parent_student_profile(self, parent_user):
+        """Get student profile for parent's child"""
+        try:
+            return StudentProfile.objects.get(user=parent_user)
+        except StudentProfile.DoesNotExist:
+            return None
+    
+    def verify_parent_access(self, parent_user, conversation):
+        """Verify parent has access to this conversation"""
+        student_profile = self.get_parent_student_profile(parent_user)
+        if not student_profile:
+            return False
+        
+        return (
+            conversation.student_profile == student_profile and
+            conversation.recipient_type == 'parent'
+        )
+    
+    def patch(self, request, message_id):
+        """Mark message as read"""
+        try:
+            parent_user = request.user
+            if parent_user.role != 'student':
+                return Response(
+                    {'error': 'Only parents can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get message
+            try:
+                message = Message.objects.select_related(
+                    'conversation', 'conversation__student_profile'
+                ).get(id=message_id)
+            except Message.DoesNotExist:
+                return Response(
+                    {'error': 'Message not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Verify parent has access to conversation
+            if not self.verify_parent_access(parent_user, message.conversation):
+                return Response(
+                    {'error': 'You do not have access to this message'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Mark as read
+            message.mark_as_read(parent_user)
+            
+            # Serialize response
+            serializer = MessageSerializer(message)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': 'Failed to mark message as read', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class ParentUnreadCountView(APIView):
+    """Get unread message count for parent"""
+    permission_classes = [IsAuthenticated]
+    
+    def get_parent_student_profile(self, parent_user):
+        """Get student profile for parent's child"""
+        try:
+            return StudentProfile.objects.get(user=parent_user)
+        except StudentProfile.DoesNotExist:
+            return None
+    
+    def get(self, request):
+        """Get unread count for parent"""
+        try:
+            parent_user = request.user
+            if parent_user.role != 'student':
+                return Response(
+                    {'error': 'Only parents can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get student profile
+            student_profile = self.get_parent_student_profile(parent_user)
+            if not student_profile:
+                return Response({
+                    'unread_count': 0
+                }, status=status.HTTP_200_OK)
+            
+            # Get parent-type conversations for this student
+            conversations = Conversation.objects.filter(
+                student_profile=student_profile,
+                recipient_type='parent'
+            )
+            
+            # Count unread messages (messages not sent by parent and not read)
+            unread_count = Message.objects.filter(
+                conversation__in=conversations
+            ).exclude(sender=parent_user).filter(read_at__isnull=True).count()
+            
+            return Response({
+                'unread_count': unread_count
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': 'Failed to get unread count', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

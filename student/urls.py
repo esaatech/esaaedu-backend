@@ -48,6 +48,12 @@ urlpatterns = [
     path('parent/dashboard/', views.ParentDashboardView.as_view(), name='parent_dashboard'),
     path('parent/dashboard/courses-detailed/', views.AllCoursesDetailedView.as_view(), name='all_courses_detailed'),
     
+    # Parent Messaging URLs
+    path('parent/dashboard/conversations/', views.ParentConversationsListView.as_view(), name='parent_conversations'),
+    path('parent/conversations/<uuid:conversation_id>/messages/', views.ParentConversationMessagesView.as_view(), name='parent_conversation_messages'),
+    path('parent/messages/<uuid:message_id>/read/', views.ParentMarkMessageReadView.as_view(), name='parent_mark_message_read'),
+    path('parent/dashboard/messages/unread-count/', views.ParentUnreadCountView.as_view(), name='parent_unread_count'),
+    
     # TODO: Add other student-related endpoints as needed
     # path('attendance/', views.student_attendance, name='student_attendance'),
     # path('attendance/<uuid:attendance_id>/', views.student_attendance_detail, name='student_attendance_detail'),

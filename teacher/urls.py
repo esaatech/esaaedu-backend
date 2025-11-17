@@ -37,4 +37,11 @@ urlpatterns = [
     
     # Document Upload URLs
     path('documents/upload/', views.DocumentUploadView.as_view(), name='document_upload'),
+    
+    # Messaging URLs
+    path('students/<int:student_id>/conversations/', views.StudentConversationsListView.as_view(), name='student_conversations'),
+    path('conversations/<uuid:conversation_id>/messages/', views.ConversationMessagesView.as_view(), name='conversation_messages'),
+    path('messages/<uuid:message_id>/read/', views.MarkMessageReadView.as_view(), name='mark_message_read'),
+    path('conversations/unread-count/', views.UnreadCountView.as_view(), name='unread_count'),
+    path('students/<int:student_id>/unread-count/', views.StudentUnreadCountView.as_view(), name='student_unread_count'),
 ]

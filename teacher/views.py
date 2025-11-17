@@ -19,7 +19,13 @@ from .serializers import (
     AssignmentFeedbackSerializer
 )
 from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, LessonMaterial, VideoMaterial, BookPage, Lesson, DocumentMaterial
-from student.models import EnrolledCourse
+from student.models import EnrolledCourse, Conversation, Message
+from student.serializers import (
+    ConversationListSerializer, ConversationSerializer,
+    MessageSerializer, CreateConversationSerializer, CreateMessageSerializer
+)
+from users.models import StudentProfile
+from rest_framework.pagination import PageNumberPagination
 from datetime import datetime, timedelta
 # Import AI grading service
 from ai.gemini_grader import GeminiGrader
@@ -3567,5 +3573,520 @@ Generate comprehensive assignment questions that require students to demonstrate
             logger.error(f"Error in AI assignment generation: {e}\n{traceback.format_exc()}")
             return Response(
                 {'error': f'Error during AI generation: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ===== MESSAGING VIEWS =====
+
+class MessagePagination(PageNumberPagination):
+    """Pagination for message lists"""
+    page_size = 50
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
+class StudentConversationsListView(APIView):
+    """
+    List or create conversations for a specific student.
+    Teachers can only access conversations for students in their classes.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get_teacher_student_enrollment(self, teacher, student_profile):
+        """Verify teacher teaches this student"""
+        return EnrolledCourse.objects.filter(
+            student_profile=student_profile,
+            course__teacher=teacher,
+            status='active'
+        ).exists()
+    
+    def get(self, request, student_id):
+        """List conversations for a student"""
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get student profile
+            try:
+                student_profile = StudentProfile.objects.get(user_id=student_id)
+            except StudentProfile.DoesNotExist:
+                return Response(
+                    {'error': 'Student not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Verify teacher teaches this student
+            if not self.get_teacher_student_enrollment(teacher, student_profile):
+                return Response(
+                    {'error': 'You do not teach this student'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get recipient_type filter from query params
+            recipient_type = request.query_params.get('recipient_type', None)
+            
+            # Query conversations
+            conversations = Conversation.objects.filter(
+                student_profile=student_profile,
+                teacher=teacher
+            ).select_related('student_profile', 'student_profile__user', 'teacher')
+            
+            if recipient_type:
+                conversations = conversations.filter(recipient_type=recipient_type)
+            
+            # Order by last message time
+            conversations = conversations.order_by('-last_message_at', '-created_at')
+            
+            # Serialize with context for unread count
+            serializer = ConversationListSerializer(
+                conversations,
+                many=True,
+                context={'request': request}
+            )
+            
+            return Response({
+                'conversations': serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            logger.error(f"Error listing conversations: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': 'Failed to fetch conversations', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, student_id):
+        """Create or get existing conversation"""
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get student profile
+            try:
+                student_profile = StudentProfile.objects.get(user_id=student_id)
+            except StudentProfile.DoesNotExist:
+                return Response(
+                    {'error': 'Student not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Verify teacher teaches this student
+            if not self.get_teacher_student_enrollment(teacher, student_profile):
+                return Response(
+                    {'error': 'You do not teach this student'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Validate request data
+            serializer = CreateConversationSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            recipient_type = serializer.validated_data.get('recipient_type', 'parent')
+            subject = serializer.validated_data.get('subject', '')
+            course_id = serializer.validated_data.get('course_id')
+            
+            # Validate course if provided
+            course = None
+            if course_id:
+                try:
+                    course = Course.objects.get(id=course_id, teacher=teacher)
+                    # Verify student is enrolled in this course
+                    if not EnrolledCourse.objects.filter(
+                        student_profile=student_profile,
+                        course=course
+                    ).exists():
+                        return Response(
+                            {'error': 'Student is not enrolled in this course'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                except Course.DoesNotExist:
+                    return Response(
+                        {'error': 'Course not found or you do not teach this course'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            
+            # Get or create conversation (now course-specific)
+            # Use filter().first() instead of get() to handle cases where multiple conversations exist
+            # (e.g., before migration or duplicate data)
+            try:
+                conversation = Conversation.objects.filter(
+                    student_profile=student_profile,
+                    teacher=teacher,
+                    recipient_type=recipient_type,
+                    course=course
+                ).first()
+            except Exception as db_error:
+                # Fallback: if course field doesn't exist yet (migration not run), filter without course
+                # This handles the transition period gracefully
+                if 'course' in str(db_error).lower() or 'no such column' in str(db_error).lower():
+                    conversation = Conversation.objects.filter(
+                        student_profile=student_profile,
+                        teacher=teacher,
+                        recipient_type=recipient_type
+                    ).first()
+                else:
+                    raise
+            
+            if conversation:
+                created = False
+                # Update subject if provided and different
+                if subject and conversation.subject != subject:
+                    conversation.subject = subject
+                    conversation.save(update_fields=['subject'])
+                # If course field exists and conversation doesn't have course set, update it
+                if course and hasattr(conversation, 'course') and conversation.course != course:
+                    conversation.course = course
+                    conversation.save(update_fields=['course'])
+            else:
+                created = True
+                try:
+                    conversation = Conversation.objects.create(
+                        student_profile=student_profile,
+                        teacher=teacher,
+                        recipient_type=recipient_type,
+                        course=course,
+                        subject=subject
+                    )
+                except Exception as create_error:
+                    # If course field doesn't exist, create without it
+                    if 'course' in str(create_error).lower() or 'no such column' in str(create_error).lower():
+                        conversation = Conversation.objects.create(
+                            student_profile=student_profile,
+                            teacher=teacher,
+                            recipient_type=recipient_type,
+                            subject=subject
+                        )
+                    else:
+                        raise
+            
+            # Serialize response
+            response_serializer = ConversationSerializer(conversation)
+            
+            return Response(
+                response_serializer.data,
+                status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            import traceback
+            logger.error(f"Error creating conversation: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': 'Failed to create conversation', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class ConversationMessagesView(APIView):
+    """
+    Get messages in a conversation or send a new message.
+    Teachers can only access conversations for students they teach.
+    """
+    permission_classes = [IsAuthenticated]
+    pagination_class = MessagePagination
+    
+    def verify_teacher_access(self, teacher, conversation):
+        """Verify teacher has access to this conversation"""
+        return conversation.teacher == teacher
+    
+    def get(self, request, conversation_id):
+        """Get messages in conversation"""
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get conversation
+            try:
+                conversation = Conversation.objects.select_related(
+                    'student_profile', 'student_profile__user', 'teacher'
+                ).get(id=conversation_id)
+            except Conversation.DoesNotExist:
+                return Response(
+                    {'error': 'Conversation not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Verify access
+            if not self.verify_teacher_access(teacher, conversation):
+                return Response(
+                    {'error': 'You do not have access to this conversation'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get messages with pagination
+            messages = conversation.messages.select_related('sender').order_by('created_at')
+            
+            paginator = self.pagination_class()
+            page = paginator.paginate_queryset(messages, request)
+            
+            if page is not None:
+                serializer = MessageSerializer(page, many=True)
+                # Return in the format expected by frontend
+                return Response({
+                    'conversation': ConversationSerializer(conversation).data,
+                    'messages': serializer.data,
+                    'pagination': {
+                        'page': paginator.page.number,
+                        'page_size': paginator.page_size,
+                        'total_pages': paginator.page.paginator.num_pages,
+                        'total_count': paginator.page.paginator.count,
+                    }
+                }, status=status.HTTP_200_OK)
+            
+            # No pagination
+            serializer = MessageSerializer(messages, many=True)
+            return Response({
+                'conversation': ConversationSerializer(conversation).data,
+                'messages': serializer.data
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            logger.error(f"Error fetching messages: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': 'Failed to fetch messages', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, conversation_id):
+        """Send a new message"""
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get conversation
+            try:
+                conversation = Conversation.objects.select_related(
+                    'student_profile', 'teacher'
+                ).get(id=conversation_id)
+            except Conversation.DoesNotExist:
+                return Response(
+                    {'error': 'Conversation not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Verify access
+            if not self.verify_teacher_access(teacher, conversation):
+                return Response(
+                    {'error': 'You do not have access to this conversation'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Validate message data
+            serializer = CreateMessageSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create message
+            message = Message.objects.create(
+                conversation=conversation,
+                sender=teacher,
+                content=serializer.validated_data['content']
+            )
+            
+            # Update conversation's last_message_at
+            conversation.last_message_at = timezone.now()
+            conversation.save(update_fields=['last_message_at'])
+            
+            # Serialize response
+            response_serializer = MessageSerializer(message)
+            
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            import traceback
+            logger.error(f"Error sending message: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': 'Failed to send message', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class MarkMessageReadView(APIView):
+    """Mark a message as read"""
+    permission_classes = [IsAuthenticated]
+    
+    def patch(self, request, message_id):
+        """Mark message as read"""
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get message
+            try:
+                message = Message.objects.select_related('conversation', 'conversation__teacher').get(id=message_id)
+            except Message.DoesNotExist:
+                return Response(
+                    {'error': 'Message not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Verify teacher has access to conversation
+            if message.conversation.teacher != teacher:
+                return Response(
+                    {'error': 'You do not have access to this message'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Mark as read
+            message.mark_as_read(teacher)
+            
+            # Serialize response
+            serializer = MessageSerializer(message)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            logger.error(f"Error marking message as read: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': 'Failed to mark message as read', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class UnreadCountView(APIView):
+    """Get unread message count for teacher"""
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get unread count, optionally filtered by recipient_type"""
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            recipient_type = request.query_params.get('recipient_type', None)
+            
+            # Get all conversations for this teacher
+            conversations = Conversation.objects.filter(teacher=teacher)
+            if recipient_type:
+                conversations = conversations.filter(recipient_type=recipient_type)
+            
+            # Count unread messages (messages not sent by teacher and not read)
+            total_unread = Message.objects.filter(
+                conversation__in=conversations
+            ).exclude(sender=teacher).filter(read_at__isnull=True).count()
+            
+            # Count by recipient_type
+            by_recipient_type = {}
+            for rt in ['parent', 'student']:
+                convs = conversations.filter(recipient_type=rt)
+                count = Message.objects.filter(
+                    conversation__in=convs
+                ).exclude(sender=teacher).filter(read_at__isnull=True).count()
+                by_recipient_type[rt] = count
+            
+            return Response({
+                'total_unread': total_unread,
+                'by_recipient_type': by_recipient_type
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            logger.error(f"Error getting unread count: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': 'Failed to get unread count', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class StudentUnreadCountView(APIView):
+    """Get unread message count for a specific student conversation (lightweight endpoint)"""
+    permission_classes = [IsAuthenticated]
+    
+    def get_teacher_student_enrollment(self, teacher, student_profile):
+        """Verify teacher teaches this student"""
+        return EnrolledCourse.objects.filter(
+            student_profile=student_profile,
+            course__teacher=teacher,
+            status='active'
+        ).exists()
+    
+    def get(self, request, student_id):
+        """Get unread count for a specific student, optionally filtered by recipient_type"""
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get student profile
+            try:
+                student_profile = StudentProfile.objects.get(user_id=student_id)
+            except StudentProfile.DoesNotExist:
+                return Response(
+                    {'error': 'Student not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Verify teacher teaches this student
+            if not self.get_teacher_student_enrollment(teacher, student_profile):
+                return Response(
+                    {'error': 'You do not teach this student'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            recipient_type = request.query_params.get('recipient_type', None)
+            
+            # Get conversations for this student
+            conversations = Conversation.objects.filter(
+                student_profile=student_profile,
+                teacher=teacher
+            )
+            
+            if recipient_type:
+                conversations = conversations.filter(recipient_type=recipient_type)
+            
+            # Count unread messages (messages not sent by teacher and not read)
+            unread_count = Message.objects.filter(
+                conversation__in=conversations
+            ).exclude(sender=teacher).filter(read_at__isnull=True).count()
+            
+            # Return counts by recipient_type
+            by_recipient_type = {}
+            for rt in ['parent', 'student']:
+                convs = conversations.filter(recipient_type=rt)
+                count = Message.objects.filter(
+                    conversation__in=convs
+                ).exclude(sender=teacher).filter(read_at__isnull=True).count()
+                by_recipient_type[rt] = count
+            
+            return Response({
+                'unread_count': unread_count,
+                'by_recipient_type': by_recipient_type
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            logger.error(f"Error getting student unread count: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': 'Failed to get unread count', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

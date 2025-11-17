@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 import uuid
 
 User = get_user_model()
@@ -1397,4 +1398,139 @@ class StudentLessonProgress(models.Model):
             return True
         return self.quiz_passed
 
+
+class Conversation(models.Model):
+    """
+    Conversation thread between a teacher and a student's parent or the student themselves.
+    Supports separate conversations for parent and student messaging.
+    """
+    RECIPIENT_TYPE_CHOICES = [
+        ('parent', 'Parent'),
+        ('student', 'Student'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    student_profile = models.ForeignKey(
+        'users.StudentProfile',
+        on_delete=models.CASCADE,
+        related_name='conversations',
+        help_text="Student profile this conversation is about"
+    )
+    teacher = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='teacher_conversations',
+        limit_choices_to={'role': 'teacher'},
+        help_text="Teacher in this conversation"
+    )
+    recipient_type = models.CharField(
+        max_length=10,
+        choices=RECIPIENT_TYPE_CHOICES,
+        default='parent',
+        help_text="Whether messages are for parent or student"
+    )
+    course = models.ForeignKey(
+        'courses.Course',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='conversations',
+        help_text="Course this conversation is about (null for general conversations)"
+    )
+    subject = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Optional conversation topic/subject"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_message_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp of most recent message (for sorting)"
+    )
+    
+    class Meta:
+        db_table = 'conversations'
+        indexes = [
+            models.Index(fields=['student_profile', 'recipient_type', '-last_message_at']),
+            models.Index(fields=['teacher', 'recipient_type', '-last_message_at']),
+            models.Index(fields=['course', 'student_profile', '-last_message_at']),
+        ]
+        unique_together = [['student_profile', 'teacher', 'recipient_type', 'course']]
+        ordering = ['-last_message_at', '-created_at']
+    
+    def __str__(self):
+        recipient_name = self.student_profile.user.get_full_name() or self.student_profile.user.email
+        teacher_name = self.teacher.get_full_name() or self.teacher.email
+        course_info = f" - {self.course.title}" if self.course else ""
+        return f"Conversation ({self.recipient_type}){course_info}: {teacher_name} ↔ {recipient_name}"
+    
+    def clean(self):
+        """Validate that teacher has role 'teacher'"""
+        if self.teacher.role != 'teacher':
+            raise ValidationError("Conversation teacher must have role 'teacher'")
+    
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+
+class Message(models.Model):
+    """
+    Individual message within a conversation.
+    Messages inherit recipient_type from their conversation.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(
+        Conversation,
+        on_delete=models.CASCADE,
+        related_name='messages',
+        help_text="Conversation this message belongs to"
+    )
+    sender = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='sent_messages',
+        help_text="User who sent this message"
+    )
+    content = models.TextField(help_text="Message content")
+    created_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When message was read (null if unread)"
+    )
+    read_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='read_messages',
+        help_text="User who read this message"
+    )
+    
+    class Meta:
+        db_table = 'messages'
+        indexes = [
+            models.Index(fields=['conversation', '-created_at']),
+            models.Index(fields=['conversation', 'read_at']),
+        ]
+        ordering = ['created_at']
+    
+    def __str__(self):
+        sender_name = self.sender.get_full_name() or self.sender.email
+        return f"Message from {sender_name} in {self.conversation}"
+    
+    def mark_as_read(self, user):
+        """Mark message as read by a user"""
+        if not self.read_at:
+            self.read_at = timezone.now()
+            self.read_by = user
+            self.save(update_fields=['read_at', 'read_by'])
+    
+    @property
+    def is_read(self):
+        """Check if message has been read"""
+        return self.read_at is not None
 

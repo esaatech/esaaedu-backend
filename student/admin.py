@@ -2,7 +2,8 @@ from django.contrib import admin
 from .models import (
     EnrolledCourse, StudentAttendance, StudentGrade, StudentBehavior, 
     StudentNote, StudentCommunication, StudentLessonProgress,
-    LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback
+    LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback,
+    Conversation, Message
 )
 
 
@@ -468,3 +469,70 @@ class QuizAttemptFeedbackAdmin(admin.ModelAdmin):
         return obj.has_detailed_feedback
     has_detailed_feedback.boolean = True
     has_detailed_feedback.short_description = 'Has Detailed Feedback'
+
+
+@admin.register(Conversation)
+class ConversationAdmin(admin.ModelAdmin):
+    list_display = [
+        'id', 'student_profile', 'teacher', 'recipient_type', 'course', 'subject',
+        'last_message_at', 'created_at'
+    ]
+    list_filter = [
+        'recipient_type', 'course', 'created_at', 'last_message_at', 'teacher'
+    ]
+    search_fields = [
+        'student_profile__user__email', 'student_profile__user__first_name',
+        'student_profile__user__last_name', 'teacher__email', 'teacher__first_name',
+        'teacher__last_name', 'subject', 'course__title'
+    ]
+    readonly_fields = ['id', 'created_at', 'updated_at', 'last_message_at']
+    date_hierarchy = 'created_at'
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('student_profile', 'teacher', 'recipient_type', 'course', 'subject')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at', 'last_message_at')
+        }),
+        ('Metadata', {
+            'fields': ('id',),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(Message)
+class MessageAdmin(admin.ModelAdmin):
+    list_display = [
+        'id', 'conversation', 'sender', 'content_preview', 'created_at',
+        'read_at', 'read_by', 'is_read'
+    ]
+    list_filter = [
+        'read_at', 'created_at', 'conversation__recipient_type', 'sender'
+    ]
+    search_fields = [
+        'content', 'sender__email', 'sender__first_name', 'sender__last_name',
+        'conversation__student_profile__user__email',
+        'conversation__teacher__email'
+    ]
+    readonly_fields = ['id', 'created_at', 'is_read']
+    date_hierarchy = 'created_at'
+    
+    fieldsets = (
+        ('Message Details', {
+            'fields': ('conversation', 'sender', 'content')
+        }),
+        ('Read Status', {
+            'fields': ('read_at', 'read_by', 'is_read')
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def content_preview(self, obj):
+        """Show first 50 characters of message content"""
+        return obj.content[:50] + "..." if len(obj.content) > 50 else obj.content
+    content_preview.short_description = 'Content Preview'

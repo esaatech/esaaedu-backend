@@ -3,7 +3,8 @@ from django.contrib.auth import get_user_model
 from .models import (
     EnrolledCourse, StudentAttendance, StudentGrade, 
     StudentBehavior, StudentNote, StudentCommunication,
-    QuizQuestionFeedback, QuizAttemptFeedback
+    QuizQuestionFeedback, QuizAttemptFeedback,
+    Conversation, Message
 )
 from courses.models import AssignmentSubmission
 
@@ -679,3 +680,121 @@ class AssignmentSubmissionResponseSerializer(serializers.ModelSerializer):
             'percentage', 'passed'
         ]
         read_only_fields = fields
+
+
+# ===== MESSAGING SERIALIZERS =====
+
+class MessageSerializer(serializers.ModelSerializer):
+    """Serializer for Message model"""
+    sender_id = serializers.UUIDField(source='sender.id', read_only=True)
+    sender_name = serializers.SerializerMethodField()
+    sender_type = serializers.SerializerMethodField()
+    is_read = serializers.BooleanField(read_only=True)
+    
+    class Meta:
+        model = Message
+        fields = [
+            'id', 'sender_id', 'sender_name', 'sender_type',
+            'content', 'created_at', 'read_at', 'is_read'
+        ]
+        read_only_fields = ['id', 'sender_id', 'sender_name', 'sender_type', 'created_at', 'read_at', 'is_read']
+    
+    def get_sender_name(self, obj):
+        return obj.sender.get_full_name() or obj.sender.email
+    
+    def get_sender_type(self, obj):
+        return obj.sender.role
+
+
+class ConversationListSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for listing conversations"""
+    student_profile_id = serializers.UUIDField(source='student_profile.id', read_only=True)
+    student_name = serializers.SerializerMethodField()
+    teacher_id = serializers.UUIDField(source='teacher.id', read_only=True)
+    teacher_name = serializers.SerializerMethodField()
+    unread_count = serializers.SerializerMethodField()
+    last_message_preview = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Conversation
+        fields = [
+            'id', 'student_profile_id', 'student_name',
+            'teacher_id', 'teacher_name', 'recipient_type',
+            'subject', 'last_message_at', 'created_at',
+            'unread_count', 'last_message_preview'
+        ]
+        read_only_fields = fields
+    
+    def get_student_name(self, obj):
+        return f"{obj.student_profile.child_first_name} {obj.student_profile.child_last_name}".strip() or obj.student_profile.user.get_full_name()
+    
+    def get_teacher_name(self, obj):
+        return obj.teacher.get_full_name() or obj.teacher.email
+    
+    def get_unread_count(self, obj):
+        """Count unread messages in this conversation"""
+        request = self.context.get('request')
+        if not request or not request.user:
+            return 0
+        
+        # Count messages not sent by current user and not read
+        return obj.messages.exclude(sender=request.user).filter(read_at__isnull=True).count()
+    
+    def get_last_message_preview(self, obj):
+        """Get preview of last message (first 50 chars)"""
+        last_message = obj.messages.order_by('-created_at').first()
+        if last_message:
+            preview = last_message.content[:50]
+            return preview + "..." if len(last_message.content) > 50 else preview
+        return ""
+
+
+class ConversationSerializer(serializers.ModelSerializer):
+    """Full serializer for Conversation with related data"""
+    student_profile_id = serializers.UUIDField(source='student_profile.id', read_only=True)
+    student_name = serializers.SerializerMethodField()
+    teacher_id = serializers.UUIDField(source='teacher.id', read_only=True)
+    teacher_name = serializers.SerializerMethodField()
+    course_id = serializers.UUIDField(source='course.id', read_only=True, allow_null=True)
+    course_name = serializers.CharField(source='course.title', read_only=True, allow_null=True)
+    
+    class Meta:
+        model = Conversation
+        fields = [
+            'id', 'student_profile_id', 'student_name',
+            'teacher_id', 'teacher_name', 'recipient_type',
+            'course_id', 'course_name', 'subject',
+            'created_at', 'updated_at', 'last_message_at'
+        ]
+        read_only_fields = ['id', 'student_profile_id', 'student_name', 'teacher_id', 'teacher_name', 'course_id', 'course_name', 'created_at', 'updated_at', 'last_message_at']
+    
+    def get_student_name(self, obj):
+        return f"{obj.student_profile.child_first_name} {obj.student_profile.child_last_name}".strip() or obj.student_profile.user.get_full_name()
+    
+    def get_teacher_name(self, obj):
+        return obj.teacher.get_full_name() or obj.teacher.email
+
+
+class CreateConversationSerializer(serializers.Serializer):
+    """Serializer for creating a new conversation"""
+    recipient_type = serializers.ChoiceField(
+        choices=Conversation.RECIPIENT_TYPE_CHOICES,
+        default='parent'
+    )
+    course_id = serializers.UUIDField(required=False, allow_null=True, help_text="Course ID for course-specific conversations")
+    subject = serializers.CharField(max_length=200, required=False, allow_blank=True)
+
+
+class CreateMessageSerializer(serializers.Serializer):
+    """Serializer for creating a new message"""
+    content = serializers.CharField(
+        max_length=5000,
+        help_text="Message content (max 5000 characters)"
+    )
+    
+    def validate_content(self, value):
+        """Validate message content is not empty"""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Message content cannot be empty")
+        return value.strip()
+
