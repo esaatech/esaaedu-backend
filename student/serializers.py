@@ -689,7 +689,7 @@ class MessageSerializer(serializers.ModelSerializer):
     sender_id = serializers.UUIDField(source='sender.id', read_only=True)
     sender_name = serializers.SerializerMethodField()
     sender_type = serializers.SerializerMethodField()
-    is_read = serializers.BooleanField(read_only=True)
+    is_read = serializers.SerializerMethodField()
     
     class Meta:
         model = Message
@@ -704,6 +704,30 @@ class MessageSerializer(serializers.ModelSerializer):
     
     def get_sender_type(self, obj):
         return obj.sender.role
+    
+    def get_is_read(self, obj):
+        """
+        Check if the current user has read this message.
+        - Messages sent by the current user are always considered "read"
+        - Otherwise, check if read_by matches the current user
+        """
+        request = self.context.get('request')
+        if not request or not request.user:
+            # If no request context, fall back to model's is_read property
+            return obj.is_read
+        
+        current_user = request.user
+        
+        # Messages you send are always considered "read" for you
+        if obj.sender == current_user:
+            return True
+        
+        # Check if this message was read by the current user
+        if obj.read_by == current_user:
+            return True
+        
+        # Message is unread for the current user
+        return False
 
 
 class ConversationListSerializer(serializers.ModelSerializer):
@@ -712,6 +736,8 @@ class ConversationListSerializer(serializers.ModelSerializer):
     student_name = serializers.SerializerMethodField()
     teacher_id = serializers.UUIDField(source='teacher.id', read_only=True)
     teacher_name = serializers.SerializerMethodField()
+    course_id = serializers.UUIDField(source='course.id', read_only=True, allow_null=True)
+    course_name = serializers.CharField(source='course.title', read_only=True, allow_null=True)
     unread_count = serializers.SerializerMethodField()
     last_message_preview = serializers.SerializerMethodField()
     
@@ -720,7 +746,8 @@ class ConversationListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'student_profile_id', 'student_name',
             'teacher_id', 'teacher_name', 'recipient_type',
-            'subject', 'last_message_at', 'created_at',
+            'course_id', 'course_name', 'subject',
+            'last_message_at', 'created_at',
             'unread_count', 'last_message_preview'
         ]
         read_only_fields = fields

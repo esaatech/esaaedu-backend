@@ -3951,7 +3951,7 @@ class ParentConversationsListView(APIView):
             conversations = Conversation.objects.filter(
                 student_profile=student_profile,
                 recipient_type='parent'
-            ).select_related('student_profile', 'student_profile__user', 'teacher')
+            ).select_related('student_profile', 'student_profile__user', 'teacher', 'course')
             
             # Order by last message time
             conversations = conversations.order_by('-last_message_at', '-created_at')
@@ -4038,7 +4038,7 @@ class ParentConversationMessagesView(APIView):
             page = paginator.paginate_queryset(messages, request)
             
             if page is not None:
-                serializer = MessageSerializer(page, many=True)
+                serializer = MessageSerializer(page, many=True, context={'request': request})
                 # Return in the format expected by frontend
                 return Response({
                     'conversation': ConversationSerializer(conversation).data,
@@ -4052,7 +4052,7 @@ class ParentConversationMessagesView(APIView):
                 }, status=status.HTTP_200_OK)
             
             # No pagination
-            serializer = MessageSerializer(messages, many=True)
+            serializer = MessageSerializer(messages, many=True, context={'request': request})
             return Response({
                 'conversation': ConversationSerializer(conversation).data,
                 'messages': serializer.data
@@ -4111,7 +4111,7 @@ class ParentConversationMessagesView(APIView):
             conversation.save(update_fields=['last_message_at'])
             
             # Serialize response
-            response_serializer = MessageSerializer(message)
+            response_serializer = MessageSerializer(message, context={'request': request})
             
             return Response(response_serializer.data, status=status.HTTP_201_CREATED)
             
@@ -4178,7 +4178,7 @@ class ParentMarkMessageReadView(APIView):
             message.mark_as_read(parent_user)
             
             # Serialize response
-            serializer = MessageSerializer(message)
+            serializer = MessageSerializer(message, context={'request': request})
             return Response(serializer.data, status=status.HTTP_200_OK)
             
         except Exception as e:
