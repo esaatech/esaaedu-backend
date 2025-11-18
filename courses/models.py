@@ -1151,7 +1151,7 @@ class AssignmentSubmission(models.Model):
     # Question-level grading
     graded_questions = models.JSONField(
         default=list,
-        help_text="Individual question grades and feedback - list of {question_id, is_correct, teacher_feedback, points_earned, points_possible}"
+        help_text="Individual question grades and feedback - list of {question_id, points_earned, points_possible, teacher_feedback/feedback, correct_answer (optional), is_correct (optional)}"
     )
     
     # Grading History

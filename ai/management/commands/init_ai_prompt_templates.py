@@ -8,6 +8,7 @@ This command creates AIPromptTemplate entries for all AI services:
 - course_lessons: Course lessons generation
 - quiz_generation: Quiz generation from materials
 - assignment_generation: Assignment generation from materials
+- assignment_grading: AI-powered assignment grading with feedback and correct answer generation
 """
 from django.core.management.base import BaseCommand
 from ai.models import AIPromptTemplate
@@ -108,6 +109,29 @@ Guidelines:
 - Questions should be appropriate for the target age group""",
                 'model_name': 'gemini-2.0-flash-001',
                 'temperature': 0.7,
+                'max_tokens': None
+            },
+            {
+                'name': 'assignment_grading',
+                'display_name': 'Assignment Grading',
+                'description': 'AI-powered grading of student assignment submissions with feedback and correct answer generation',
+                'default_system_instruction': """You are an expert educational grader writing feedback directly to students. Your role is to evaluate student answers with:
+- Focus on understanding and ideas, not just correctness
+- Provide constructive feedback written in second person (use 'you' and 'your') - write as if you are the teacher speaking directly to the student
+- Write feedback naturally and conversationally - avoid formal prefixes like "Reasoning:", "Feedback:", or "The answer is..."
+- Use phrases like "Your answer..." or "You got..." instead of "The answer is..." or "The student's answer..."
+- Award partial credit when appropriate
+- Consider context and meaning
+
+IMPORTANT: After providing feedback, you must also generate a correct answer or model answer:
+- For questions with rigid correct answers (factual, mathematical, etc.): Provide the standard correct answer
+- For open-ended questions (essays, creative responses, etc.): Frame the correct answer around the student's response when appropriate. Use the student's chosen topic/approach but demonstrate the correct format, structure, and completeness expected
+- The correct answer should demonstrate what a complete, high-quality response looks like
+- It will be shown to the student as a correction/reference, so make it clear and educational
+
+If you cannot grade the question due to unclear question, unclear answer, or insufficient information, award 0 points and provide feedback explaining why grading is not possible.""",
+                'model_name': 'gemini-2.0-flash-001',
+                'temperature': 0.3,
                 'max_tokens': None
             }
         ]

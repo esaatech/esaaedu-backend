@@ -583,7 +583,9 @@ class AssignmentQuestionAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
-            'assignment', 'assignment__lesson', 'assignment__lesson__course'
+            'assignment'
+        ).prefetch_related(
+            'assignment__lessons', 'assignment__lessons__course'
         )
 
 
@@ -623,7 +625,9 @@ class AssignmentSubmissionAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
-            'student', 'assignment', 'assignment__lesson', 'assignment__lesson__course', 'graded_by', 'enrollment'
+            'student', 'assignment', 'graded_by', 'enrollment'
+        ).prefetch_related(
+            'assignment__lessons', 'assignment__lessons__course'
         )
     
     def mark_as_draft(self, request, queryset):

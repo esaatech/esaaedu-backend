@@ -565,6 +565,26 @@ class AssignmentGradingSerializer(serializers.ModelSerializer):
             if not data.get('points_possible'):
                 raise serializers.ValidationError("Points possible is required for graded submissions")
         
+        # Normalize graded_questions to ensure consistent structure
+        if 'graded_questions' in data and isinstance(data['graded_questions'], list):
+            normalized_questions = []
+            for q in data['graded_questions']:
+                normalized_q = {
+                    'question_id': q.get('question_id'),
+                    'points_earned': q.get('points_earned', 0),
+                    'points_possible': q.get('points_possible'),
+                    # Accept both 'feedback' and 'teacher_feedback' for backward compatibility
+                    'teacher_feedback': q.get('teacher_feedback') or q.get('feedback', ''),
+                    # Include correct_answer if provided
+                    'correct_answer': q.get('correct_answer'),
+                    # Include is_correct if provided (for backward compatibility)
+                    'is_correct': q.get('is_correct'),
+                }
+                # Remove None values to keep JSON clean
+                normalized_q = {k: v for k, v in normalized_q.items() if v is not None}
+                normalized_questions.append(normalized_q)
+            data['graded_questions'] = normalized_questions
+        
         return data
 
 
