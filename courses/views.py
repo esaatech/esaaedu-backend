@@ -1818,6 +1818,8 @@ def teacher_students_master(request):
             courses_data.append(course_data)
         
         # Prepare students data (summary view for master panel)
+        from student.models import Conversation, Message
+        
         students_data = []
         for enrollment in enrollments:
             student_user = enrollment.student_profile.user
@@ -1834,6 +1836,55 @@ def teacher_students_master(request):
             )
             
             assignment_count = ungraded_submissions.count()
+            
+            # Get unread message counts for this student/course combination
+            # Prioritize course-specific conversations, but also include general conversations
+            parent_unread_count = 0
+            student_unread_count = 0
+            
+            try:
+                # Get course-specific conversations for this teacher, student, and course
+                course_conversations = Conversation.objects.filter(
+                    teacher=request.user,
+                    student_profile=enrollment.student_profile,
+                    course=enrollment.course
+                )
+                
+                # Count unread messages in course-specific conversations
+                parent_convs = course_conversations.filter(recipient_type='parent')
+                parent_unread_count = Message.objects.filter(
+                    conversation__in=parent_convs
+                ).exclude(sender=request.user).filter(read_at__isnull=True).count()
+                
+                student_convs = course_conversations.filter(recipient_type='student')
+                student_unread_count = Message.objects.filter(
+                    conversation__in=student_convs
+                ).exclude(sender=request.user).filter(read_at__isnull=True).count()
+                
+                # Also check general conversations (no course) for this student
+                # This ensures we catch messages from general conversations too
+                general_conversations = Conversation.objects.filter(
+                    teacher=request.user,
+                    student_profile=enrollment.student_profile,
+                    course__isnull=True
+                )
+                
+                general_parent_convs = general_conversations.filter(recipient_type='parent')
+                general_student_convs = general_conversations.filter(recipient_type='student')
+                
+                parent_unread_count += Message.objects.filter(
+                    conversation__in=general_parent_convs
+                ).exclude(sender=request.user).filter(read_at__isnull=True).count()
+                
+                student_unread_count += Message.objects.filter(
+                    conversation__in=general_student_convs
+                ).exclude(sender=request.user).filter(read_at__isnull=True).count()
+            except Exception as e:
+                # If there's an error (e.g., Message model not available), set to 0
+                import traceback
+                traceback.print_exc()
+                parent_unread_count = 0
+                student_unread_count = 0
             
             student_data = {
                 'id': str(student_user.id),
@@ -1857,7 +1908,9 @@ def teacher_students_master(request):
                 'completed_lessons_count': enrollment.completed_lessons_count,
                 'total_lessons_count': enrollment.total_lessons_count,
                 'last_accessed': enrollment.last_accessed.isoformat() if enrollment.last_accessed else None,
-                'pending_assignment_count': assignment_count  # Add assignment count
+                'pending_assignment_count': assignment_count,  # Add assignment count
+                'parent_unread_count': parent_unread_count,  # Add parent unread count
+                'student_unread_count': student_unread_count  # Add student unread count
             }
             students_data.append(student_data)
         
@@ -3596,6 +3649,7 @@ class TeacherDashboardAPIView(APIView):
             'total_enrollments': self.get_total_enrollments(teacher),
             'monthly_revenue': self.get_monthly_revenue(teacher),
             'pending_assignment_count': self.get_pending_assignment_count(teacher),
+            'unread_message_count': self.get_unread_message_count(teacher),
         }
 
     def get_total_students(self, teacher):
@@ -3666,6 +3720,26 @@ class TeacherDashboardAPIView(APIView):
         ).count()
         
         return pending_count
+
+    def get_unread_message_count(self, teacher):
+        """Count unread messages for teacher (from parents and students)"""
+        try:
+            from student.models import Conversation, Message
+            
+            # Get all conversations for this teacher
+            conversations = Conversation.objects.filter(teacher=teacher)
+            
+            # Count unread messages (messages not sent by teacher and not read)
+            unread_count = Message.objects.filter(
+                conversation__in=conversations
+            ).exclude(sender=teacher).filter(read_at__isnull=True).count()
+            
+            return unread_count
+        except Exception as e:
+            # If there's an error (e.g., Message model not available), return 0
+            import traceback
+            traceback.print_exc()
+            return 0
 
     def get_upcoming_classes(self, teacher):
         """Get today's and upcoming live classes"""
