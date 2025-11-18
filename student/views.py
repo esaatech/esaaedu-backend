@@ -2975,11 +2975,14 @@ class AssignmentSubmissionDetailView(APIView):
             # Build graded questions data
             graded_questions_data = []
             for graded_q in submission.graded_questions:
+                # Check both 'teacher_feedback' and 'feedback' for backward compatibility
+                feedback = graded_q.get('teacher_feedback') or graded_q.get('feedback', '')
                 graded_questions_data.append({
                     'question_id': graded_q.get('question_id'),
                     'points_earned': graded_q.get('points_earned', 0),
                     'points_possible': graded_q.get('points_possible'),
-                    'feedback': graded_q.get('feedback', ''),
+                    'feedback': feedback,
+                    'correct_answer': graded_q.get('correct_answer', ''),
                     'is_correct': graded_q.get('is_correct'),
                 })
             
