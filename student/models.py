@@ -592,11 +592,16 @@ class EnrolledCourse(models.Model):
                 return False, "Lesson already completed"
             
             # Check quiz requirement if enabled
-            if require_quiz and lesson_progress.requires_quiz and lesson_progress.quiz_attempts_count == 0:
-                return False, "You must complete the quiz before completing this lesson"
+            if require_quiz:
+                # If lesson has a quiz, it must be completed
+                if lesson_progress.requires_quiz:
+                    if lesson_progress.quiz_attempts_count == 0:
+                        return False, "You must complete the quiz before completing this lesson"
+                    if not lesson_progress.quiz_passed:
+                        return False, "You must pass the quiz before completing this lesson"
             
-            # Mark lesson as completed in progress tracking
-            lesson_progress.mark_as_completed()
+            # Mark lesson as completed in progress tracking (skip validation since we're in the proper method)
+            lesson_progress.mark_as_completed(skip_validation=True)
             
             # Update completed lessons count
             self.completed_lessons_count += 1
@@ -1355,8 +1360,24 @@ class StudentLessonProgress(models.Model):
             self.started_at = timezone.now()
             self.save()
     
-    def mark_as_completed(self):
-        """Mark lesson as completed"""
+    def mark_as_completed(self, skip_validation=False):
+        """
+        Mark lesson as completed
+        
+        WARNING: This method should generally NOT be called directly.
+        Use enrollment.mark_lesson_complete() instead, which includes proper validation.
+        
+        Args:
+            skip_validation: If True, bypass validation check (use only from mark_lesson_complete())
+        """
+        if not skip_validation:
+            # Prevent direct calls that bypass validation
+            raise ValueError(
+                "mark_as_completed() should not be called directly without skip_validation=True. "
+                "Use enrollment.mark_lesson_complete() instead for proper validation including "
+                "quiz requirements, order checks, and enrollment counter updates."
+            )
+        
         self.status = 'completed'
         self.completed_at = timezone.now()
         self.save()

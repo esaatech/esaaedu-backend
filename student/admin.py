@@ -278,13 +278,37 @@ class StudentLessonProgressAdmin(admin.ModelAdmin):
     actions = ['mark_completed', 'mark_in_progress', 'reset_progress']
     
     def mark_completed(self, request, queryset):
+        """
+        Mark lessons as completed - uses proper validation through enrollment.mark_lesson_complete()
+        This ensures quiz requirements and order validation are enforced.
+        """
         count = 0
+        skipped = 0
+        errors = []
+        
         for progress in queryset:
-            if progress.can_be_completed:
-                progress.mark_as_completed()
-                count += 1
-        self.message_user(request, f'{count} lessons marked as completed.')
-    mark_completed.short_description = "Mark selected lessons as completed"
+            try:
+                # Use the proper enrollment method which includes all validation
+                success, message = progress.enrollment.mark_lesson_complete(
+                    progress.lesson, 
+                    require_quiz=True  # Always require quiz validation
+                )
+                if success:
+                    count += 1
+                else:
+                    skipped += 1
+                    errors.append(f"Lesson {progress.lesson.order}: {message}")
+            except Exception as e:
+                skipped += 1
+                errors.append(f"Lesson {progress.lesson.order}: {str(e)}")
+        
+        message = f'{count} lessons marked as completed.'
+        if skipped > 0:
+            message += f' {skipped} lessons skipped (validation failed).'
+        if errors:
+            message += f' Errors: {"; ".join(errors[:5])}'  # Show first 5 errors
+        self.message_user(request, message)
+    mark_completed.short_description = "Mark selected lessons as completed (with validation)"
     
     def mark_in_progress(self, request, queryset):
         count = 0

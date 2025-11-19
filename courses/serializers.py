@@ -49,8 +49,12 @@ class LessonListSerializer(serializers.ModelSerializer):
     """
     Lightweight serializer for lesson list (first API call)
     Returns minimal lesson data for the course page
+    
+    Status is determined directly from StudentLessonProgress records,
+    not from enrollment metadata. This makes it robust against lesson reordering
+    and new lesson additions.
     """
-    status = serializers.CharField(read_only=True)
+    status = serializers.SerializerMethodField()
     
     class Meta:
         model = Lesson
@@ -59,6 +63,44 @@ class LessonListSerializer(serializers.ModelSerializer):
             'status', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']
+    
+    def get_status(self, obj):
+        """
+        Get lesson status directly from StudentLessonProgress records.
+        This is the single source of truth - no inference from metadata.
+        """
+        lesson_status_map = self.context.get('lesson_status_map', {})
+        current_lesson_id = self.context.get('current_lesson_id')
+        lesson_id = str(obj.id)
+        
+        # Check actual progress record
+        progress_status = lesson_status_map.get(lesson_id)
+        
+        if progress_status == 'completed':
+            return 'completed'
+        elif progress_status == 'in_progress':
+            # If it's the current lesson, mark as current, otherwise in_progress
+            return 'current' if lesson_id == current_lesson_id else 'in_progress'
+        elif progress_status == 'not_started':
+            # Check if this is the current lesson or first lesson
+            if lesson_id == current_lesson_id:
+                return 'current'
+            elif obj.order == 1:
+                # First lesson is always available if no progress record exists
+                return 'current'
+            else:
+                return 'locked'
+        else:
+            # No progress record exists - determine from order and prerequisites
+            if lesson_id == current_lesson_id:
+                return 'current'
+            elif obj.order == 1:
+                # First lesson is always available
+                return 'current'
+            else:
+                # Check if previous lessons are completed to determine if unlocked
+                # For now, default to locked (can be enhanced with prerequisite checking)
+                return 'locked'
 
 
 class LessonDetailSerializer(serializers.ModelSerializer):
@@ -149,26 +191,23 @@ class CourseWithLessonsSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'enrolled_students_count', 'total_lessons']
     
     def get_current_lesson(self, obj):
-        """Get detailed information for the current/first lesson"""
+        """
+        Get detailed information for the current lesson.
+        Current lesson is determined from StudentLessonProgress records,
+        not from enrollment.current_lesson metadata.
+        """
         try:
-            # Get the first lesson or current lesson based on enrollment progress
-            student_profile = self.context.get('student_profile')
-            if student_profile:
-                # Try to get current lesson from enrollment
-                from student.models import EnrolledCourse
-                enrollment = EnrolledCourse.objects.filter(
-                    student_profile=student_profile,
-                    course=obj,
-                    status__in=['active', 'completed']
-                ).first()
-                
-                if enrollment and hasattr(enrollment, 'current_lesson') and enrollment.current_lesson:
-                    current_lesson = enrollment.current_lesson
-                else:
-                    # Fallback to first lesson
+            current_lesson_id = self.context.get('current_lesson_id')
+            
+            if current_lesson_id:
+                # Get current lesson from context (determined from progress records)
+                try:
+                    current_lesson = obj.lessons.get(id=current_lesson_id)
+                except Lesson.DoesNotExist:
+                    # Fallback to first lesson if current_lesson_id doesn't exist
                     current_lesson = obj.lessons.order_by('order').first()
             else:
-                # No student context, return first lesson
+                # No current lesson determined, fallback to first lesson
                 current_lesson = obj.lessons.order_by('order').first()
             
             if current_lesson:
@@ -186,7 +225,10 @@ class CourseWithLessonsSerializer(serializers.ModelSerializer):
             return None
     
     def get_enrollment_info(self, obj):
-        """Get enrollment information for the student"""
+        """
+        Get enrollment information for the student.
+        Uses actual progress records to calculate metrics, not enrollment metadata.
+        """
         try:
             student_profile = self.context.get('student_profile')
             if not student_profile:
@@ -201,12 +243,26 @@ class CourseWithLessonsSerializer(serializers.ModelSerializer):
             
             if not enrollment:
                 return None
-                
+            
+            # Get actual completed count from context (calculated from progress records)
+            actual_completed_count = self.context.get('actual_completed_count', 0)
+            current_lesson_id = self.context.get('current_lesson_id')
+            
+            # Calculate progress percentage from actual records
+            total_lessons = enrollment.total_lessons_count or obj.lessons.count()
+            if total_lessons > 0:
+                actual_progress_percentage = (actual_completed_count / total_lessons) * 100
+            else:
+                actual_progress_percentage = 0.0
+            
+            # Determine if course is completed from actual progress
+            course_completed = actual_completed_count >= total_lessons if total_lessons > 0 else False
+            
             return {
-                'current_lesson_id': str(enrollment.current_lesson.id) if enrollment.current_lesson else None,
-                'completed_lessons_count': enrollment.completed_lessons_count,
-                'progress_percentage': float(enrollment.progress_percentage),
-                'course_completed': enrollment.status == 'completed'
+                'current_lesson_id': current_lesson_id,  # From progress records, not enrollment.current_lesson
+                'completed_lessons_count': actual_completed_count,  # From progress records
+                'progress_percentage': float(actual_progress_percentage),  # Calculated from actual records
+                'course_completed': course_completed  # Determined from actual progress
             }
             
         except Exception as e:

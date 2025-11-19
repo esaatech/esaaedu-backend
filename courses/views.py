@@ -2824,21 +2824,34 @@ def student_course_lessons(request, course_id):
     """
     Get all lessons for a course with progress information and current lesson details
     This is the first API call that returns everything needed for the course page
+    
+    Uses StudentLessonProgress records as the single source of truth for lesson status.
     """
-    print(f"=== DEBUGGING student_course_lessons ===")
-    
-    
     try:
         # Get the course with lessons and current lesson details
         course = get_object_or_404(Course, id=course_id)
         
         # Check if student is enrolled
-        student_profile = request.user.student_profile
-        print(f"🔍 ...............Student profile found: {student_profile}..................")
+        if not request.user.is_authenticated:
+            return Response(
+                {'error': 'Authentication required'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            student_profile = request.user.student_profile
+        except AttributeError:
+            return Response(
+                {'error': 'Student profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
         enrollment = EnrolledCourse.objects.filter(
             student_profile=student_profile,
             course=course,
             status__in=['active', 'completed']
+        ).prefetch_related(
+            'lesson_progress__lesson'  # Bulk prefetch all progress records
         ).first()
         
         if not enrollment:
@@ -2847,10 +2860,46 @@ def student_course_lessons(request, course_id):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        # Use the optimized serializer that includes lesson list and current lesson details
+        # Build progress status map from ACTUAL StudentLessonProgress records
+        # This is the single source of truth - no inference from metadata
+        lesson_status_map = {}
+        completed_lesson_ids = set()
+        
+        for progress in enrollment.lesson_progress.all():
+            lesson_id = str(progress.lesson.id)
+            lesson_status_map[lesson_id] = progress.status
+            
+            if progress.status == 'completed':
+                completed_lesson_ids.add(progress.lesson.id)
+        
+        # Determine current lesson from progress records (not from enrollment.current_lesson)
+        # Current lesson = first lesson that is NOT completed
+        current_lesson = None
+        for lesson in course.lessons.order_by('order'):
+            lesson_id = str(lesson.id)
+            lesson_status = lesson_status_map.get(lesson_id, 'not_started')
+            
+            if lesson_status != 'completed':
+                current_lesson = lesson
+                break
+        
+        # If all lessons are completed, current_lesson is None
+        # Fallback to first lesson if no progress records exist
+        if current_lesson is None:
+            current_lesson = course.lessons.order_by('order').first()
+        
+        # Calculate actual completed count from progress records
+        actual_completed_count = len(completed_lesson_ids)
+        
+        # Use the serializer with progress map in context
         serializer = CourseWithLessonsSerializer(
             course, 
-            context={'student_profile': student_profile}
+            context={
+                'student_profile': student_profile,
+                'lesson_status_map': lesson_status_map,  # Pass actual progress records
+                'current_lesson_id': str(current_lesson.id) if current_lesson else None,
+                'actual_completed_count': actual_completed_count  # For enrollment_info
+            }
         )
         
         return Response(serializer.data, status=status.HTTP_200_OK)
