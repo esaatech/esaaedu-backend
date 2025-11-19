@@ -2865,31 +2865,64 @@ def student_course_lessons(request, course_id):
         lesson_status_map = {}
         completed_lesson_ids = set()
         
-        for progress in enrollment.lesson_progress.all():
+        # Get all progress records for this enrollment
+        progress_records = enrollment.lesson_progress.all().select_related('lesson')
+        
+        print(f"🔍 DEBUG: Found {progress_records.count()} progress records for enrollment")
+        
+        for progress in progress_records:
             lesson_id = str(progress.lesson.id)
             lesson_status_map[lesson_id] = progress.status
             
-            if progress.status == 'completed':
+            # Use is_completed property for consistency with _recalculate_from_progress_records
+            if progress.is_completed:
                 completed_lesson_ids.add(progress.lesson.id)
+                print(f"✅ Completed lesson: {progress.lesson.title} (Order: {progress.lesson.order}, Status: {progress.status})")
+        
+        print(f"🔍 DEBUG: Total completed lessons from progress records: {len(completed_lesson_ids)}")
         
         # Determine current lesson from progress records (not from enrollment.current_lesson)
-        # Current lesson = first lesson that is NOT completed
+        # Current lesson = next lesson after the highest completed lesson order
+        # This ensures we don't go back to earlier incomplete lessons
         current_lesson = None
-        for lesson in course.lessons.order_by('order'):
+        
+        # Find the highest order number among completed lessons
+        highest_completed_order = 0
+        for lesson in course.lessons.all():
             lesson_id = str(lesson.id)
             lesson_status = lesson_status_map.get(lesson_id, 'not_started')
-            
-            if lesson_status != 'completed':
-                current_lesson = lesson
-                break
+            if lesson_status == 'completed':
+                highest_completed_order = max(highest_completed_order, lesson.order)
         
-        # If all lessons are completed, current_lesson is None
-        # Fallback to first lesson if no progress records exist
-        if current_lesson is None:
+        # Find the next lesson after the highest completed lesson
+        # This is the lesson the student should work on next
+        if highest_completed_order > 0:
+            # Find next lesson after highest completed order
+            next_lesson = course.lessons.filter(
+                order__gt=highest_completed_order
+            ).order_by('order').first()
+            if next_lesson:
+                current_lesson = next_lesson
+            else:
+                # All lessons are completed
+                current_lesson = None
+        else:
+            # No lessons completed yet, start with first lesson
             current_lesson = course.lessons.order_by('order').first()
         
         # Calculate actual completed count from progress records
         actual_completed_count = len(completed_lesson_ids)
+        
+        print(f"🔍 DEBUG: Calculated actual_completed_count: {actual_completed_count}")
+        print(f"🔍 DEBUG: Enrollment.completed_lessons_count before sync: {enrollment.completed_lessons_count}")
+        
+        # Sync enrollment object with calculated values to keep database in sync
+        # This ensures consistency across all endpoints
+        enrollment._recalculate_from_progress_records()
+        enrollment.save()
+        
+        print(f"🔍 DEBUG: Enrollment.completed_lessons_count after sync: {enrollment.completed_lessons_count}")
+        print(f"🔍 DEBUG: Enrollment.current_lesson after sync: {enrollment.current_lesson.title if enrollment.current_lesson else None}")
         
         # Use the serializer with progress map in context
         serializer = CourseWithLessonsSerializer(
@@ -3327,6 +3360,9 @@ class StudentLessonDetailView(APIView):
             
             if success:
                 print(f"✅ Lesson marked as complete successfully: {message}")
+                # Refresh enrollment from database to get recalculated values
+                enrollment.refresh_from_db()
+                
                 return Response({
                     'message': message,
                     'current_lesson': {

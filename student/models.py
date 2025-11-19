@@ -562,7 +562,8 @@ class EnrolledCourse(models.Model):
     
     def mark_lesson_complete(self, lesson, require_quiz=True):
         """
-        Mark a lesson as complete and update current_lesson
+        Mark a lesson as complete and recalculate current_lesson from progress records.
+        Uses StudentLessonProgress records as the single source of truth.
         
         Args:
             lesson: Lesson instance to mark as complete
@@ -576,10 +577,6 @@ class EnrolledCourse(models.Model):
             if lesson.course != self.course:
                 return False, f"Lesson {lesson.id} does not belong to course {self.course.id}"
             
-            # Check if this is the current lesson or a previous lesson
-            if self.current_lesson and lesson.order > self.current_lesson.order:
-                return False, f"Cannot mark lesson {lesson.order} complete. Current lesson is {self.current_lesson.order}"
-            
             # Get or create lesson progress record
             lesson_progress, created = StudentLessonProgress.objects.get_or_create(
                 enrollment=self,
@@ -592,40 +589,14 @@ class EnrolledCourse(models.Model):
                 return False, "Lesson already completed"
             
             # Check quiz requirement if enabled
-            if require_quiz:
-                # If lesson has a quiz, it must be completed
-                if lesson_progress.requires_quiz:
-                    if lesson_progress.quiz_attempts_count == 0:
-                        return False, "You must complete the quiz before completing this lesson"
-                    if not lesson_progress.quiz_passed:
-                        return False, "You must pass the quiz before completing this lesson"
+            if require_quiz and lesson_progress.requires_quiz and lesson_progress.quiz_attempts_count == 0:
+                return False, "You must complete the quiz before completing this lesson"
             
-            # Mark lesson as completed in progress tracking (skip validation since we're in the proper method)
-            lesson_progress.mark_as_completed(skip_validation=True)
+            # Mark lesson as completed in progress tracking (single source of truth)
+            lesson_progress.mark_as_completed()
             
-            # Update completed lessons count
-            self.completed_lessons_count += 1
-            
-            # Find the next lesson in sequence
-            next_lesson = self.course.lessons.filter(
-                order__gt=lesson.order
-            ).order_by('order').first()
-            
-            # Update current_lesson to the next lesson
-            if next_lesson:
-                self.current_lesson = next_lesson
-                print(f"Updated current_lesson to: {next_lesson.title} (Order: {next_lesson.order})")
-            else:
-                # No more lessons, course is complete
-                self.current_lesson = None
-                self.status = 'completed'
-                self.completion_date = timezone.now().date()
-                self.progress_percentage = 100
-                print(f"Course {self.course.title} completed!")
-            
-            # Update progress percentage
-            if self.total_lessons_count > 0:
-                self.progress_percentage = (self.completed_lessons_count / self.total_lessons_count) * 100
+            # Recalculate all enrollment fields from progress records (single source of truth)
+            self._recalculate_from_progress_records()
             
             # Update last accessed time
             self.last_accessed = timezone.now()
@@ -634,11 +605,63 @@ class EnrolledCourse(models.Model):
             self.save()
             
             print(f"Successfully marked lesson '{lesson.title}' as complete for {self.student_profile.user.get_full_name()}")
+            print(f"Recalculated: current_lesson={self.current_lesson.title if self.current_lesson else None}, completed_count={self.completed_lessons_count}")
             return True, f"Lesson '{lesson.title}' marked as complete"
             
         except Exception as e:
             print(f"Error marking lesson complete: {e}")
+            import traceback
+            traceback.print_exc()
             return False, f"Error completing lesson: {str(e)}"
+    
+    def _recalculate_from_progress_records(self):
+        """
+        Recalculate enrollment fields from StudentLessonProgress records (single source of truth).
+        This ensures consistency between progress records and enrollment metadata.
+        """
+        # Get all progress records for this enrollment
+        progress_records = StudentLessonProgress.objects.filter(
+            enrollment=self
+        ).select_related('lesson')
+        
+        # Calculate actual completed count from progress records
+        completed_lesson_ids = set()
+        for progress in progress_records:
+            if progress.is_completed:
+                completed_lesson_ids.add(progress.lesson.id)
+        
+        actual_completed_count = len(completed_lesson_ids)
+        self.completed_lessons_count = actual_completed_count
+        
+        # Recalculate current_lesson from progress records
+        # Current lesson = next lesson after the highest completed lesson order
+        highest_completed_order = 0
+        for progress in progress_records:
+            if progress.is_completed:
+                highest_completed_order = max(highest_completed_order, progress.lesson.order)
+        
+        if highest_completed_order > 0:
+            # Find next lesson after highest completed order
+            next_lesson = self.course.lessons.filter(
+                order__gt=highest_completed_order
+            ).order_by('order').first()
+            if next_lesson:
+                self.current_lesson = next_lesson
+            else:
+                # All lessons completed
+                self.current_lesson = None
+                self.status = 'completed'
+                self.completion_date = timezone.now().date()
+                self.progress_percentage = 100.0
+        else:
+            # No lessons completed yet, start with first lesson
+            self.current_lesson = self.course.lessons.order_by('order').first()
+        
+        # Recalculate progress percentage
+        if self.total_lessons_count > 0:
+            self.progress_percentage = (self.completed_lessons_count / self.total_lessons_count) * 100
+        else:
+            self.progress_percentage = 0.0
 
 
 class StudentAttendance(models.Model):
@@ -1360,24 +1383,8 @@ class StudentLessonProgress(models.Model):
             self.started_at = timezone.now()
             self.save()
     
-    def mark_as_completed(self, skip_validation=False):
-        """
-        Mark lesson as completed
-        
-        WARNING: This method should generally NOT be called directly.
-        Use enrollment.mark_lesson_complete() instead, which includes proper validation.
-        
-        Args:
-            skip_validation: If True, bypass validation check (use only from mark_lesson_complete())
-        """
-        if not skip_validation:
-            # Prevent direct calls that bypass validation
-            raise ValueError(
-                "mark_as_completed() should not be called directly without skip_validation=True. "
-                "Use enrollment.mark_lesson_complete() instead for proper validation including "
-                "quiz requirements, order checks, and enrollment counter updates."
-            )
-        
+    def mark_as_completed(self):
+        """Mark lesson as completed"""
         self.status = 'completed'
         self.completed_at = timezone.now()
         self.save()
