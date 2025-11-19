@@ -3280,29 +3280,47 @@ class ParentDashboardView(APIView):
     def get_upcoming_tasks(self, student_profile, enrolled_courses):
         """
         Get upcoming tasks from ClassEvents and Assignments
-        Returns only upcoming tasks (filtered by date on backend for performance)
+        Returns tasks within a date range (1 day past to 7 days future) for frontend filtering.
+        Frontend will filter by local timezone to show only ongoing/future tasks.
         """
         from courses.models import ClassEvent, Assignment, AssignmentSubmission
         from student.models import StudentLessonProgress
         from django.utils import timezone
         from django.db.models import Q, Exists, OuterRef
+        from datetime import timedelta
         
         tasks = []
         enrolled_course_ids = [enrollment.course.id for enrollment in enrolled_courses]
         now_utc = timezone.now()
         
+        # Calculate date range: 1 day in the past to 7 days in the future
+        # This accounts for timezone differences (no timezone extends more than 24 hours)
+        # Frontend will filter by local timezone to show only ongoing/future tasks
+        past_threshold = now_utc - timedelta(days=1)
+        future_threshold = now_utc + timedelta(days=7)
+        
         # 1. Get ClassEvents from enrolled courses
         # Query all event types (lesson, meeting, project, break) from classes in enrolled courses
         # Only include events where student is enrolled in the class
-        # Filter to only upcoming/ongoing events:
-        #   - For projects: due_date >= now (not yet due)
-        #   - For other events: end_time > now (includes upcoming and ongoing events)
+        # Filter by date range (not strict filtering - frontend will filter by local timezone):
+        #   - For projects: due_date within range (past_threshold to future_threshold)
+        #   - For other events: end_time within range (past_threshold to future_threshold)
+        #   Note: We use end_time >= past_threshold to include events that might still be ongoing
+        #   in different timezones, and start_time <= future_threshold to include upcoming events
         class_events = ClassEvent.objects.filter(
             class_instance__course_id__in=enrolled_course_ids,
             class_instance__students=student_profile.user
         ).filter(
-            Q(event_type='project', due_date__gte=now_utc) |
-            Q(event_type__in=['lesson', 'meeting', 'break'], end_time__gt=now_utc)
+            Q(
+                event_type='project',
+                due_date__gte=past_threshold,
+                due_date__lte=future_threshold
+            ) |
+            Q(
+                event_type__in=['lesson', 'meeting', 'break'],
+                end_time__gte=past_threshold,
+                start_time__lte=future_threshold
+            )
         ).select_related('class_instance', 'class_instance__course', 'lesson', 'project')
         
         for event in class_events:
@@ -3383,11 +3401,13 @@ class ParentDashboardView(APIView):
         
         if completed_lessons:
             # Get assignments linked to completed lessons that haven't been submitted
-            # Only include upcoming assignments (due_date >= now)
+            # Filter by date range (past_threshold to future_threshold)
+            # Frontend will filter by local timezone to show only ongoing/future assignments
             assignments = Assignment.objects.filter(
                 lessons__id__in=completed_lessons,
                 due_date__isnull=False,
-                due_date__gte=now_utc
+                due_date__gte=past_threshold,
+                due_date__lte=future_threshold
             ).distinct()
             
             # Exclude assignments that have been submitted
