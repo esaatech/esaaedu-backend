@@ -1499,28 +1499,34 @@ class DashboardOverview(APIView):
             for event in all_course_events:
                 print(f"🔍 DEBUG: - Event: {event.title}, Event Type: {event.event_type}, Lesson Type: {event.lesson_type}, Start: {event.start_time}")
             
-            # Configure time filter based on user's SHOW_TODAY_ONLY setting
+            # Filter to only show upcoming/ongoing events (not past events)
+            # Use end_time__gt to include events that haven't ended yet
+            # This matches the parent dashboard filtering approach (line 3286)
+            base_filter = {
+                'class_instance__course': enrollment.course,
+                'event_type': 'lesson',
+                'lesson_type__in': ['video', 'audio', 'text', 'interactive']
+            }
+            
+            # Always filter by end_time > current_time to exclude past events
+            # This ensures only ongoing or future events are shown
+            time_filter = {
+                'end_time__gt': current_time  # Only include events that haven't ended yet
+            }
+            
             if user_settings['show_today_only']:
-                # Show only today's events
+                # Additionally filter to show only today's events
                 today_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
                 today_end = current_time.replace(hour=23, minute=59, second=59, microsecond=999999)
-                time_filter = {
-                    'start_time__gte': today_start,
-                    'start_time__lte': today_end
-                }
-                print(f"🔍 DEBUG: Continue learning - Filtering for TODAY ONLY: {today_start} to {today_end}")
+                time_filter['start_time__gte'] = today_start
+                time_filter['start_time__lte'] = today_end
+                print(f"🔍 DEBUG: Continue learning - Filtering for TODAY ONLY (end_time > now): {today_start} to {today_end}")
             else:
-                # Show all upcoming events
-                time_filter = {
-                    'start_time__gte': current_time.replace(hour=0, minute=0, second=0, microsecond=0)
-                }
-                print(f"🔍 DEBUG: Continue learning - Filtering for ALL UPCOMING events from today onwards")
+                print(f"🔍 DEBUG: Continue learning - Filtering for ALL UPCOMING events (end_time > now)")
             
             # Get ALL non-live lessons from ClassEvents (scheduled lessons)
             course_events = class_events.filter(
-                class_instance__course=enrollment.course,
-                event_type='lesson',
-                lesson_type__in=['video', 'audio', 'text', 'interactive'],  # All non-live lesson types
+                **base_filter,
                 **time_filter
             ).order_by('start_time')[:10]
             
@@ -1595,28 +1601,34 @@ class DashboardOverview(APIView):
         for enrollment in enrollments:
             print(f"🔍 DEBUG: Processing course for live lessons: {enrollment.course.title}")
             
-            # Configure time filter based on user's SHOW_TODAY_ONLY setting
+            # Filter to only show upcoming/ongoing events (not past events)
+            # Use end_time__gt to include events that haven't ended yet
+            # This matches the parent dashboard filtering approach (line 3286)
+            base_filter = {
+                'class_instance__course': enrollment.course,
+                'event_type': 'lesson',
+                'lesson_type': 'live'
+            }
+            
+            # Always filter by end_time > current_time to exclude past events
+            # This ensures only ongoing or future events are shown
+            time_filter = {
+                'end_time__gt': current_time  # Only include events that haven't ended yet
+            }
+            
             if user_settings['show_today_only']:
-                # Show only today's events
+                # Additionally filter to show only today's events
                 today_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
                 today_end = current_time.replace(hour=23, minute=59, second=59, microsecond=999999)
-                time_filter = {
-                    'start_time__gte': today_start,
-                    'start_time__lte': today_end
-                }
-                print(f"🔍 DEBUG: Filtering for TODAY ONLY: {today_start} to {today_end}")
+                time_filter['start_time__gte'] = today_start
+                time_filter['start_time__lte'] = today_end
+                print(f"🔍 DEBUG: Live lessons - Filtering for TODAY ONLY (end_time > now): {today_start} to {today_end}")
             else:
-                # Show all upcoming events
-                time_filter = {
-                    'start_time__gte': current_time.replace(hour=0, minute=0, second=0, microsecond=0)
-                }
-                print(f"🔍 DEBUG: Filtering for ALL UPCOMING events from today onwards")
+                print(f"🔍 DEBUG: Live lessons - Filtering for ALL UPCOMING events (end_time > now)")
             
             # Filter class events for this course
             course_events = class_events.filter(
-                class_instance__course=enrollment.course,
-                event_type='lesson',
-                lesson_type='live',
+                **base_filter,
                 **time_filter
             ).order_by('start_time')[:5]  # Get more events per course for better selection
             
