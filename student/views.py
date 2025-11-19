@@ -1499,30 +1499,37 @@ class DashboardOverview(APIView):
             for event in all_course_events:
                 print(f"🔍 DEBUG: - Event: {event.title}, Event Type: {event.event_type}, Lesson Type: {event.lesson_type}, Start: {event.start_time}")
             
-            # Filter to only show upcoming/ongoing events (not past events)
-            # Use end_time__gt to include events that haven't ended yet
-            # This matches the parent dashboard filtering approach (line 3286)
+            # Filter continue learning lessons by date only (not time)
+            # Since these are not live classes, students can access them anytime during the day
+            # Use date-only comparison to avoid timezone issues
+            # IMPORTANT: We need to compare dates correctly - exclude past dates (yesterday and earlier)
+            # Django's __date lookup extracts date in database timezone (UTC), so we compare UTC dates
             base_filter = {
                 'class_instance__course': enrollment.course,
                 'event_type': 'lesson',
                 'lesson_type__in': ['video', 'audio', 'text', 'interactive']
             }
             
-            # Always filter by end_time > current_time to exclude past events
-            # This ensures only ongoing or future events are shown
-            time_filter = {
-                'end_time__gt': current_time  # Only include events that haven't ended yet
-            }
+            # Get today's date in UTC (since Django stores datetimes in UTC)
+            # This ensures we're comparing dates correctly
+            today_date = current_time.date()
             
             if user_settings['show_today_only']:
-                # Additionally filter to show only today's events
-                today_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
-                today_end = current_time.replace(hour=23, minute=59, second=59, microsecond=999999)
-                time_filter['start_time__gte'] = today_start
-                time_filter['start_time__lte'] = today_end
-                print(f"🔍 DEBUG: Continue learning - Filtering for TODAY ONLY (end_time > now): {today_start} to {today_end}")
+                # Show all lessons scheduled for today (date match only, regardless of time)
+                # Use date comparison: extract date from start_time and compare
+                time_filter = {
+                    'start_time__date': today_date
+                }
+                print(f"🔍 DEBUG: Continue learning - Filtering for TODAY ONLY (date={today_date}, current_time={current_time}, time-independent)")
             else:
-                print(f"🔍 DEBUG: Continue learning - Filtering for ALL UPCOMING events (end_time > now)")
+                # Show all lessons from today onwards (date comparison only)
+                # CRITICAL: Exclude past dates - only show today and future dates
+                # Use date comparison: start_time date >= today's date
+                # This ensures lessons from yesterday (Nov 19) don't show if today is Nov 20
+                time_filter = {
+                    'start_time__date__gte': today_date
+                }
+                print(f"🔍 DEBUG: Continue learning - Filtering for ALL UPCOMING lessons (date>={today_date}, current_time={current_time}, excludes past dates)")
             
             # Get ALL non-live lessons from ClassEvents (scheduled lessons)
             course_events = class_events.filter(
