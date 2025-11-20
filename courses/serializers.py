@@ -251,7 +251,16 @@ class CourseWithLessonsSerializer(serializers.ModelSerializer):
             # Calculate progress percentage from actual records
             total_lessons = enrollment.total_lessons_count or obj.lessons.count()
             if total_lessons > 0:
-                actual_progress_percentage = (actual_completed_count / total_lessons) * 100
+                calculated_percentage = (actual_completed_count / total_lessons) * 100
+                # Cap at 100.0 to prevent DecimalField overflow and because progress can't exceed 100%
+                actual_progress_percentage = min(calculated_percentage, 100.0)
+                
+                # Debug logging for overflow detection
+                if calculated_percentage > 100.0:
+                    print(f"⚠️ WARNING: Progress percentage calculated as {calculated_percentage}% (capped at 100.0%)")
+                    print(f"   - actual_completed_count: {actual_completed_count}")
+                    print(f"   - total_lessons: {total_lessons}")
+                    print(f"   - Course: {obj.title}")
             else:
                 actual_progress_percentage = 0.0
             

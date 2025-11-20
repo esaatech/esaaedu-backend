@@ -633,6 +633,14 @@ class EnrolledCourse(models.Model):
         actual_completed_count = len(completed_lesson_ids)
         self.completed_lessons_count = actual_completed_count
         
+        # Debug logging for overflow detection
+        print(f"🔍 DEBUG _recalculate_from_progress_records:")
+        print(f"   - Course: {self.course.title if self.course else 'Unknown'}")
+        print(f"   - Total progress records: {progress_records.count()}")
+        print(f"   - Completed lesson IDs: {completed_lesson_ids}")
+        print(f"   - actual_completed_count: {actual_completed_count}")
+        print(f"   - total_lessons_count: {self.total_lessons_count}")
+        
         # Recalculate current_lesson from progress records
         # Current lesson = next lesson after the highest completed lesson order
         highest_completed_order = 0
@@ -658,8 +666,19 @@ class EnrolledCourse(models.Model):
             self.current_lesson = self.course.lessons.order_by('order').first()
         
         # Recalculate progress percentage
+        # Cap at 100.0 since it's a percentage (0-100%)
+        # This prevents DecimalField overflow errors
         if self.total_lessons_count > 0:
-            self.progress_percentage = (self.completed_lessons_count / self.total_lessons_count) * 100
+            calculated_percentage = (self.completed_lessons_count / self.total_lessons_count) * 100
+            # Cap at 100.0 to prevent overflow and because progress can't exceed 100%
+            self.progress_percentage = min(calculated_percentage, 100.0)
+            
+            # Debug logging for overflow detection
+            if calculated_percentage > 100.0:
+                print(f"⚠️ WARNING: Progress percentage calculated as {calculated_percentage}% (capped at 100.0%)")
+                print(f"   - completed_lessons_count: {self.completed_lessons_count}")
+                print(f"   - total_lessons_count: {self.total_lessons_count}")
+                print(f"   - Course: {self.course.title if self.course else 'Unknown'}")
         else:
             self.progress_percentage = 0.0
 
