@@ -1865,6 +1865,7 @@ class ClassEvent(models.Model):
     ]
     
     MEETING_PLATFORMS = [
+        ('jitsi', 'Jitsi Meet'),
         ('google-meet', 'Google Meet'),
         ('zoom', 'Zoom'),
         ('other', 'Other'),
