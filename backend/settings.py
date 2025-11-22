@@ -544,3 +544,13 @@ else:
 SLACK_BOT_TOKEN = config('SLACK_BOT_TOKEN', default='')
 SLACK_CHANNEL = config('SLACK_CHANNEL', default='#general')
 ADMIN_URL = config('ADMIN_URL', default='http://localhost:8000')
+
+# Jitsi Configuration
+JITSI_DOMAIN = config('JITSI_DOMAIN', default='meet.jit.si')
+JITSI_APP_ID = config('JITSI_APP_ID', default='')
+JITSI_APP_SECRET = config('JITSI_APP_SECRET', default='')
+JITSI_KID = config('JITSI_KID', default='')  # Key ID for JaaS
+# Token algorithm: 'RS256' for RSA keys (JaaS), 'HS256' for symmetric secrets
+JITSI_TOKEN_ALGORITHM = config('JITSI_TOKEN_ALGORITHM', default='RS256')
+# Token expiry in hours (default: 2 hours)
+JITSI_TOKEN_EXPIRY_HOURS = config('JITSI_TOKEN_EXPIRY_HOURS', default=2, cast=int)

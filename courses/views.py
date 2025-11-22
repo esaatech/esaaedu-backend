@@ -8,8 +8,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
 from django.utils import timezone
-from datetime import timedelta
-from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial
+from datetime import timedelta, datetime
+from django.conf import settings
+import jwt
+from jwt.exceptions import InvalidKeyError
+import logging
+from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom
+
+logger = logging.getLogger(__name__)
 from student.models import EnrolledCourse
 from django.db.models import F, Sum
 from courses.models import ClassEvent
@@ -23,7 +29,8 @@ from .serializers import (
 
     ClassListSerializer, ClassDetailSerializer, ClassCreateUpdateSerializer,
     StudentBasicSerializer, TeacherStudentDetailSerializer, TeacherStudentSummarySerializer,
-    CourseWithLessonsSerializer, LessonMaterialSerializer
+    CourseWithLessonsSerializer, LessonMaterialSerializer,
+    ClassroomSerializer, ClassroomCreateSerializer, ClassroomUpdateSerializer
 )
 
 
@@ -5126,3 +5133,570 @@ class BookPageView(APIView):
     def _user_can_modify(self, user, lesson):
         """Check if user can modify this lesson"""
         return user.role == 'teacher' and lesson.course.teacher == user
+
+
+# ===== CLASSROOM API VIEWS =====
+
+def generate_jitsi_token(user, classroom):
+    """
+    Generate JWT token for Jitsi authentication
+    Returns JWT token string for embedding in Jitsi Meet iframe
+    
+    Supports both:
+    - RS256 with RSA private key (JaaS recommended)
+    - HS256 with symmetric secret (simpler, less secure)
+    """
+    print("=" * 80)
+    print("🔐 Starting Jitsi JWT Token Generation")
+    print(f"User: {user.id} ({user.email}), Role: {user.role}")
+    print(f"Classroom: {classroom.room_code}")
+    logger.info("=" * 80)
+    logger.info("🔐 Starting Jitsi JWT Token Generation")
+    logger.info(f"User: {user.id} ({user.email}), Role: {user.role}")
+    logger.info(f"Classroom: {classroom.room_code}")
+    
+    # Get Jitsi configuration from settings
+    jitsi_app_id = getattr(settings, 'JITSI_APP_ID', '')
+    jitsi_app_secret = getattr(settings, 'JITSI_APP_SECRET', '')
+    jitsi_kid = getattr(settings, 'JITSI_KID', '')
+    jitsi_algorithm = getattr(settings, 'JITSI_TOKEN_ALGORITHM', 'RS256')  # Default to RS256 for JaaS
+    token_expiry_hours = getattr(settings, 'JITSI_TOKEN_EXPIRY_HOURS', 2)
+    jitsi_domain = getattr(settings, 'JITSI_DOMAIN', 'meet.jit.si')
+    
+    print("📋 Configuration:")
+    print(f"  Domain: {jitsi_domain}")
+    print(f"  App ID: {jitsi_app_id[:50]}..." if len(jitsi_app_id) > 50 else f"  App ID: {jitsi_app_id}")
+    print(f"  KID: {jitsi_kid[:50]}..." if jitsi_kid and len(jitsi_kid) > 50 else f"  KID: {jitsi_kid}")
+    print(f"  Algorithm: {jitsi_algorithm}")
+    print(f"  Token Expiry: {token_expiry_hours} hours")
+    logger.info("📋 Configuration:")
+    logger.info(f"  Domain: {jitsi_domain}")
+    logger.info(f"  App ID: {jitsi_app_id[:50]}..." if len(jitsi_app_id) > 50 else f"  App ID: {jitsi_app_id}")
+    logger.info(f"  KID: {jitsi_kid[:50]}..." if jitsi_kid and len(jitsi_kid) > 50 else f"  KID: {jitsi_kid}")
+    logger.info(f"  Algorithm: {jitsi_algorithm}")
+    logger.info(f"  Token Expiry: {token_expiry_hours} hours")
+    
+    # Special case: 8x8.vc with vpaas credentials may not support JWT authentication
+    # The vpaas private key can't be verified by 8x8.vc when using iss='chat'
+    # For now, disable JWT for 8x8.vc and use public rooms
+    if is_8x8vc and has_vpaas:
+        print("⚠️ 8x8.vc with vpaas credentials: JWT authentication may not be supported.")
+        print("⚠️ 8x8.vc cannot verify vpaas-signed tokens with iss='chat'.")
+        print("⚠️ Returning None - will use public Jitsi without JWT authentication.")
+        logger.warning("⚠️ 8x8.vc with vpaas credentials: JWT authentication may not be supported.")
+        logger.warning("⚠️ 8x8.vc cannot verify vpaas-signed tokens with iss='chat'.")
+        logger.warning("⚠️ Returning None - will use public Jitsi without JWT authentication.")
+        return None
+    
+    # If no app secret configured, return None (will use public Jitsi without auth)
+    if not jitsi_app_secret:
+        print("⚠️ JITSI_APP_SECRET not configured. Using public Jitsi without JWT authentication.")
+        logger.warning("⚠️ JITSI_APP_SECRET not configured. Using public Jitsi without JWT authentication.")
+        return None
+    
+    # Normalize the key: handle escaped newlines and strip quotes/whitespace
+    # This handles cases where .env file has \n as literal characters or quotes around the value
+    if isinstance(jitsi_app_secret, str):
+        # Strip surrounding quotes if present
+        jitsi_app_secret = jitsi_app_secret.strip().strip('"').strip("'")
+        # Convert escaped newlines (\n) to actual newlines if present
+        if '\\n' in jitsi_app_secret:
+            jitsi_app_secret = jitsi_app_secret.replace('\\n', '\n')
+            logger.debug("Converted escaped newlines (\\n) to actual newlines in JITSI_APP_SECRET")
+    
+    if not jitsi_app_id:
+        logger.error("JITSI_APP_ID not configured. Cannot generate JWT token.")
+        return None
+    
+    # Determine if user is moderator (teachers are moderators)
+    is_moderator = user.role == 'teacher'
+    
+    # Determine issuer based on domain and credentials
+    # 8x8.vc has special requirements: always use "chat" as issuer, even with vpaas credentials
+    # For jitsi.com domain with vpaas, use app ID as issuer
+    is_8x8vc = '8x8.vc' in jitsi_domain.lower()
+    is_jitsi_com = 'jitsi.com' in jitsi_domain.lower()
+    has_vpaas = jitsi_app_id and jitsi_app_id.startswith('vpaas-')
+    
+    print("🔍 Detection:")
+    print(f"  Is 8x8.vc: {is_8x8vc}")
+    print(f"  Is jitsi.com: {is_jitsi_com}")
+    print(f"  Has vpaas credentials: {has_vpaas}")
+    logger.info("🔍 Detection:")
+    logger.info(f"  Is 8x8.vc: {is_8x8vc}")
+    logger.info(f"  Is jitsi.com: {is_jitsi_com}")
+    logger.info(f"  Has vpaas credentials: {has_vpaas}")
+    
+    # 8x8.vc requires "chat" as issuer regardless of credentials (hybrid approach)
+    if is_8x8vc:
+        # For 8x8.vc: use "chat" as issuer/subject, but can still use vpaas key for signing
+        issuer = 'chat'
+        subject = 'chat'
+        print(f"✅ Using 8x8.vc format: iss='{issuer}', sub='{subject}' (vpaas credentials: {has_vpaas})")
+        logger.info(f"✅ Using 8x8.vc format: iss='{issuer}', sub='{subject}' (vpaas credentials: {has_vpaas})")
+    elif is_jitsi_com and has_vpaas:
+        # For jitsi.com with vpaas: use JaaS format
+        issuer = jitsi_app_id
+        subject = jitsi_app_id
+        print(f"✅ Using JaaS format: iss='{issuer[:50]}...', sub='{subject[:50]}...', domain={jitsi_domain}")
+        logger.info(f"✅ Using JaaS format: iss='{issuer[:50]}...', sub='{subject[:50]}...', domain={jitsi_domain}")
+    else:
+        # Regular Jitsi Meet format (meet.jit.si without vpaas): use "chat" as issuer
+        issuer = 'chat'
+        subject = 'chat'
+        print(f"✅ Using regular Jitsi Meet format: iss='{issuer}', sub='{subject}', domain={jitsi_domain}")
+        logger.info(f"✅ Using regular Jitsi Meet format: iss='{issuer}', sub='{subject}', domain={jitsi_domain}")
+    
+    # JWT payload according to Jitsi/JaaS specification
+    now = datetime.utcnow()
+    exp_timestamp = int((now.timestamp() + (token_expiry_hours * 3600)))
+    nbf_timestamp = int(now.timestamp())
+    
+    payload = {
+        'iss': issuer,  # Issuer: "chat" for Jitsi Meet, app ID for JaaS
+        'aud': 'jitsi',  # Audience
+        'exp': exp_timestamp,  # Expiration time
+        'nbf': nbf_timestamp,  # Not before
+        'room': classroom.room_code,  # Room name (must match Jitsi room)
+        'sub': subject,  # Subject: app ID for JaaS, "chat" or app ID for Jitsi Meet
+    }
+    
+    print("📦 JWT Payload:")
+    print(f"  iss: '{payload['iss']}'")
+    print(f"  sub: '{payload['sub']}'")
+    print(f"  aud: '{payload['aud']}'")
+    print(f"  room: '{payload['room']}'")
+    print(f"  exp: {payload['exp']} ({datetime.fromtimestamp(payload['exp']).isoformat()})")
+    print(f"  nbf: {payload['nbf']} ({datetime.fromtimestamp(payload['nbf']).isoformat()})")
+    logger.info("📦 JWT Payload:")
+    logger.info(f"  iss: '{payload['iss']}'")
+    logger.info(f"  sub: '{payload['sub']}'")
+    logger.info(f"  aud: '{payload['aud']}'")
+    logger.info(f"  room: '{payload['room']}'")
+    logger.info(f"  exp: {payload['exp']} ({datetime.fromtimestamp(payload['exp']).isoformat()})")
+    logger.info(f"  nbf: {payload['nbf']} ({datetime.fromtimestamp(payload['nbf']).isoformat()})")
+    
+    # Add context - 8x8.vc and regular Jitsi Meet use same format
+    # Only jitsi.com with vpaas uses full JaaS context
+    if is_jitsi_com and has_vpaas:
+        # Full JaaS context structure for jitsi.com
+        payload['context'] = {
+            'user': {
+                'id': str(user.id),
+                'name': user.get_full_name() or user.email,
+                'email': user.email,
+                'moderator': is_moderator,  # Teachers are moderators
+            },
+            'features': {
+                'livestreaming': classroom.video_enabled,
+                'recording': False,  # Set to True if you want recording enabled
+                'transcription': False,  # Set to True if you want transcription
+                'outbound-call': False,
+            },
+            'group': str(classroom.class_instance.id),  # Group ID (class ID)
+        }
+    else:
+        # Context for 8x8.vc and regular Jitsi Meet - needs features object
+        payload['context'] = {
+            'user': {
+                'id': str(user.id),
+                'name': user.get_full_name() or user.email,
+                'email': user.email,
+                'moderator': is_moderator,  # Teachers are moderators
+            },
+            'features': {
+                'livestreaming': classroom.video_enabled,
+                'recording': False,
+                'transcription': False,
+                'outbound-call': False,
+            }
+        }
+    
+    # Add kid (Key ID) header
+    headers = {}
+    if jitsi_algorithm == 'RS256':
+        # For RS256, kid handling depends on domain and credentials
+        if is_8x8vc:
+            # For 8x8.vc: DO NOT include KID header (even with vpaas credentials)
+            # 8x8.vc uses "chat" as issuer, so KID causes tenant mismatch
+            print("🚫 Skipping KID header for 8x8.vc (using iss='chat', KID would cause tenant mismatch)")
+            logger.info("🚫 Skipping KID header for 8x8.vc (using iss='chat', KID would cause tenant mismatch)")
+        elif is_jitsi_com and has_vpaas:
+            # For jitsi.com with vpaas: use full KID
+            if jitsi_kid:
+                headers['kid'] = jitsi_kid
+                logger.info(f"✅ Using JaaS KID for jitsi.com: {jitsi_kid[:50]}...")
+            else:
+                headers['kid'] = jitsi_app_id
+                logger.info(f"✅ Using app ID as KID fallback for jitsi.com: {jitsi_app_id[:50]}...")
+        else:
+            # For regular Jitsi Meet (meet.jit.si without vpaas)
+            # KID may not be required, but include if provided
+            if jitsi_kid:
+                headers['kid'] = jitsi_kid
+                logger.info(f"✅ Using KID for regular Jitsi Meet: {jitsi_kid[:50]}...")
+            else:
+                logger.info("ℹ️ No KID provided for regular Jitsi Meet (may not be required)")
+    
+    logger.info("📋 JWT Headers:")
+    if headers:
+        for key, value in headers.items():
+            logger.info(f"  {key}: {value[:50]}..." if len(str(value)) > 50 else f"  {key}: {value}")
+    else:
+        logger.info("  (no headers)")
+    
+    # Sign token with app secret/private key
+    try:
+        # Auto-detect algorithm based on secret format
+        # If secret starts with "-----BEGIN", it's an RSA private key (use RS256)
+        # Otherwise, it's a symmetric secret (use HS256)
+        if isinstance(jitsi_app_secret, str) and jitsi_app_secret.strip().startswith('-----BEGIN'):
+            # RSA private key detected - validate it's actually a private key, not public
+            secret_stripped = jitsi_app_secret.strip()
+            if 'PUBLIC KEY' in secret_stripped:
+                logger.error("❌ JITSI_APP_SECRET appears to be a PUBLIC key. RS256 requires a PRIVATE key.")
+                logger.error("Please provide an RSA private key (starts with '-----BEGIN RSA PRIVATE KEY-----' or '-----BEGIN PRIVATE KEY-----')")
+                return None
+            
+            if 'PRIVATE KEY' not in secret_stripped and 'RSA PRIVATE KEY' not in secret_stripped:
+                logger.warning("⚠️ Key format unclear. Attempting RS256, but ensure it's a private key.")
+            
+            # RSA private key detected - use RS256
+            actual_algorithm = 'RS256'
+            signing_key = jitsi_app_secret
+            logger.debug("Detected RSA private key, using RS256 algorithm")
+        elif jitsi_algorithm == 'RS256':
+            # Explicitly requested RS256 - validate it's a private key
+            if isinstance(jitsi_app_secret, str):
+                secret_stripped = jitsi_app_secret.strip()
+                if 'PUBLIC KEY' in secret_stripped:
+                    logger.error("❌ JITSI_APP_SECRET is set to RS256 but contains a PUBLIC key. RS256 requires a PRIVATE key.")
+                    logger.error("Please update JITSI_APP_SECRET with an RSA private key or change JITSI_TOKEN_ALGORITHM to HS256")
+                    return None
+                elif not secret_stripped.startswith('-----BEGIN'):
+                    logger.warning("⚠️ RS256 algorithm specified but key doesn't start with '-----BEGIN'. Ensure it's a valid PEM-formatted RSA private key.")
+            
+            # Explicitly requested RS256 - assume it's an RSA key
+            actual_algorithm = 'RS256'
+            signing_key = jitsi_app_secret
+        else:
+            # Use HS256 with symmetric secret
+            actual_algorithm = 'HS256'
+            signing_key = jitsi_app_secret
+            logger.debug("Using HS256 algorithm with symmetric secret")
+        
+        # Log context structure
+        logger.info("📋 Context Structure:")
+        if 'context' in payload:
+            logger.info(f"  User ID: {payload['context'].get('user', {}).get('id', 'N/A')}")
+            logger.info(f"  User Name: {payload['context'].get('user', {}).get('name', 'N/A')}")
+            logger.info(f"  Moderator: {payload['context'].get('user', {}).get('moderator', False)}")
+            logger.info(f"  Features: {list(payload['context'].get('features', {}).keys())}")
+            if 'group' in payload['context']:
+                logger.info(f"  Group: {payload['context']['group']}")
+        else:
+            logger.info("  (no context)")
+        
+        # Attempt to encode the token
+        logger.info("🔨 Encoding JWT token...")
+        logger.info(f"  Algorithm: {actual_algorithm}")
+        logger.info(f"  Key type: {'RSA Private Key' if actual_algorithm == 'RS256' else 'Symmetric Secret'}")
+        
+        token = jwt.encode(payload, signing_key, algorithm=actual_algorithm, headers=headers)
+        
+        # Decode to verify (for logging only)
+        try:
+            decoded = jwt.decode(token, options={"verify_signature": False})
+            logger.info("✅ Token encoded successfully!")
+            print(f"📝 Decoded token verification:")
+            print(f"  iss: '{decoded.get('iss', 'N/A')}'")
+            print(f"  sub: '{decoded.get('sub', 'N/A')}'")
+            print(f"  room: '{decoded.get('room', 'N/A')}'")
+            print(f"  Token length: {len(token)} characters")
+            print(f"  Token preview: {token[:50]}...")
+            logger.info(f"📝 Decoded token verification:")
+            logger.info(f"  iss: '{decoded.get('iss', 'N/A')}'")
+            logger.info(f"  sub: '{decoded.get('sub', 'N/A')}'")
+            logger.info(f"  room: '{decoded.get('room', 'N/A')}'")
+            logger.info(f"  Token length: {len(token)} characters")
+            logger.info(f"  Token preview: {token[:50]}...")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not decode token for verification: {e}")
+        
+        logger.info(f"✅ Generated JWT token using {actual_algorithm} for user {user.id} (moderator: {is_moderator}, room: {classroom.room_code})")
+        logger.info("=" * 80)
+        return token
+            
+    except InvalidKeyError as e:
+        error_msg = str(e)
+        algorithm_used = actual_algorithm if 'actual_algorithm' in locals() else jitsi_algorithm
+        if 'public key' in error_msg.lower():
+            logger.error("❌ Invalid key format: A PUBLIC key was provided, but RS256 requires a PRIVATE key.")
+            logger.error("Please update JITSI_APP_SECRET with an RSA private key in PEM format.")
+            logger.error("Private key should start with: '-----BEGIN RSA PRIVATE KEY-----' or '-----BEGIN PRIVATE KEY-----'")
+        else:
+            logger.error(f"❌ Invalid key format for {algorithm_used}: {error_msg}")
+            logger.error("For RS256: Ensure JITSI_APP_SECRET is an RSA private key in PEM format")
+            logger.error("For HS256: Ensure JITSI_APP_SECRET is a symmetric secret string")
+        return None
+    except Exception as e:
+        logger.error(f"❌ Error generating Jitsi JWT token: {e}", exc_info=True)
+        return None
+
+
+class ClassroomView(APIView):
+    """
+    Classroom Management CBV
+    GET: Retrieve classroom by class_id
+    POST: Create a new classroom for a class
+    PATCH: Update classroom settings
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, class_id):
+        """
+        GET: Retrieve classroom for a specific class
+        Teachers can always access their own classrooms
+        Students can access if enrolled in the class
+        """
+        try:
+            # Get the class
+            class_instance = get_object_or_404(Class, id=class_id)
+            
+            # Check access permissions
+            if request.user.role == 'teacher':
+                # Teacher must own the class
+                if class_instance.teacher != request.user:
+                    return Response(
+                        {'error': 'You do not have permission to access this classroom'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            elif request.user.role == 'student':
+                # Student must be enrolled in the class
+                if request.user not in class_instance.students.all():
+                    return Response(
+                        {'error': 'You are not enrolled in this class'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            else:
+                return Response(
+                    {'error': 'Invalid user role'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get or create classroom (auto-create if doesn't exist)
+            classroom, created = class_instance.get_or_create_classroom()
+            
+            # Generate JWT token for Jitsi authentication
+            print(f"🎯 API: Generating JWT token for classroom {classroom.room_code}")
+            print(f"🎯 API: User {request.user.id} ({request.user.email}), Role: {request.user.role}")
+            logger.info(f"🎯 API: Generating JWT token for classroom {classroom.room_code}")
+            logger.info(f"🎯 API: User {request.user.id} ({request.user.email}), Role: {request.user.role}")
+            
+            jitsi_token = generate_jitsi_token(request.user, classroom)
+            jitsi_domain = getattr(settings, 'JITSI_DOMAIN', 'meet.jit.si')
+            
+            print(f"🎯 API: Token generation result: {'SUCCESS' if jitsi_token else 'FAILED/NONE'}")
+            if jitsi_token:
+                print(f"🎯 API: Token length: {len(jitsi_token)} characters")
+                print(f"🎯 API: Token preview: {jitsi_token[:50]}...")
+                logger.info(f"🎯 API: Token length: {len(jitsi_token)} characters")
+                logger.info(f"🎯 API: Token preview: {jitsi_token[:50]}...")
+            else:
+                print(f"🎯 API: No token generated - will use public Jitsi")
+                logger.warning(f"🎯 API: No token generated - will use public Jitsi")
+            
+            logger.info(f"🎯 API: Token generation result: {'SUCCESS' if jitsi_token else 'FAILED/NONE'}")
+            
+            serializer = ClassroomSerializer(classroom)
+            response_data = serializer.data
+            response_data['jitsi_token'] = jitsi_token
+            response_data['jitsi_domain'] = jitsi_domain
+            
+            logger.info(f"🎯 API: Returning classroom data with token to frontend")
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch classroom', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, class_id):
+        """
+        POST: Create a new classroom for a class
+        Only teachers who own the class can create classrooms
+        """
+        try:
+            # Get the class
+            class_instance = get_object_or_404(Class, id=class_id)
+            
+            # Only teachers can create classrooms
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can create classrooms'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Teacher must own the class
+            if class_instance.teacher != request.user:
+                return Response(
+                    {'error': 'You do not have permission to create a classroom for this class'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Check if classroom already exists
+            if Classroom.objects.filter(class_instance=class_instance).exists():
+                return Response(
+                    {'error': 'A classroom already exists for this class'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Create classroom
+            serializer = ClassroomCreateSerializer(data={
+                'class_instance': str(class_instance.id),
+                **request.data
+            })
+            
+            if serializer.is_valid():
+                classroom = serializer.save()
+                
+                # Generate JWT token for Jitsi authentication
+                jitsi_token = generate_jitsi_token(request.user, classroom)
+                jitsi_domain = getattr(settings, 'JITSI_DOMAIN', 'meet.jit.si')
+                
+                response_serializer = ClassroomSerializer(classroom)
+                response_data = response_serializer.data
+                response_data['jitsi_token'] = jitsi_token
+                response_data['jitsi_domain'] = jitsi_domain
+                
+                return Response(response_data, status=status.HTTP_201_CREATED)
+            else:
+                return Response(
+                    {'error': 'Invalid data', 'details': serializer.errors},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to create classroom', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def patch(self, request, class_id):
+        """
+        PATCH: Update classroom settings
+        Only teachers who own the class can update settings
+        """
+        try:
+            # Get the class
+            class_instance = get_object_or_404(Class, id=class_id)
+            
+            # Only teachers can update classrooms
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can update classroom settings'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Teacher must own the class
+            if class_instance.teacher != request.user:
+                return Response(
+                    {'error': 'You do not have permission to update this classroom'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get or create classroom (auto-create if doesn't exist)
+            classroom, created = class_instance.get_or_create_classroom()
+            
+            # Update classroom settings
+            serializer = ClassroomUpdateSerializer(classroom, data=request.data, partial=True)
+            
+            if serializer.is_valid():
+                classroom = serializer.save()
+                
+                # Generate JWT token for Jitsi authentication
+                jitsi_token = generate_jitsi_token(request.user, classroom)
+                jitsi_domain = getattr(settings, 'JITSI_DOMAIN', 'meet.jit.si')
+                
+                response_serializer = ClassroomSerializer(classroom)
+                response_data = response_serializer.data
+                response_data['jitsi_token'] = jitsi_token
+                response_data['jitsi_domain'] = jitsi_domain
+                
+                return Response(response_data, status=status.HTTP_200_OK)
+            else:
+                return Response(
+                    {'error': 'Invalid data', 'details': serializer.errors},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to update classroom', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class ClassroomActiveSessionView(APIView):
+    """
+    GET: Retrieve active session information for a classroom
+    Teachers and enrolled students can access
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, class_id):
+        """
+        GET: Get active session info for a classroom
+        Returns the currently active ClassEvent session if one exists
+        """
+        try:
+            # Get the class
+            class_instance = get_object_or_404(Class, id=class_id)
+            
+            # Check access permissions
+            if request.user.role == 'teacher':
+                # Teacher must own the class
+                if class_instance.teacher != request.user:
+                    return Response(
+                        {'error': 'You do not have permission to access this classroom'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            elif request.user.role == 'student':
+                # Student must be enrolled in the class
+                if request.user not in class_instance.students.all():
+                    return Response(
+                        {'error': 'You are not enrolled in this class'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            else:
+                return Response(
+                    {'error': 'Invalid user role'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get or create classroom (auto-create if doesn't exist)
+            classroom, created = class_instance.get_or_create_classroom()
+            
+            # Get active session
+            active_session = classroom.get_active_session()
+            
+            if active_session:
+                from .serializers import ClassroomActiveSessionSerializer
+                serializer = ClassroomActiveSessionSerializer(active_session)
+                return Response({
+                    'is_active': True,
+                    'session': serializer.data
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'is_active': False,
+                    'session': None,
+                    'message': 'No active session at this time'
+                }, status=status.HTTP_200_OK)
+                
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch active session', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

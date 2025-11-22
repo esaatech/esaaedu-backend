@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage, VideoMaterial, DocumentMaterial
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage, VideoMaterial, DocumentMaterial, Classroom
 
 User = get_user_model()
 
@@ -1355,6 +1355,97 @@ class ClassCreateUpdateSerializer(serializers.ModelSerializer):
         
         logger.info("🔍 MAIN VALIDATION: All validations passed")
         return data
+
+
+# ===== CLASSROOM SERIALIZERS =====
+
+class ClassroomClassSerializer(serializers.ModelSerializer):
+    """Nested serializer for class_instance in Classroom"""
+    course_title = serializers.CharField(source='course.title', read_only=True)
+    course_id = serializers.CharField(source='course.id', read_only=True)
+    teacher_name = serializers.CharField(source='teacher.get_full_name', read_only=True)
+    student_count = serializers.IntegerField(read_only=True)
+    
+    class Meta:
+        model = Class
+        fields = [
+            'id', 'name', 'description', 'course_id', 'course_title',
+            'teacher_name', 'max_capacity', 'student_count',
+            'is_active', 'start_date', 'end_date'
+        ]
+
+
+class ClassroomActiveSessionSerializer(serializers.ModelSerializer):
+    """Serializer for active session info in Classroom"""
+    lesson_title = serializers.CharField(source='lesson.title', read_only=True)
+    lesson_id = serializers.CharField(source='lesson.id', read_only=True)
+    duration_minutes = serializers.IntegerField(read_only=True)
+    
+    class Meta:
+        model = ClassEvent
+        fields = [
+            'id', 'title', 'description', 'event_type', 'lesson_type',
+            'lesson_id', 'lesson_title', 'start_time', 'end_time',
+            'duration_minutes'
+        ]
+
+
+class ClassroomSerializer(serializers.ModelSerializer):
+    """Serializer for Classroom model with nested class_instance and active session info"""
+    class_instance = ClassroomClassSerializer(read_only=True)
+    is_session_active = serializers.SerializerMethodField()
+    active_session = serializers.SerializerMethodField()
+    student_count = serializers.IntegerField(read_only=True)
+    
+    class Meta:
+        model = Classroom
+        fields = [
+            'id', 'room_code', 'is_active', 'chat_enabled', 'board_enabled',
+            'video_enabled', 'class_instance', 'is_session_active',
+            'active_session', 'student_count', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'room_code', 'created_at', 'updated_at']
+    
+    def get_is_session_active(self, obj):
+        """Check if there's an active session"""
+        return obj.is_session_active()
+    
+    def get_active_session(self, obj):
+        """Get active session data"""
+        active_session = obj.get_active_session()
+        if active_session:
+            return ClassroomActiveSessionSerializer(active_session).data
+        return None
+
+
+class ClassroomCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating a Classroom"""
+    room_code = serializers.CharField(required=False, allow_blank=True, max_length=20)
+    
+    class Meta:
+        model = Classroom
+        fields = [
+            'class_instance', 'room_code', 'is_active',
+            'chat_enabled', 'board_enabled', 'video_enabled'
+        ]
+    
+    def validate_class_instance(self, value):
+        """Ensure classroom doesn't already exist for this class"""
+        if Classroom.objects.filter(class_instance=value).exists():
+            raise serializers.ValidationError(
+                "A classroom already exists for this class."
+            )
+        return value
+
+
+class ClassroomUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for updating Classroom settings"""
+    
+    class Meta:
+        model = Classroom
+        fields = [
+            'is_active', 'chat_enabled', 'board_enabled', 'video_enabled'
+        ]
 
 
 # ===== PROJECT SERIALIZERS =====

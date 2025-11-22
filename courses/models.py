@@ -1440,6 +1440,148 @@ class Class(models.Model):
             self.students.remove(student)
             return True, f"Student {student.get_full_name()} removed successfully"
         return False, "Student is not enrolled in this class"
+    
+    def get_or_create_classroom(self):
+        """
+        Get or create a Classroom for this Class instance
+        Returns (classroom, created) tuple
+        """
+        classroom, created = Classroom.objects.get_or_create(
+            class_instance=self,
+            defaults={
+                'is_active': True,
+                'chat_enabled': True,
+                'board_enabled': True,
+                'video_enabled': True,
+            }
+        )
+        return classroom, created
+
+
+class Classroom(models.Model):
+    """
+    Virtual classroom for a Class instance
+    Links to Class (one-to-one relationship)
+    Active during scheduled ClassEvent sessions
+    Provides persistent chat, virtual board, and video capabilities
+    """
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # One-to-one relationship with Class
+    class_instance = models.OneToOneField(
+        Class,
+        on_delete=models.CASCADE,
+        related_name='classroom',
+        help_text="The class this classroom belongs to"
+    )
+    
+    # Room configuration
+    room_code = models.CharField(
+        max_length=20,
+        unique=True,
+        db_index=True,
+        help_text="Unique room code for students to join (e.g., 'MATH-AM-A')"
+    )
+    
+    # Status
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether the classroom is currently active"
+    )
+    
+    # Feature settings (for future features)
+    chat_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether chat is enabled in this classroom"
+    )
+    board_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether virtual board is enabled in this classroom"
+    )
+    video_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether video cam is enabled in this classroom"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'classrooms'
+        verbose_name = "Classroom"
+        verbose_name_plural = "Classrooms"
+        ordering = ['class_instance__course__title', 'class_instance__name']
+    
+    def __str__(self):
+        return f"Classroom: {self.class_instance.name} ({self.room_code})"
+    
+    def save(self, *args, **kwargs):
+        """Auto-generate room_code if not provided"""
+        if not self.room_code:
+            # Generate a unique room code based on class name and UUID prefix
+            class_name_clean = ''.join(c for c in self.class_instance.name if c.isalnum())[:8].upper()
+            uuid_prefix = str(self.id)[:8].upper()
+            self.room_code = f"{class_name_clean}-{uuid_prefix}"
+            
+            # Ensure uniqueness
+            while Classroom.objects.filter(room_code=self.room_code).exists():
+                uuid_prefix = str(uuid.uuid4())[:8].upper()
+                self.room_code = f"{class_name_clean}-{uuid_prefix}"
+        
+        super().save(*args, **kwargs)
+    
+    def is_session_active(self):
+        """
+        Check if there's an active ClassEvent session right now
+        Returns True if there's a lesson event currently ongoing
+        """
+        now = timezone.now()
+        return self.class_instance.events.filter(
+            start_time__lte=now,
+            end_time__gte=now,
+            event_type='lesson'
+        ).exists()
+    
+    def get_active_session(self):
+        """
+        Get the currently active ClassEvent session
+        Returns the active ClassEvent or None
+        """
+        now = timezone.now()
+        return self.class_instance.events.filter(
+            start_time__lte=now,
+            end_time__gte=now,
+            event_type='lesson'
+        ).first()
+    
+    def can_student_join(self, student):
+        """
+        Check if a student can join this classroom
+        Returns (can_join: bool, message: str)
+        """
+        # Student must be enrolled in the class
+        if student not in self.class_instance.students.all():
+            return False, "Student not enrolled in this class"
+        
+        # Classroom must be active
+        if not self.is_active:
+            return False, "Classroom is not active"
+        
+        # Student can join (optional: check for active session)
+        # For now, we allow joining anytime if enrolled
+        # You can add session check later: has_active_session = self.is_session_active()
+        return True, "Student can join"
+    
+    def get_enrolled_students(self):
+        """Get all students enrolled in this classroom's class"""
+        return self.class_instance.students.all()
+    
+    @property
+    def student_count(self):
+        """Get number of enrolled students"""
+        return self.class_instance.student_count
 
 
 class ClassSession(models.Model):

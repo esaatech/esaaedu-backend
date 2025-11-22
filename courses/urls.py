@@ -55,6 +55,10 @@ urlpatterns = [
     path('teacher/classes/<uuid:class_id>/events/', views.class_events, name='class_events'),
     path('teacher/classes/<uuid:class_id>/events/<uuid:event_id>/', views.class_event_detail, name='class_event_detail'),
     
+    # Classroom endpoints
+    path('teacher/classes/<uuid:class_id>/classroom/', views.ClassroomView.as_view(), name='classroom_detail'),
+    path('teacher/classes/<uuid:class_id>/classroom/active-session/', views.ClassroomActiveSessionView.as_view(), name='classroom_active_session'),
+    
     # Quiz grading endpoints
     path('teacher/quiz-submissions/', views.teacher_quiz_submissions, name='teacher_quiz_submissions'),
     path('teacher/quiz-attempts/<uuid:attempt_id>/', views.quiz_attempt_details, name='quiz_attempt_details'),
