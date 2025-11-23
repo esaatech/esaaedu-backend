@@ -5176,6 +5176,13 @@ def generate_jitsi_token(user, classroom):
     logger.info(f"  Algorithm: {jitsi_algorithm}")
     logger.info(f"  Token Expiry: {token_expiry_hours} hours")
     
+    # Determine issuer based on domain and credentials (need to check this before using)
+    # 8x8.vc has special requirements: always use "chat" as issuer, even with vpaas credentials
+    # For jitsi.com domain with vpaas, use app ID as issuer
+    is_8x8vc = '8x8.vc' in jitsi_domain.lower()
+    is_jitsi_com = 'jitsi.com' in jitsi_domain.lower()
+    has_vpaas = jitsi_app_id and jitsi_app_id.startswith('vpaas-')
+    
     # Special case: 8x8.vc with vpaas credentials may not support JWT authentication
     # The vpaas private key can't be verified by 8x8.vc when using iss='chat'
     # For now, disable JWT for 8x8.vc and use public rooms
@@ -5210,13 +5217,6 @@ def generate_jitsi_token(user, classroom):
     
     # Determine if user is moderator (teachers are moderators)
     is_moderator = user.role == 'teacher'
-    
-    # Determine issuer based on domain and credentials
-    # 8x8.vc has special requirements: always use "chat" as issuer, even with vpaas credentials
-    # For jitsi.com domain with vpaas, use app ID as issuer
-    is_8x8vc = '8x8.vc' in jitsi_domain.lower()
-    is_jitsi_com = 'jitsi.com' in jitsi_domain.lower()
-    has_vpaas = jitsi_app_id and jitsi_app_id.startswith('vpaas-')
     
     print("🔍 Detection:")
     print(f"  Is 8x8.vc: {is_8x8vc}")
