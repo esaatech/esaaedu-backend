@@ -1504,6 +1504,16 @@ class Classroom(models.Model):
         help_text="Whether video cam is enabled in this classroom"
     )
     
+    # tldraw board integration
+    tldraw_board_id = models.CharField(
+        max_length=100,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Unique tldraw board room ID for this classroom (generated on-demand)"
+    )
+    
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -1573,6 +1583,38 @@ class Classroom(models.Model):
         # For now, we allow joining anytime if enrolled
         # You can add session check later: has_active_session = self.is_session_active()
         return True, "Student can join"
+    
+    def get_or_create_tldraw_board_id(self):
+        """
+        Get or create tldraw board ID for this classroom (on-demand generation)
+        Returns the board ID string
+        """
+        if not self.tldraw_board_id:
+            # Generate a unique board ID using UUID
+            # tldraw uses URL-safe IDs, so we'll use a UUID hex string
+            board_id = uuid.uuid4().hex[:32]  # 32 character hex string
+            
+            # Ensure uniqueness (very unlikely but check anyway)
+            while Classroom.objects.filter(tldraw_board_id=board_id).exists():
+                board_id = uuid.uuid4().hex[:32]
+            
+            self.tldraw_board_id = board_id
+            self.save(update_fields=['tldraw_board_id', 'updated_at'])
+        
+        return self.tldraw_board_id
+    
+    def get_tldraw_board_url(self):
+        """
+        Get the tldraw.com board URL for this classroom
+        Generates board ID on-demand if it doesn't exist
+        Returns the full URL or None if board is disabled
+        """
+        if not self.board_enabled:
+            return None
+        
+        board_id = self.get_or_create_tldraw_board_id()
+        # tldraw.com hosted version URL format: https://www.tldraw.com/r/{roomId}
+        return f"https://www.tldraw.com/r/{board_id}"
     
     def get_enrolled_students(self):
         """Get all students enrolled in this classroom's class"""

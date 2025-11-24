@@ -1396,13 +1396,15 @@ class ClassroomSerializer(serializers.ModelSerializer):
     is_session_active = serializers.SerializerMethodField()
     active_session = serializers.SerializerMethodField()
     student_count = serializers.IntegerField(read_only=True)
+    tldraw_board_url = serializers.SerializerMethodField()
     
     class Meta:
         model = Classroom
         fields = [
             'id', 'room_code', 'is_active', 'chat_enabled', 'board_enabled',
             'video_enabled', 'class_instance', 'is_session_active',
-            'active_session', 'student_count', 'created_at', 'updated_at'
+            'active_session', 'student_count', 'tldraw_board_url',
+            'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'room_code', 'created_at', 'updated_at']
     
@@ -1416,6 +1418,10 @@ class ClassroomSerializer(serializers.ModelSerializer):
         if active_session:
             return ClassroomActiveSessionSerializer(active_session).data
         return None
+    
+    def get_tldraw_board_url(self, obj):
+        """Get tldraw board URL (generates board ID on-demand if needed)"""
+        return obj.get_tldraw_board_url()
 
 
 class ClassroomCreateSerializer(serializers.ModelSerializer):

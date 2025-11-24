@@ -5171,12 +5171,7 @@ def generate_jitsi_token(user, classroom):
     print(f"  KID: {jitsi_kid[:50]}..." if jitsi_kid and len(jitsi_kid) > 50 else f"  KID: {jitsi_kid}")
     print(f"  Algorithm: {jitsi_algorithm}")
     print(f"  Token Expiry: {token_expiry_hours} hours")
-    logger.info("📋 Configuration:")
-    logger.info(f"  Domain: {jitsi_domain}")
-    logger.info(f"  App ID: {jitsi_app_id[:50]}..." if len(jitsi_app_id) > 50 else f"  App ID: {jitsi_app_id}")
-    logger.info(f"  KID: {jitsi_kid[:50]}..." if jitsi_kid and len(jitsi_kid) > 50 else f"  KID: {jitsi_kid}")
-    logger.info(f"  Algorithm: {jitsi_algorithm}")
-    logger.info(f"  Token Expiry: {token_expiry_hours} hours")
+   
     
     # Determine issuer based on domain and credentials (need to check this before using)
     # 8x8.vc has special requirements: always use "chat" as issuer, even with vpaas credentials
