@@ -22,7 +22,11 @@ logger = logging.getLogger(__name__)
 django_asgi_app = get_asgi_application()
 
 # Import routing after Django setup
-from ai.routing import websocket_urlpatterns
+from ai.routing import websocket_urlpatterns as ai_websocket_urlpatterns
+from courses.routing import websocket_urlpatterns as courses_websocket_urlpatterns
+
+# Combine all WebSocket URL patterns
+websocket_urlpatterns = ai_websocket_urlpatterns + courses_websocket_urlpatterns
 
 
 class CloudRunWebSocketMiddleware:
