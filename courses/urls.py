@@ -59,6 +59,11 @@ urlpatterns = [
     path('teacher/classes/<uuid:class_id>/classroom/', views.ClassroomView.as_view(), name='classroom_detail'),
     path('teacher/classes/<uuid:class_id>/classroom/active-session/', views.ClassroomActiveSessionView.as_view(), name='classroom_active_session'),
     
+    # Board endpoints
+    path('teacher/classes/<uuid:class_id>/classroom/board/', views.BoardView.as_view(), name='board_detail'),
+    path('teacher/classes/<uuid:class_id>/classroom/board/pages/', views.BoardPageListView.as_view(), name='board_page_list'),
+    path('teacher/classes/<uuid:class_id>/classroom/board/pages/<uuid:page_id>/', views.BoardPageDetailView.as_view(), name='board_page_detail'),
+    
     # Quiz grading endpoints
     path('teacher/quiz-submissions/', views.teacher_quiz_submissions, name='teacher_quiz_submissions'),
     path('teacher/quiz-attempts/<uuid:attempt_id>/', views.quiz_attempt_details, name='quiz_attempt_details'),

@@ -1626,6 +1626,195 @@ class Classroom(models.Model):
         return self.class_instance.student_count
 
 
+class Board(models.Model):
+    """
+    Interactive whiteboard for a Classroom
+    Supports multiple pages, permissions, and settings
+    """
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # One-to-one relationship with Classroom
+    classroom = models.OneToOneField(
+        Classroom,
+        on_delete=models.CASCADE,
+        related_name='board',
+        help_text="The classroom this board belongs to"
+    )
+    
+    # Board metadata
+    title = models.CharField(
+        max_length=200,
+        default="Classroom Board",
+        help_text="Board title/name"
+    )
+    description = models.TextField(
+        blank=True,
+        help_text="Board description"
+    )
+    
+    # Permissions & Settings
+    allow_student_edit = models.BooleanField(
+        default=False,
+        help_text="Whether students can draw/edit on the board"
+    )
+    allow_student_create_pages = models.BooleanField(
+        default=False,
+        help_text="Whether students can create new pages"
+    )
+    view_only_mode = models.BooleanField(
+        default=False,
+        help_text="If True, students can only view (read-only mode)"
+    )
+    
+    # Board state
+    current_page_id = models.UUIDField(
+        null=True,
+        blank=True,
+        help_text="ID of the currently active page"
+    )
+    
+    # Metadata
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='created_boards',
+        help_text="User who created this board"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'boards'
+        verbose_name = "Board"
+        verbose_name_plural = "Boards"
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"Board: {self.title} ({self.classroom.room_code})"
+    
+    def get_current_page(self):
+        """Get the currently active page"""
+        if self.current_page_id:
+            try:
+                return self.pages.get(id=self.current_page_id)
+            except BoardPage.DoesNotExist:
+                return None
+        # Return first page if no current page set
+        return self.pages.first()
+    
+    def get_or_create_default_page(self):
+        """Get or create the default page (first page)"""
+        page = self.pages.first()
+        if not page:
+            page = BoardPage.objects.create(
+                board=self,
+                page_name="Page 1",
+                page_order=0,
+                created_by=self.created_by,
+                state={}  # Empty initial state
+            )
+            self.current_page_id = page.id
+            self.save(update_fields=['current_page_id', 'updated_at'])
+        return page
+    
+    def can_user_edit(self, user):
+        """Check if user can edit the board"""
+        # Teachers can always edit
+        if user.role == 'teacher':
+            return True
+        
+        # Students can edit if allowed and not in view-only mode
+        if user.role == 'student':
+            return self.allow_student_edit and not self.view_only_mode
+        
+        return False
+    
+    def can_user_create_pages(self, user):
+        """Check if user can create pages"""
+        # Teachers can always create pages
+        if user.role == 'teacher':
+            return True
+        
+        # Students can create pages if allowed
+        if user.role == 'student':
+            return self.allow_student_create_pages
+        
+        return False
+
+
+class BoardPage(models.Model):
+    """
+    Individual page within a Board
+    Each page stores its own tldraw document state
+    """
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Relationship to Board
+    board = models.ForeignKey(
+        Board,
+        on_delete=models.CASCADE,
+        related_name='pages',
+        help_text="The board this page belongs to"
+    )
+    
+    # Page metadata
+    page_name = models.CharField(
+        max_length=200,
+        default="Page 1",
+        help_text="Page name/title"
+    )
+    page_order = models.IntegerField(
+        default=0,
+        help_text="Order of this page within the board (for sorting)"
+    )
+    
+    # Page state (tldraw document snapshot)
+    state = models.JSONField(
+        default=dict,
+        help_text="Full tldraw store snapshot (document state)"
+    )
+    version = models.IntegerField(
+        default=1,
+        help_text="Version number for conflict resolution"
+    )
+    
+    # Metadata
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='created_board_pages',
+        help_text="User who created this page"
+    )
+    last_updated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='updated_board_pages',
+        help_text="User who last updated this page"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'board_pages'
+        verbose_name = "Board Page"
+        verbose_name_plural = "Board Pages"
+        ordering = ['board', 'page_order', 'created_at']
+        unique_together = [['board', 'page_order']]  # Ensure unique order per board
+    
+    def __str__(self):
+        return f"{self.page_name} (Board: {self.board.title})"
+    
+    def increment_version(self):
+        """Increment version number"""
+        self.version += 1
+        self.save(update_fields=['version', 'updated_at'])
+
+
 class ClassSession(models.Model):
     """
     Recurring weekly session schedule for a class

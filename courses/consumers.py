@@ -12,7 +12,7 @@ from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 from firebase_admin import auth
 import firebase_admin
-from .models import Classroom
+from .models import Classroom, Board, BoardPage
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -111,6 +111,54 @@ def get_classroom_and_validate_access(classroom_id, user):
     return classroom
 
 
+@database_sync_to_async
+def get_or_create_board(classroom, user):
+    """Get or create Board for classroom"""
+    board, created = Board.objects.get_or_create(
+        classroom=classroom,
+        defaults={
+            'created_by': user,
+            'title': f"{classroom.class_instance.name} Board"
+        }
+    )
+    # Ensure default page exists
+    if created or not board.pages.exists():
+        board.get_or_create_default_page()
+    return board
+
+
+@database_sync_to_async
+def get_current_page_state(board):
+    """Get current page state"""
+    page = board.get_current_page()
+    if page:
+        return {
+            'page_id': str(page.id),
+            'page_name': page.page_name,
+            'state': page.state,
+            'version': page.version
+        }
+    return None
+
+
+@database_sync_to_async
+def save_page_state(board, page_id, state, user):
+    """Save page state (auto-save)"""
+    try:
+        page = BoardPage.objects.get(id=page_id, board=board)
+        page.state = state
+        page.last_updated_by = user
+        page.increment_version()
+        page.save(update_fields=['state', 'last_updated_by', 'version', 'updated_at'])
+        return True
+    except BoardPage.DoesNotExist:
+        logger.error(f"Page {page_id} not found for board {board.id}")
+        return False
+    except Exception as e:
+        logger.error(f"Error saving page state: {e}", exc_info=True)
+        return False
+
+
 class BoardSyncConsumer(AsyncWebsocketConsumer):
     """
     WebSocket consumer for tldraw board synchronization
@@ -121,13 +169,19 @@ class BoardSyncConsumer(AsyncWebsocketConsumer):
         super().__init__(*args, **kwargs)
         self.user = None
         self.classroom = None
+        self.board = None
+        self.current_page = None
         self.authenticated = False
         self.room_group_name = None
         self.last_activity = None
         self.heartbeat_task = None
         self.idle_timeout_task = None
+        self.auto_save_task = None
+        self.pending_save_changes = None
+        self.last_save_time = None
         self.IDLE_TIMEOUT = 30 * 60  # 30 minutes of inactivity
         self.HEARTBEAT_INTERVAL = 30  # Send ping every 30 seconds
+        self.AUTO_SAVE_DELAY = 5  # Auto-save after 5 seconds of inactivity
     
     async def connect(self):
         """Handle WebSocket connection"""
@@ -277,6 +331,14 @@ class BoardSyncConsumer(AsyncWebsocketConsumer):
                 await self.close()
                 return
             
+            # Get or create board
+            self.board = await get_or_create_board(self.classroom, self.user)
+            self.current_page = await get_current_page_state(self.board)
+            
+            # Check board permissions
+            can_edit = self.board.can_user_edit(self.user)
+            can_create_pages = self.board.can_user_create_pages(self.user)
+            
             self.authenticated = True
             
             # Join room group
@@ -291,15 +353,36 @@ class BoardSyncConsumer(AsyncWebsocketConsumer):
             self.heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             self.idle_timeout_task = asyncio.create_task(self._idle_timeout_loop())
             
-            # Send authentication success
+            # Send authentication success with board info
             await self.send_json({
                 'type': 'auth_success',
                 'message': 'Authentication successful',
                 'classroom_id': str(self.classroom_id),
                 'user_id': str(self.user.id),
                 'user_role': self.user.role,
-                'user_name': self.user.get_full_name() or self.user.email
+                'user_name': self.user.get_full_name() or self.user.email,
+                'board': {
+                    'id': str(self.board.id),
+                    'title': self.board.title,
+                    'can_edit': can_edit,
+                    'can_create_pages': can_create_pages,
+                    'view_only_mode': self.board.view_only_mode
+                }
             })
+            
+            # Send initial board state if current page exists
+            if self.current_page and self.current_page.get('state'):
+                # Ensure state is properly formatted
+                page_state = self.current_page['state']
+                # If state is empty dict, send empty state
+                if isinstance(page_state, dict) and len(page_state) > 0:
+                    await self.send_json({
+                        'type': 'board_state_sync',
+                        'page_id': self.current_page['page_id'],
+                        'page_name': self.current_page['page_name'],
+                        'state': page_state,
+                        'version': self.current_page['version']
+                    })
             
             # Notify others in the room that user joined
             await self.channel_layer.group_send(
@@ -312,7 +395,7 @@ class BoardSyncConsumer(AsyncWebsocketConsumer):
                 }
             )
             
-            logger.info(f"User authenticated for board sync: {self.user.email}, classroom: {self.classroom.class_instance.name}")
+            logger.info(f"User authenticated for board sync: {self.user.email}, classroom: {self.classroom.class_instance.name}, can_edit: {can_edit}")
             
         except ValueError as e:
             await self.send_error(f"Authentication failed: {str(e)}")
@@ -326,9 +409,17 @@ class BoardSyncConsumer(AsyncWebsocketConsumer):
             await self.close()
     
     async def handle_board_update(self, data):
-        """Handle board update from client - broadcast to others in room"""
+        """Handle board update from client - broadcast to others in room and trigger auto-save"""
+        # Check if user can edit
+        if not self.board.can_user_edit(self.user):
+            await self.send_error("You do not have permission to edit this board")
+            return
+        
         changes = data.get('changes', {})
         presence = data.get('presence', {})
+        # Extract page_id and full_state from presence or data
+        page_id = data.get('page_id') or (presence.get('page_id') if isinstance(presence, dict) else None)
+        full_state = data.get('full_state') or (presence.get('full_state') if isinstance(presence, dict) else None)
         
         # Count changes properly (changes is a dict with added/updated/removed keys)
         if isinstance(changes, dict):
@@ -339,6 +430,21 @@ class BoardSyncConsumer(AsyncWebsocketConsumer):
         if changes_count == 0:
             logger.debug(f"No changes to broadcast from {self.user.email}")
             return
+        
+        # Update activity for auto-save
+        self.last_activity = time.time()
+        
+        # Store pending save data if provided
+        if page_id and full_state:
+            self.pending_save_changes = {
+                'page_id': page_id,
+                'state': full_state
+            }
+            # Cancel existing auto-save task
+            if self.auto_save_task and not self.auto_save_task.done():
+                self.auto_save_task.cancel()
+            # Schedule new auto-save
+            self.auto_save_task = asyncio.create_task(self._auto_save_page())
         
         # Broadcast to all users in the room
         await self.channel_layer.group_send(
@@ -485,4 +591,43 @@ class BoardSyncConsumer(AsyncWebsocketConsumer):
             logger.debug("Idle timeout task cancelled")
         except Exception as e:
             logger.error(f"Idle timeout loop error: {e}")
+    
+    async def _auto_save_page(self):
+        """Auto-save page state after delay"""
+        try:
+            # Wait for auto-save delay
+            await asyncio.sleep(self.AUTO_SAVE_DELAY)
+            
+            # Check if still authenticated and have pending changes
+            if not self.authenticated or not self.pending_save_changes:
+                return
+            
+            # Check if enough time has passed since last activity
+            if self.last_activity:
+                time_since_activity = time.time() - self.last_activity
+                if time_since_activity < self.AUTO_SAVE_DELAY:
+                    # More activity happened, reschedule
+                    return
+            
+            # Save the page state
+            if self.board and self.user:
+                success = await save_page_state(
+                    self.board,
+                    self.pending_save_changes['page_id'],
+                    self.pending_save_changes['state'],
+                    self.user
+                )
+                
+                if success:
+                    self.last_save_time = time.time()
+                    logger.debug(f"Auto-saved board page {self.pending_save_changes['page_id']} for user {self.user.email}")
+                    # Clear pending changes after successful save
+                    self.pending_save_changes = None
+                else:
+                    logger.warning(f"Failed to auto-save board page {self.pending_save_changes['page_id']}")
+                    
+        except asyncio.CancelledError:
+            logger.debug("Auto-save task cancelled")
+        except Exception as e:
+            logger.error(f"Auto-save error: {e}", exc_info=True)
 

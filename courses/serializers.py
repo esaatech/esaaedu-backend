@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage, VideoMaterial, DocumentMaterial, Classroom
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage
 
 User = get_user_model()
 
@@ -1451,6 +1451,93 @@ class ClassroomUpdateSerializer(serializers.ModelSerializer):
         model = Classroom
         fields = [
             'is_active', 'chat_enabled', 'board_enabled', 'video_enabled'
+        ]
+
+
+# ===== BOARD SERIALIZERS =====
+
+class BoardPageSerializer(serializers.ModelSerializer):
+    """Serializer for BoardPage model"""
+    
+    class Meta:
+        model = BoardPage
+        fields = [
+            'id', 'page_name', 'page_order', 'state', 'version',
+            'created_by', 'last_updated_by', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'version', 'created_by', 'last_updated_by', 'created_at', 'updated_at']
+
+
+class BoardPageListSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for listing board pages (without state)"""
+    
+    class Meta:
+        model = BoardPage
+        fields = [
+            'id', 'page_name', 'page_order', 'version',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'version', 'created_at', 'updated_at']
+
+
+class BoardPageStateSerializer(serializers.ModelSerializer):
+    """Serializer for saving/loading board page state"""
+    
+    class Meta:
+        model = BoardPage
+        fields = ['state', 'version']
+        read_only_fields = ['version']
+
+
+class BoardSerializer(serializers.ModelSerializer):
+    """Serializer for Board model with pages list"""
+    pages = BoardPageListSerializer(many=True, read_only=True)
+    current_page = serializers.SerializerMethodField()
+    can_edit = serializers.SerializerMethodField()
+    can_create_pages = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Board
+        fields = [
+            'id', 'title', 'description',
+            'allow_student_edit', 'allow_student_create_pages', 'view_only_mode',
+            'current_page_id', 'current_page', 'pages',
+            'can_edit', 'can_create_pages',
+            'created_by', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
+    
+    def get_current_page(self, obj):
+        """Get the current page data"""
+        page = obj.get_current_page()
+        if page:
+            return BoardPageListSerializer(page).data
+        return None
+    
+    def get_can_edit(self, obj):
+        """Check if current user can edit"""
+        request = self.context.get('request')
+        if request and request.user:
+            return obj.can_user_edit(request.user)
+        return False
+    
+    def get_can_create_pages(self, obj):
+        """Check if current user can create pages"""
+        request = self.context.get('request')
+        if request and request.user:
+            return obj.can_user_create_pages(request.user)
+        return False
+
+
+class BoardUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for updating Board settings"""
+    
+    class Meta:
+        model = Board
+        fields = [
+            'title', 'description',
+            'allow_student_edit', 'allow_student_create_pages', 'view_only_mode',
+            'current_page_id'
         ]
 
 

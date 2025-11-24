@@ -13,11 +13,11 @@ from django.conf import settings
 import jwt
 from jwt.exceptions import InvalidKeyError
 import logging
-from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom
+from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage
 
 logger = logging.getLogger(__name__)
 from student.models import EnrolledCourse
-from django.db.models import F, Sum
+from django.db.models import F, Sum, Max
 from courses.models import ClassEvent
 from .serializers import (
     CourseListSerializer, CourseDetailSerializer, CourseCreateUpdateSerializer,
@@ -5697,5 +5697,327 @@ class ClassroomActiveSessionView(APIView):
         except Exception as e:
             return Response(
                 {'error': 'Failed to fetch active session', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ===== BOARD API VIEWS =====
+
+class BoardView(APIView):
+    """
+    GET: Retrieve board metadata and pages list
+    PUT: Update board settings
+    Teachers and enrolled students can access
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_classroom_and_validate(self, request, class_id):
+        """Helper to get classroom and validate access"""
+        class_instance = get_object_or_404(Class, id=class_id)
+        
+        # Check access permissions
+        if request.user.role == 'teacher':
+            if class_instance.teacher != request.user:
+                raise PermissionError('You do not have permission to access this classroom')
+        elif request.user.role == 'student':
+            if request.user not in class_instance.students.all():
+                raise PermissionError('You are not enrolled in this class')
+        else:
+            raise PermissionError('Invalid user role')
+        
+        # Get or create classroom
+        classroom, _ = class_instance.get_or_create_classroom()
+        return classroom
+    
+    def get(self, request, class_id):
+        """GET: Get board metadata and pages list"""
+        try:
+            classroom = self.get_classroom_and_validate(request, class_id)
+            
+            # Get or create board
+            board, created = Board.objects.get_or_create(
+                classroom=classroom,
+                defaults={
+                    'created_by': request.user,
+                    'title': f"{classroom.class_instance.name} Board"
+                }
+            )
+            
+            # Ensure default page exists
+            if created or not board.pages.exists():
+                board.get_or_create_default_page()
+            
+            from .serializers import BoardSerializer
+            serializer = BoardSerializer(board, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error fetching board: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to fetch board', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, class_id):
+        """PUT: Update board settings"""
+        try:
+            classroom = self.get_classroom_and_validate(request, class_id)
+            
+            # Only teachers can update board settings
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can update board settings'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get board
+            board, created = Board.objects.get_or_create(
+                classroom=classroom,
+                defaults={'created_by': request.user}
+            )
+            
+            from .serializers import BoardUpdateSerializer
+            serializer = BoardUpdateSerializer(board, data=request.data, partial=True)
+            
+            if serializer.is_valid():
+                serializer.save()
+                
+                # Return full board data
+                from .serializers import BoardSerializer
+                board_serializer = BoardSerializer(board, context={'request': request})
+                return Response(board_serializer.data, status=status.HTTP_200_OK)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error updating board: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to update board', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class BoardPageListView(APIView):
+    """
+    POST: Create a new board page
+    Teachers and students (if allowed) can create pages
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request, class_id):
+        """POST: Create a new board page"""
+        try:
+            # Get classroom and validate access
+            class_instance = get_object_or_404(Class, id=class_id)
+            
+            if request.user.role == 'teacher':
+                if class_instance.teacher != request.user:
+                    return Response(
+                        {'error': 'You do not have permission to access this classroom'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            elif request.user.role == 'student':
+                if request.user not in class_instance.students.all():
+                    return Response(
+                        {'error': 'You are not enrolled in this class'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            else:
+                return Response(
+                    {'error': 'Invalid user role'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get or create classroom and board
+            classroom, _ = class_instance.get_or_create_classroom()
+            board, _ = Board.objects.get_or_create(
+                classroom=classroom,
+                defaults={'created_by': request.user}
+            )
+            
+            # Check if user can create pages
+            if not board.can_user_create_pages(request.user):
+                return Response(
+                    {'error': 'You do not have permission to create pages'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get next page order
+            max_order = board.pages.aggregate(Max('page_order'))['page_order__max'] or -1
+            next_order = max_order + 1
+            
+            # Get page name from request or generate default
+            page_name = request.data.get('page_name', f"Page {next_order + 1}")
+            
+            # Create page
+            page = BoardPage.objects.create(
+                board=board,
+                page_name=page_name,
+                page_order=next_order,
+                created_by=request.user,
+                state={}  # Empty initial state
+            )
+            
+            # Update board's current page if this is the first page
+            if not board.current_page_id:
+                board.current_page_id = page.id
+                board.save(update_fields=['current_page_id', 'updated_at'])
+            
+            from .serializers import BoardPageSerializer
+            serializer = BoardPageSerializer(page)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            logger.error(f"Error creating board page: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to create board page', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class BoardPageDetailView(APIView):
+    """
+    GET: Get board page state
+    PUT: Save board page state
+    DELETE: Delete board page
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_classroom_and_validate(self, request, class_id):
+        """Helper to get classroom and validate access"""
+        class_instance = get_object_or_404(Class, id=class_id)
+        
+        if request.user.role == 'teacher':
+            if class_instance.teacher != request.user:
+                raise PermissionError('You do not have permission to access this classroom')
+        elif request.user.role == 'student':
+            if request.user not in class_instance.students.all():
+                raise PermissionError('You are not enrolled in this class')
+        else:
+            raise PermissionError('Invalid user role')
+        
+        classroom, _ = class_instance.get_or_create_classroom()
+        return classroom
+    
+    def get(self, request, class_id, page_id):
+        """GET: Get board page state"""
+        try:
+            classroom = self.get_classroom_and_validate(request, class_id)
+            board = get_object_or_404(Board, classroom=classroom)
+            page = get_object_or_404(BoardPage, id=page_id, board=board)
+            
+            from .serializers import BoardPageSerializer
+            serializer = BoardPageSerializer(page)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error fetching board page: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to fetch board page', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, class_id, page_id):
+        """PUT: Save board page state"""
+        try:
+            classroom = self.get_classroom_and_validate(request, class_id)
+            board = get_object_or_404(Board, classroom=classroom)
+            page = get_object_or_404(BoardPage, id=page_id, board=board)
+            
+            # Check if user can edit
+            if not board.can_user_edit(request.user):
+                return Response(
+                    {'error': 'You do not have permission to edit this board'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Update page state
+            new_state = request.data.get('state')
+            if new_state is None:
+                return Response(
+                    {'error': 'State is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            page.state = new_state
+            page.last_updated_by = request.user
+            page.increment_version()
+            page.save(update_fields=['state', 'last_updated_by', 'version', 'updated_at'])
+            
+            from .serializers import BoardPageSerializer
+            serializer = BoardPageSerializer(page)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error saving board page: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to save board page', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def delete(self, request, class_id, page_id):
+        """DELETE: Delete board page"""
+        try:
+            classroom = self.get_classroom_and_validate(request, class_id)
+            board = get_object_or_404(Board, classroom=classroom)
+            page = get_object_or_404(BoardPage, id=page_id, board=board)
+            
+            # Only teachers can delete pages
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can delete pages'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Don't allow deleting the last page
+            if board.pages.count() <= 1:
+                return Response(
+                    {'error': 'Cannot delete the last page'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Update current_page_id if deleting current page
+            if board.current_page_id == page.id:
+                # Set to first remaining page
+                remaining_page = board.pages.exclude(id=page.id).first()
+                if remaining_page:
+                    board.current_page_id = remaining_page.id
+                    board.save(update_fields=['current_page_id', 'updated_at'])
+            
+            page.delete()
+            return Response(
+                {'message': 'Page deleted successfully'},
+                status=status.HTTP_200_OK
+            )
+            
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error deleting board page: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to delete board page', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

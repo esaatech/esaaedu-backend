@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, Note, BookPage, VideoMaterial, DocumentMaterial
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, Note, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage
 
 
 @admin.register(Course)
@@ -896,3 +896,76 @@ class VideoMaterialAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('lesson_material')
+
+
+@admin.register(Classroom)
+class ClassroomAdmin(admin.ModelAdmin):
+    list_display = ['room_code', 'class_instance', 'is_active', 'chat_enabled', 'board_enabled', 'video_enabled', 'student_count', 'created_at']
+    list_filter = ['is_active', 'chat_enabled', 'board_enabled', 'video_enabled', 'created_at']
+    search_fields = ['room_code', 'class_instance__name', 'class_instance__course__title']
+    readonly_fields = ['id', 'created_at', 'updated_at', 'student_count']
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('class_instance', 'room_code')
+        }),
+        ('Features', {
+            'fields': ('is_active', 'chat_enabled', 'board_enabled', 'video_enabled')
+        }),
+        ('Metadata', {
+            'fields': ('id', 'student_count', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('class_instance', 'class_instance__course')
+
+
+@admin.register(Board)
+class BoardAdmin(admin.ModelAdmin):
+    list_display = ['title', 'classroom', 'allow_student_edit', 'allow_student_create_pages', 'view_only_mode', 'current_page_id', 'created_by', 'created_at']
+    list_filter = ['allow_student_edit', 'allow_student_create_pages', 'view_only_mode', 'created_at']
+    search_fields = ['title', 'description', 'classroom__room_code', 'classroom__class_instance__name']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('classroom', 'title', 'description')
+        }),
+        ('Permissions & Settings', {
+            'fields': ('allow_student_edit', 'allow_student_create_pages', 'view_only_mode', 'current_page_id')
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_by', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('classroom', 'classroom__class_instance', 'created_by')
+
+
+@admin.register(BoardPage)
+class BoardPageAdmin(admin.ModelAdmin):
+    list_display = ['page_name', 'board', 'page_order', 'version', 'last_updated_by', 'created_at', 'updated_at']
+    list_filter = ['board', 'created_at', 'updated_at']
+    search_fields = ['page_name', 'board__title', 'board__classroom__room_code']
+    readonly_fields = ['id', 'version', 'created_at', 'updated_at']
+    
+    fieldsets = (
+        ('Page Information', {
+            'fields': ('board', 'page_name', 'page_order')
+        }),
+        ('Page State', {
+            'fields': ('state', 'version'),
+            'description': 'State contains the tldraw document snapshot (JSON)'
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_by', 'last_updated_by', 'version', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('board', 'board__classroom', 'created_by', 'last_updated_by')
