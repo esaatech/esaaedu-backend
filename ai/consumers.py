@@ -200,6 +200,11 @@ class BaseAIConsumer(AsyncWebsocketConsumer):
         self.conversation = None
         self.gemini_service = None
         self.authenticated = False
+        self.last_activity = None
+        self.heartbeat_task = None
+        self.idle_timeout_task = None
+        self.IDLE_TIMEOUT = 30 * 60  # 30 minutes of inactivity
+        self.HEARTBEAT_INTERVAL = 30  # Send ping every 30 seconds
     
     async def connect(self):
         """Handle WebSocket connection"""
@@ -225,7 +230,19 @@ class BaseAIConsumer(AsyncWebsocketConsumer):
     
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection"""
-        logger.info(f"WebSocket connection closed: {close_code}")
+        logger.info(f"WebSocket connection closed: {close_code}, user: {self.user.email if self.user else 'unknown'}")
+        
+        # Cancel heartbeat and timeout tasks
+        if self.heartbeat_task:
+            self.heartbeat_task.cancel()
+        if self.idle_timeout_task:
+            self.idle_timeout_task.cancel()
+        
+        # Cleanup resources
+        self.user = None
+        self.conversation = None
+        self.gemini_service = None
+        self.authenticated = False
     
     async def receive(self, text_data=None, bytes_data=None):
         """Handle messages from client - supports both text and binary"""
@@ -260,6 +277,15 @@ class BaseAIConsumer(AsyncWebsocketConsumer):
                 await self.send_error("Authentication required. Please send 'auth' message first.")
                 await self.close()
                 return
+            
+            # Handle ping/pong for heartbeat
+            if message_type == 'pong':
+                # Client responded to ping - update activity
+                self._update_activity()
+                return
+            
+            # Update activity on any message
+            self._update_activity()
             
             # Route to appropriate handler
             if message_type == 'message':
@@ -297,6 +323,11 @@ class BaseAIConsumer(AsyncWebsocketConsumer):
             
             # Initialize Gemini agent
             self.gemini_service = GeminiAgent()
+            
+            # Start heartbeat and idle timeout monitoring
+            self.last_activity = time.time()
+            self.heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            self.idle_timeout_task = asyncio.create_task(self._idle_timeout_loop())
             
             await self.send_json({
                 'type': 'auth_success',
@@ -350,6 +381,59 @@ class BaseAIConsumer(AsyncWebsocketConsumer):
             'conversation_id': str(conversation_id) if conversation_id else None,
             'data': data
         })
+    
+    async def _heartbeat_loop(self):
+        """Send periodic ping to keep connection alive and detect dead connections"""
+        try:
+            while True:
+                await asyncio.sleep(self.HEARTBEAT_INTERVAL)
+                
+                # Check if connection is still open
+                if not self.authenticated:
+                    break
+                
+                try:
+                    # Send ping
+                    await self.send_json({
+                        'type': 'ping',
+                        'timestamp': time.time()
+                    })
+                except Exception as e:
+                    logger.warning(f"Heartbeat ping failed, closing connection: {e}")
+                    await self.close()
+                    break
+        except asyncio.CancelledError:
+            logger.debug("Heartbeat task cancelled")
+        except Exception as e:
+            logger.error(f"Heartbeat loop error: {e}")
+    
+    async def _idle_timeout_loop(self):
+        """Close connection if idle for too long"""
+        try:
+            while True:
+                await asyncio.sleep(60)  # Check every minute
+                
+                if not self.authenticated:
+                    break
+                
+                if self.last_activity:
+                    idle_time = time.time() - self.last_activity
+                    if idle_time > self.IDLE_TIMEOUT:
+                        logger.info(f"Closing idle connection (idle for {idle_time:.0f}s): {self.user.email if self.user else 'unknown'}")
+                        await self.send_json({
+                            'type': 'idle_timeout',
+                            'message': 'Connection closed due to inactivity'
+                        })
+                        await self.close(code=4000)  # Custom close code for idle timeout
+                        break
+        except asyncio.CancelledError:
+            logger.debug("Idle timeout task cancelled")
+        except Exception as e:
+            logger.error(f"Idle timeout loop error: {e}")
+    
+    def _update_activity(self):
+        """Update last activity timestamp"""
+        self.last_activity = time.time()
 
 
 class CourseGenerationConsumer(BaseAIConsumer):
@@ -362,6 +446,23 @@ class CourseGenerationConsumer(BaseAIConsumer):
         # Store ChatSession per conversation
         # Key: conversation_id (str), Value: (ChatSession, generation_config) tuple
         self.chat_sessions = {}
+    
+    async def disconnect(self, close_code):
+        """Handle WebSocket disconnection"""
+        logger.info(f"CourseGenerationConsumer connection closed: {close_code}, user: {self.user.email if self.user else 'unknown'}")
+        
+        # Cancel heartbeat and timeout tasks
+        if hasattr(self, 'heartbeat_task') and self.heartbeat_task:
+            self.heartbeat_task.cancel()
+        if hasattr(self, 'idle_timeout_task') and self.idle_timeout_task:
+            self.idle_timeout_task.cancel()
+        
+        # Cleanup chat sessions
+        if hasattr(self, 'chat_sessions'):
+            self.chat_sessions.clear()
+        
+        # Call parent cleanup
+        await super().disconnect(close_code)
     
     async def _get_or_create_chat_session(self, conversation_id=None):
         """
@@ -763,6 +864,11 @@ class CourseManagementConsumer(BaseAIConsumer):
             # Initialize Gemini agent
             self.gemini_service = GeminiAgent()
             
+            # Start heartbeat and idle timeout monitoring
+            self.last_activity = time.time()
+            self.heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            self.idle_timeout_task = asyncio.create_task(self._idle_timeout_loop())
+            
             await self.send_json({
                 'type': 'auth_success',
                 'message': 'Authentication successful',
@@ -1132,3 +1238,20 @@ Be conversational and helpful. Ask clarifying questions if needed before generat
             'message': 'Content approved',
             'conversation_id': str(self.conversation.id) if self.conversation else None
         })
+    
+    async def disconnect(self, close_code):
+        """Handle WebSocket disconnection with cleanup"""
+        logger.info(f"CourseManagementConsumer connection closed: {close_code}, user: {self.user.email if self.user else 'unknown'}")
+        
+        # Cancel heartbeat and timeout tasks
+        if hasattr(self, 'heartbeat_task') and self.heartbeat_task:
+            self.heartbeat_task.cancel()
+        if hasattr(self, 'idle_timeout_task') and self.idle_timeout_task:
+            self.idle_timeout_task.cancel()
+        
+        # Cleanup chat sessions
+        if hasattr(self, 'chat_sessions'):
+            self.chat_sessions.clear()
+        
+        # Call parent cleanup
+        await super().disconnect(close_code)
