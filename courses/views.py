@@ -5161,7 +5161,9 @@ def generate_jitsi_token(user, classroom):
     jitsi_kid = getattr(settings, 'JITSI_KID', '')
     jitsi_algorithm = getattr(settings, 'JITSI_TOKEN_ALGORITHM', 'RS256')  # Default to RS256 for JaaS
     token_expiry_hours = getattr(settings, 'JITSI_TOKEN_EXPIRY_HOURS', 2)
-    jitsi_domain = getattr(settings, 'JITSI_DOMAIN', 'meet.jit.si')
+    # Ensure jitsi_domain is always a string (handle case where it might be None)
+    jitsi_domain_raw = getattr(settings, 'JITSI_DOMAIN', 'meet.jit.si')
+    jitsi_domain = str(jitsi_domain_raw) if jitsi_domain_raw else 'meet.jit.si'
     
     print("📋 Configuration:")
     print(f"  Domain: {jitsi_domain}")
@@ -5179,8 +5181,10 @@ def generate_jitsi_token(user, classroom):
     # Determine issuer based on domain and credentials (need to check this before using)
     # 8x8.vc has special requirements: always use "chat" as issuer, even with vpaas credentials
     # For jitsi.com domain with vpaas, use app ID as issuer
-    is_8x8vc = '8x8.vc' in jitsi_domain.lower()
-    is_jitsi_com = 'jitsi.com' in jitsi_domain.lower()
+    # Ensure jitsi_domain is a string before calling .lower()
+    jitsi_domain_lower = jitsi_domain.lower() if isinstance(jitsi_domain, str) else 'meet.jit.si'
+    is_8x8vc = '8x8.vc' in jitsi_domain_lower
+    is_jitsi_com = 'jitsi.com' in jitsi_domain_lower
     has_vpaas = jitsi_app_id and jitsi_app_id.startswith('vpaas-')
     
     # Special case: 8x8.vc with vpaas credentials may not support JWT authentication
