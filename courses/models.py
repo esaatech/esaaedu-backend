@@ -2403,3 +2403,126 @@ class ProjectSubmission(models.Model):
     
     def __str__(self):
         return f"{self.student} - {self.project.title} ({self.status})"
+
+
+class CourseAssessment(models.Model):
+    """
+    Course-level assessments (Tests and Exams)
+    Both follow the same structure, differentiated by assessment_type
+    """
+    ASSESSMENT_TYPES = [
+        ('test', 'Test'),
+        ('exam', 'Exam'),
+    ]
+    
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='assessments')
+    assessment_type = models.CharField(max_length=10, choices=ASSESSMENT_TYPES)
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    instructions = models.TextField(blank=True, help_text="Instructions shown to students")
+    
+    # Assessment Configuration
+    time_limit_minutes = models.IntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(1)],
+        help_text="Time limit in minutes (null = no limit)"
+    )
+    passing_score = models.IntegerField(
+        default=50,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Minimum percentage to pass"
+    )
+    max_attempts = models.IntegerField(
+        default=1,
+        validators=[MinValueValidator(1)],
+        help_text="Maximum number of attempts allowed"
+    )
+    
+    # Metadata
+    order = models.IntegerField(default=0, help_text="Order within course")
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_assessments')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    @property
+    def total_points(self):
+        return sum(question.points for question in self.questions.all())
+    
+    @property
+    def question_count(self):
+        return self.questions.count()
+    
+    class Meta:
+        ordering = ['course', 'order', 'created_at']
+        indexes = [
+            models.Index(fields=['course', 'assessment_type']),
+            models.Index(fields=['course', 'order']),
+        ]
+        verbose_name = "Course Assessment"
+        verbose_name_plural = "Course Assessments"
+    
+    def __str__(self):
+        return f"{self.get_assessment_type_display()}: {self.title} ({self.course.title})"
+
+
+class CourseAssessmentQuestion(models.Model):
+    """
+    Questions within a course assessment (test/exam)
+    Reuses question types from existing Question model
+    """
+    QUESTION_TYPES = [
+        ('multiple_choice', 'Multiple Choice'),
+        ('true_false', 'True/False'),
+        ('fill_blank', 'Fill in the Blank'),
+        ('short_answer', 'Short Answer'),
+        ('essay', 'Essay'),
+        ('matching', 'Matching'),
+        ('ordering', 'Ordering/Ranking'),
+    ]
+    
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    assessment = models.ForeignKey(
+        CourseAssessment,
+        on_delete=models.CASCADE,
+        related_name='questions'
+    )
+    question_text = models.TextField(help_text="The question text")
+    order = models.IntegerField(help_text="Question order within assessment")
+    points = models.IntegerField(
+        default=1,
+        validators=[MinValueValidator(1)],
+        help_text="Points awarded for correct answer"
+    )
+    
+    # Question Type & Content
+    type = models.CharField(max_length=20, choices=QUESTION_TYPES)
+    content = models.JSONField(
+        default=dict,
+        help_text="Question-specific content (options, answers, etc.)"
+    )
+    
+    # Optional fields
+    explanation = models.TextField(
+        blank=True,
+        help_text="Explanation shown after answering"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['assessment', 'order']
+        unique_together = ['assessment', 'order']
+        indexes = [
+            models.Index(fields=['assessment', 'order']),
+        ]
+        verbose_name = "Assessment Question"
+        verbose_name_plural = "Assessment Questions"
+    
+    def __str__(self):
+        return f"Q{self.order}: {self.question_text[:50]}..."
