@@ -962,7 +962,7 @@ class BoardPageAdmin(admin.ModelAdmin):
             'description': 'State contains the tldraw document snapshot (JSON)'
         }),
         ('Metadata', {
-            'fields': ('id', 'created_by', 'last_updated_by', 'version', 'created_at', 'updated_at'),
+            'fields': ('id', 'created_by', 'last_updated_by', 'created_at', 'updated_at'),
             'classes': ('collapse',)
         }),
     )
