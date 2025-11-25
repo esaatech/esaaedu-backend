@@ -179,7 +179,7 @@ class BoardSyncConsumer(AsyncWebsocketConsumer):
         self.auto_save_task = None
         self.pending_save_changes = None
         self.last_save_time = None
-        self.IDLE_TIMEOUT = 30 * 60  # 30 minutes of inactivity
+        self.IDLE_TIMEOUT = 180  # 3 minutes of inactivity (frontend cleans up after 2 min, backend closes after 3 min as fallback)
         self.HEARTBEAT_INTERVAL = 30  # Send ping every 30 seconds
         self.AUTO_SAVE_DELAY = 5  # Auto-save after 5 seconds of inactivity
     
