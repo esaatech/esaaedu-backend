@@ -13,7 +13,7 @@ from django.conf import settings
 import jwt
 from jwt.exceptions import InvalidKeyError
 import logging
-from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage
+from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion
 
 logger = logging.getLogger(__name__)
 from student.models import EnrolledCourse
@@ -30,7 +30,9 @@ from .serializers import (
     ClassListSerializer, ClassDetailSerializer, ClassCreateUpdateSerializer,
     StudentBasicSerializer, TeacherStudentDetailSerializer, TeacherStudentSummarySerializer,
     CourseWithLessonsSerializer, LessonMaterialSerializer,
-    ClassroomSerializer, ClassroomCreateSerializer, ClassroomUpdateSerializer
+    ClassroomSerializer, ClassroomCreateSerializer, ClassroomUpdateSerializer,
+    CourseAssessmentListSerializer, CourseAssessmentDetailSerializer, CourseAssessmentCreateUpdateSerializer,
+    CourseAssessmentQuestionSerializer, CourseAssessmentQuestionCreateSerializer
 )
 
 
@@ -6019,5 +6021,366 @@ class BoardPageDetailView(APIView):
             logger.error(f"Error deleting board page: {e}", exc_info=True)
             return Response(
                 {'error': 'Failed to delete board page', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ===== COURSE ASSESSMENT API VIEWS =====
+
+class CourseAssessmentListView(APIView):
+    """
+    GET: List all assessments for a course (filtered by type if provided)
+    POST: Create a new assessment
+    Teachers only
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_course_and_validate(self, request, course_id):
+        """Helper to get course and validate teacher ownership"""
+        course = get_object_or_404(Course, id=course_id)
+        
+        if request.user.role != 'teacher':
+            raise PermissionError('Only teachers can access this endpoint')
+        
+        if course.teacher != request.user:
+            raise PermissionError('Only the course teacher can manage assessments')
+        
+        return course
+    
+    def get(self, request, course_id):
+        """GET: List assessments for a course"""
+        try:
+            course = self.get_course_and_validate(request, course_id)
+            
+            # Filter by type if provided
+            assessment_type = request.GET.get('type')
+            assessments = CourseAssessment.objects.filter(course=course)
+            
+            if assessment_type:
+                if assessment_type not in ['test', 'exam']:
+                    return Response(
+                        {'error': "Type must be 'test' or 'exam'"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                assessments = assessments.filter(assessment_type=assessment_type)
+            
+            assessments = assessments.order_by('order', 'created_at')
+            serializer = CourseAssessmentListSerializer(assessments, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error fetching assessments: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to fetch assessments', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, course_id):
+        """POST: Create a new assessment"""
+        try:
+            course = self.get_course_and_validate(request, course_id)
+            
+            serializer = CourseAssessmentCreateUpdateSerializer(data=request.data)
+            
+            if serializer.is_valid():
+                # Auto-assign order if not provided
+                if 'order' not in serializer.validated_data:
+                    max_order = CourseAssessment.objects.filter(
+                        course=course,
+                        assessment_type=serializer.validated_data.get('assessment_type', 'test')
+                    ).aggregate(max_order=models.Max('order'))['max_order'] or 0
+                    serializer.validated_data['order'] = max_order + 1
+                
+                assessment = serializer.save(
+                    course=course,
+                    created_by=request.user
+                )
+                
+                response_serializer = CourseAssessmentDetailSerializer(assessment)
+                return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error creating assessment: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to create assessment', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CourseAssessmentDetailView(APIView):
+    """
+    GET: Get detailed assessment information
+    PUT: Update assessment
+    DELETE: Delete assessment
+    Teachers only
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_assessment_and_validate(self, request, course_id, assessment_id):
+        """Helper to get assessment and validate teacher ownership"""
+        course = get_object_or_404(Course, id=course_id)
+        
+        if request.user.role != 'teacher':
+            raise PermissionError('Only teachers can access this endpoint')
+        
+        if course.teacher != request.user:
+            raise PermissionError('Only the course teacher can manage assessments')
+        
+        assessment = get_object_or_404(CourseAssessment, id=assessment_id, course=course)
+        return assessment
+    
+    def get(self, request, course_id, assessment_id):
+        """GET: Get assessment details"""
+        try:
+            assessment = self.get_assessment_and_validate(request, course_id, assessment_id)
+            serializer = CourseAssessmentDetailSerializer(assessment)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error fetching assessment: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to fetch assessment', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, course_id, assessment_id):
+        """PUT: Update assessment"""
+        try:
+            assessment = self.get_assessment_and_validate(request, course_id, assessment_id)
+            
+            serializer = CourseAssessmentCreateUpdateSerializer(
+                assessment,
+                data=request.data,
+                partial=True
+            )
+            
+            if serializer.is_valid():
+                serializer.save()
+                response_serializer = CourseAssessmentDetailSerializer(assessment)
+                return Response(response_serializer.data, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error updating assessment: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to update assessment', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def delete(self, request, course_id, assessment_id):
+        """DELETE: Delete assessment"""
+        try:
+            assessment = self.get_assessment_and_validate(request, course_id, assessment_id)
+            assessment_title = assessment.title
+            assessment.delete()
+            
+            return Response(
+                {'message': f'Assessment "{assessment_title}" deleted successfully'},
+                status=status.HTTP_200_OK
+            )
+            
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error deleting assessment: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to delete assessment', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CourseAssessmentQuestionListView(APIView):
+    """
+    GET: List all questions for an assessment
+    POST: Create a new question
+    Teachers only
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_assessment_and_validate(self, request, course_id, assessment_id):
+        """Helper to get assessment and validate teacher ownership"""
+        course = get_object_or_404(Course, id=course_id)
+        
+        if request.user.role != 'teacher':
+            raise PermissionError('Only teachers can access this endpoint')
+        
+        if course.teacher != request.user:
+            raise PermissionError('Only the course teacher can manage assessments')
+        
+        assessment = get_object_or_404(CourseAssessment, id=assessment_id, course=course)
+        return assessment
+    
+    def get(self, request, course_id, assessment_id):
+        """GET: List questions for an assessment"""
+        try:
+            assessment = self.get_assessment_and_validate(request, course_id, assessment_id)
+            questions = assessment.questions.all().order_by('order')
+            serializer = CourseAssessmentQuestionSerializer(questions, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error fetching questions: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to fetch questions', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, course_id, assessment_id):
+        """POST: Create a new question"""
+        try:
+            assessment = self.get_assessment_and_validate(request, course_id, assessment_id)
+            
+            serializer = CourseAssessmentQuestionCreateSerializer(data=request.data)
+            
+            if serializer.is_valid():
+                # Auto-assign order if not provided
+                if 'order' not in serializer.validated_data:
+                    max_order = assessment.questions.aggregate(
+                        max_order=models.Max('order')
+                    )['max_order'] or 0
+                    serializer.validated_data['order'] = max_order + 1
+                
+                question = serializer.save(assessment=assessment)
+                response_serializer = CourseAssessmentQuestionSerializer(question)
+                return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error creating question: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to create question', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CourseAssessmentQuestionDetailView(APIView):
+    """
+    GET: Get question details
+    PUT: Update question
+    DELETE: Delete question
+    Teachers only
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_question_and_validate(self, request, course_id, assessment_id, question_id):
+        """Helper to get question and validate teacher ownership"""
+        course = get_object_or_404(Course, id=course_id)
+        
+        if request.user.role != 'teacher':
+            raise PermissionError('Only teachers can access this endpoint')
+        
+        if course.teacher != request.user:
+            raise PermissionError('Only the course teacher can manage assessments')
+        
+        assessment = get_object_or_404(CourseAssessment, id=assessment_id, course=course)
+        question = get_object_or_404(CourseAssessmentQuestion, id=question_id, assessment=assessment)
+        return question
+    
+    def get(self, request, course_id, assessment_id, question_id):
+        """GET: Get question details"""
+        try:
+            question = self.get_question_and_validate(request, course_id, assessment_id, question_id)
+            serializer = CourseAssessmentQuestionSerializer(question)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error fetching question: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to fetch question', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, course_id, assessment_id, question_id):
+        """PUT: Update question"""
+        try:
+            question = self.get_question_and_validate(request, course_id, assessment_id, question_id)
+            
+            serializer = CourseAssessmentQuestionCreateSerializer(
+                question,
+                data=request.data,
+                partial=True
+            )
+            
+            if serializer.is_valid():
+                serializer.save()
+                response_serializer = CourseAssessmentQuestionSerializer(question)
+                return Response(response_serializer.data, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error updating question: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to update question', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def delete(self, request, course_id, assessment_id, question_id):
+        """DELETE: Delete question"""
+        try:
+            question = self.get_question_and_validate(request, course_id, assessment_id, question_id)
+            question.delete()
+            
+            return Response(
+                {'message': 'Question deleted successfully'},
+                status=status.HTTP_200_OK
+            )
+            
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error deleting question: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to delete question', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

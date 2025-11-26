@@ -82,4 +82,10 @@ urlpatterns = [
     
     # Course classes endpoint (for enrollment)
     path('<uuid:course_id>/classes/', views.course_available_classes, name='course_available_classes'),
+    
+    # Course Assessment endpoints (Tests and Exams)
+    path('teacher/courses/<uuid:course_id>/assessments/', views.CourseAssessmentListView.as_view(), name='course_assessment_list'),
+    path('teacher/courses/<uuid:course_id>/assessments/<uuid:assessment_id>/', views.CourseAssessmentDetailView.as_view(), name='course_assessment_detail'),
+    path('teacher/courses/<uuid:course_id>/assessments/<uuid:assessment_id>/questions/', views.CourseAssessmentQuestionListView.as_view(), name='course_assessment_question_list'),
+    path('teacher/courses/<uuid:course_id>/assessments/<uuid:assessment_id>/questions/<uuid:question_id>/', views.CourseAssessmentQuestionDetailView.as_view(), name='course_assessment_question_detail'),
 ]

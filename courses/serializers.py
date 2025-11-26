@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion
 
 User = get_user_model()
 
@@ -1984,4 +1984,96 @@ class DocumentMaterialCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 f"File extension '{value}' not allowed. Allowed extensions: {', '.join(allowed_extensions)}"
             )
-        return value.lower()
+            return value.lower()
+
+
+# ===== COURSE ASSESSMENT SERIALIZERS =====
+
+class CourseAssessmentQuestionSerializer(serializers.ModelSerializer):
+    """Serializer for assessment questions"""
+    
+    class Meta:
+        model = CourseAssessmentQuestion
+        fields = [
+            'id', 'assessment', 'question_text', 'order', 'points',
+            'type', 'content', 'explanation', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'assessment', 'created_at', 'updated_at']
+
+
+class CourseAssessmentQuestionCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating assessment questions"""
+    
+    class Meta:
+        model = CourseAssessmentQuestion
+        fields = [
+            'question_text', 'order', 'points', 'type', 'content', 'explanation'
+        ]
+    
+    def validate_content(self, value):
+        """Validate question content based on type"""
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Content must be a JSON object")
+        return value
+
+
+class CourseAssessmentListSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for listing assessments"""
+    question_count = serializers.ReadOnlyField()
+    total_points = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = CourseAssessment
+        fields = [
+            'id', 'course', 'assessment_type', 'title', 'description',
+            'time_limit_minutes', 'passing_score', 'max_attempts',
+            'order', 'question_count', 'total_points', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'course', 'question_count', 'total_points', 'created_at', 'updated_at']
+
+
+class CourseAssessmentDetailSerializer(serializers.ModelSerializer):
+    """Detailed serializer for individual assessment"""
+    questions = CourseAssessmentQuestionSerializer(many=True, read_only=True)
+    question_count = serializers.ReadOnlyField()
+    total_points = serializers.ReadOnlyField()
+    created_by_email = serializers.EmailField(source='created_by.email', read_only=True)
+    
+    class Meta:
+        model = CourseAssessment
+        fields = [
+            'id', 'course', 'assessment_type', 'title', 'description', 'instructions',
+            'time_limit_minutes', 'passing_score', 'max_attempts',
+            'order', 'questions', 'question_count', 'total_points',
+            'created_by', 'created_by_email', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'course', 'questions', 'question_count', 'total_points', 'created_by', 'created_at', 'updated_at']
+
+
+class CourseAssessmentCreateUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for creating/updating assessments"""
+    
+    class Meta:
+        model = CourseAssessment
+        fields = [
+            'assessment_type', 'title', 'description', 'instructions',
+            'time_limit_minutes', 'passing_score', 'max_attempts', 'order'
+        ]
+    
+    def validate_assessment_type(self, value):
+        """Validate assessment type"""
+        if value not in ['test', 'exam']:
+            raise serializers.ValidationError("Assessment type must be 'test' or 'exam'")
+        return value
+    
+    def validate_passing_score(self, value):
+        """Validate passing score"""
+        if value < 0 or value > 100:
+            raise serializers.ValidationError("Passing score must be between 0 and 100")
+        return value
+    
+    def validate_time_limit_minutes(self, value):
+        """Validate time limit"""
+        if value is not None and value < 1:
+            raise serializers.ValidationError("Time limit must be at least 1 minute")
+        return value
