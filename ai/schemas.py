@@ -337,6 +337,101 @@ def get_assignment_generation_schema() -> Dict[str, Any]:
     }
 
 
+def get_assessment_generation_schema() -> Dict[str, Any]:
+    """
+    Schema for assessment (test/exam) generation structured output
+    
+    Returns:
+        JSON Schema dict for assessment generation
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "questions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "question_text": {
+                            "type": "string",
+                            "description": "The question text"
+                        },
+                        "type": {
+                            "type": "string",
+                            "enum": ["multiple_choice", "true_false", "fill_blank", "short_answer", "essay"],
+                            "description": "Question type: multiple_choice, true_false, fill_blank, short_answer, or essay"
+                        },
+                        "points": {
+                            "type": "integer",
+                            "description": "Points awarded for this question",
+                            "minimum": 1
+                        },
+                        "content": {
+                            "type": "object",
+                            "description": "Question-specific content. For multiple_choice: {\"options\": [\"option1\", \"option2\", ...], \"correct_answer\": \"option1\", \"full_options\": {\"options\": [{\"id\": \"option-0\", \"text\": \"option1\", \"isCorrect\": true, \"explanation\": \"why correct\"}, {\"id\": \"option-1\", \"text\": \"option2\", \"isCorrect\": false, \"explanation\": \"why wrong\"}, ...]}} (full_options is optional but recommended). For true_false: {\"correct_answer\": \"true\" or \"false\", \"full_options\": {\"trueOption\": {\"id\": \"true\", \"text\": \"True\", \"isCorrect\": true, \"explanation\": \"...\"}, \"falseOption\": {\"id\": \"false\", \"text\": \"False\", \"isCorrect\": false, \"explanation\": \"...\"}}} (full_options optional). For fill_blank: {\"blanks\": [\"string\"], \"correct_answers\": {\"0\": \"answer1\", \"1\": \"answer2\"}}. For essay: {\"instructions\": \"string\" (optional), \"correct_answer\": \"string\" (model answer)}. For short_answer: {\"correct_answer\": \"string\", \"accept_variations\": boolean}.",
+                            "properties": {
+                                "options": {"type": "array", "items": {"type": "string"}},
+                                "correct_answer": {"type": "string"},
+                                "full_options": {
+                                    "type": "object",
+                                    "description": "Optional rich options with explanations. For multiple_choice: {\"options\": [{\"id\": \"string\", \"text\": \"string\", \"isCorrect\": boolean, \"explanation\": \"string\"}]}. For true_false: {\"trueOption\": {\"id\": \"true\", \"text\": \"True\", \"isCorrect\": boolean, \"explanation\": \"string\"}, \"falseOption\": {\"id\": \"false\", \"text\": \"False\", \"isCorrect\": boolean, \"explanation\": \"string\"}}.",
+                                    "properties": {
+                                        "options": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "id": {"type": "string"},
+                                                    "text": {"type": "string"},
+                                                    "isCorrect": {"type": "boolean"},
+                                                    "explanation": {"type": "string"}
+                                                },
+                                                "required": ["id", "text", "isCorrect"]
+                                            }
+                                        },
+                                        "trueOption": {
+                                            "type": "object",
+                                            "properties": {
+                                                "id": {"type": "string"},
+                                                "text": {"type": "string"},
+                                                "isCorrect": {"type": "boolean"},
+                                                "explanation": {"type": "string"}
+                                            },
+                                            "required": ["id", "text", "isCorrect"]
+                                        },
+                                        "falseOption": {
+                                            "type": "object",
+                                            "properties": {
+                                                "id": {"type": "string"},
+                                                "text": {"type": "string"},
+                                                "isCorrect": {"type": "boolean"},
+                                                "explanation": {"type": "string"}
+                                            },
+                                            "required": ["id", "text", "isCorrect"]
+                                        }
+                                    }
+                                },
+                                "blanks": {"type": "array", "items": {"type": "string"}},
+                                "correct_answers": {"type": "object"},
+                                "instructions": {"type": "string"},
+                                "accept_variations": {"type": "boolean"}
+                            },
+                            "additionalProperties": False
+                        },
+                        "explanation": {
+                            "type": "string",
+                            "description": "Explanation shown after answering. For essay questions: A detailed model answer that demonstrates what a complete, high-quality response looks like."
+                        }
+                    },
+                    "required": ["question_text", "type", "points"]
+                },
+                "description": "List of assessment questions"
+            }
+        },
+        "required": ["questions"]
+    }
+
+
 def get_quiz_generation_schema() -> Dict[str, Any]:
     """
     Schema for quiz generation structured output

@@ -88,4 +88,5 @@ urlpatterns = [
     path('teacher/courses/<uuid:course_id>/assessments/<uuid:assessment_id>/', views.CourseAssessmentDetailView.as_view(), name='course_assessment_detail'),
     path('teacher/courses/<uuid:course_id>/assessments/<uuid:assessment_id>/questions/', views.CourseAssessmentQuestionListView.as_view(), name='course_assessment_question_list'),
     path('teacher/courses/<uuid:course_id>/assessments/<uuid:assessment_id>/questions/<uuid:question_id>/', views.CourseAssessmentQuestionDetailView.as_view(), name='course_assessment_question_detail'),
+    path('teacher/courses/<uuid:course_id>/assessments/<uuid:assessment_id>/ai/generate-questions/', views.AIGenerateAssessmentQuestionsView.as_view(), name='ai_generate_assessment_questions'),
 ]

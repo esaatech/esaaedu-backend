@@ -13,7 +13,7 @@ from django.conf import settings
 import jwt
 from jwt.exceptions import InvalidKeyError
 import logging
-from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion
+from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, DocumentMaterial, DocumentMaterial
 
 logger = logging.getLogger(__name__)
 from student.models import EnrolledCourse
@@ -6382,5 +6382,330 @@ class CourseAssessmentQuestionDetailView(APIView):
             logger.error(f"Error deleting question: {e}", exc_info=True)
             return Response(
                 {'error': 'Failed to delete question', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AIGenerateAssessmentQuestionsView(APIView):
+    """
+    REST API endpoint for generating assessment questions (tests/exams) using AI from multiple lesson materials.
+    
+    POST: Generate assessment questions from selected materials across multiple lessons
+    - Receives course_id, assessment_id, lesson_ids, material_ids, system_instruction from frontend
+    - Fetches content for each material from multiple lessons
+    - Handles transcription for video/audio materials
+    - Combines all content and generates questions
+    
+    Endpoint: POST /api/courses/teacher/courses/{course_id}/assessments/{assessment_id}/ai/generate-questions/
+    
+    Request Body:
+    {
+        "lesson_ids": ["uuid1", "uuid2", ...],  // IDs of lessons to include
+        "material_ids": ["uuid1", "uuid2", ...],  // IDs of materials to include
+        "system_instruction": "You are an expert test creator...",  // Optional
+        "total_questions": 10,
+        "multiple_choice_count": 5,
+        "true_false_count": 3,
+        "fill_blank_count": 2,
+        "short_answer_count": 0,
+        "essay_count": 0,
+        "temperature": 0.7,  // Optional
+        "model_name": "gemini-2.0-flash-001",  // Optional
+        "max_tokens": null  // Optional
+    }
+    
+    Response:
+    {
+        "questions": [...]
+    }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_assessment_and_validate(self, request, course_id, assessment_id):
+        """Helper to get assessment and validate teacher ownership"""
+        course = get_object_or_404(Course, id=course_id)
+        
+        if request.user.role != 'teacher':
+            raise PermissionError('Only teachers can use AI generation')
+        
+        if course.teacher != request.user:
+            raise PermissionError('Only the course teacher can generate assessment questions')
+        
+        assessment = get_object_or_404(CourseAssessment, id=assessment_id, course=course)
+        return course, assessment
+    
+    def post(self, request, course_id, assessment_id):
+        """
+        POST: Generate assessment questions from selected materials using AI.
+        
+        Does NOT save to database - frontend handles saving.
+        """
+        try:
+            # Get course and assessment
+            course, assessment = self.get_assessment_and_validate(request, course_id, assessment_id)
+            
+            # Get lesson IDs from request
+            lesson_ids = request.data.get('lesson_ids', [])
+            if not lesson_ids or not isinstance(lesson_ids, list):
+                return Response(
+                    {'error': 'lesson_ids is required and must be a list'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get material IDs from request
+            material_ids = request.data.get('material_ids', [])
+            if not material_ids or not isinstance(material_ids, list):
+                return Response(
+                    {'error': 'material_ids is required and must be a list'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Verify lessons belong to the course
+            lessons = Lesson.objects.filter(
+                id__in=lesson_ids,
+                course=course
+            ).select_related('course').order_by('-order', 'created_at')  # Order by most recent first
+            
+            if lessons.count() != len(lesson_ids):
+                return Response(
+                    {'error': 'Some lessons not found or not associated with this course'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Verify materials belong to the lessons
+            materials = LessonMaterialModel.objects.filter(
+                id__in=material_ids,
+                lessons__in=lessons
+            ).prefetch_related('book_pages', 'lessons')
+            
+            if materials.count() != len(material_ids):
+                return Response(
+                    {'error': 'Some materials not found or not associated with the specified lessons'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Import services
+            from ai.video_transcription_service import VideoTranscriptionService
+            from ai.gemini_assessment_service import GeminiAssessmentService
+            
+            # Collect content from all materials, organized by lesson
+            lesson_contents = []
+            text_content_parts = []
+            file_parts = []
+            transcription_service = VideoTranscriptionService()
+            
+            # Group materials by lesson
+            materials_by_lesson = {}
+            for material in materials:
+                # Get the lesson this material belongs to (should be in lesson_ids)
+                material_lessons = material.lessons.filter(id__in=lesson_ids)
+                if material_lessons.exists():
+                    lesson = material_lessons.first()  # Take first matching lesson
+                    if lesson.id not in materials_by_lesson:
+                        materials_by_lesson[lesson.id] = []
+                    materials_by_lesson[lesson.id].append(material)
+            
+            # Process materials for each lesson
+            for lesson in lessons:
+                lesson_materials = materials_by_lesson.get(lesson.id, [])
+                lesson_text_content = []
+                
+                for material in lesson_materials:
+                    material_content = None
+                    document_part = None
+                    
+                    logger.info(f"Processing material {material.id}: type={material.material_type}, title={material.title}")
+                    
+                    if material.material_type == 'note':
+                        material_content = material.description or ''
+                        
+                    elif material.material_type == 'video' or material.material_type == 'audio':
+                        try:
+                            video_material = VideoMaterial.objects.filter(
+                                lesson_material=material
+                            ).first()
+                            
+                            if not video_material and material.file_url:
+                                video_material = VideoMaterial.objects.filter(
+                                    video_url=material.file_url
+                                ).first()
+                            
+                            if video_material and video_material.has_transcript and video_material.transcript:
+                                material_content = video_material.transcript
+                                logger.info(f"Using existing transcript for video material {material.id}")
+                            elif material.file_url:
+                                logger.info(f"Transcribing video/audio material {material.id}")
+                                result = transcription_service.transcribe_video(material.file_url)
+                                if result.get('success') and result.get('transcript'):
+                                    material_content = result['transcript']
+                                    logger.info(f"Successfully transcribed material {material.id}")
+                                else:
+                                    logger.warning(f"Failed to transcribe material {material.id}: {result.get('error')}")
+                                    material_content = f"[Video/Audio URL: {material.file_url} - Transcription unavailable]"
+                            else:
+                                material_content = f"[Video/Audio material: {material.title} - No URL available]"
+                        except Exception as e:
+                            logger.error(f"Error processing video/audio material {material.id}: {e}")
+                            material_content = f"[Video/Audio material: {material.title} - Error processing]"
+                    
+                    elif material.material_type == 'book':
+                        pages = material.book_pages.all().order_by('page_number')
+                        if pages.exists():
+                            page_contents = []
+                            for page in pages:
+                                page_text = f"Page {page.page_number}"
+                                if page.title:
+                                    page_text += f": {page.title}"
+                                page_text += f"\n{page.content}"
+                                page_contents.append(page_text)
+                            material_content = "\n\n".join(page_contents)
+                        else:
+                            material_content = material.description or ''
+                    
+                    elif material.material_type == 'document':
+                        # For documents: try direct file upload to Gemini
+                        try:
+                            document_material = DocumentMaterial.objects.filter(
+                                lesson_material=material
+                            ).first()
+                            
+                            file_url = None
+                            mime_type = None
+                            
+                            if document_material and document_material.file_url:
+                                file_url = document_material.file_url
+                                mime_type = document_material.mime_type or 'application/pdf'
+                            elif material.file_url:
+                                file_url = material.file_url
+                                if material.file_extension:
+                                    mime_type_map = {
+                                        'pdf': 'application/pdf',
+                                        'doc': 'application/msword',
+                                        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                        'txt': 'text/plain',
+                                        'rtf': 'application/rtf'
+                                    }
+                                    mime_type = mime_type_map.get(material.file_extension.lower(), 'application/pdf')
+                                else:
+                                    mime_type = 'application/pdf'
+                            
+                            if file_url:
+                                from vertexai.generative_models import Part
+                                try:
+                                    document_part = Part.from_uri(
+                                        uri=file_url,
+                                        mime_type=mime_type
+                                    )
+                                    logger.info(f"Successfully created file part for document {material.id}: {file_url}")
+                                except Exception as e:
+                                    logger.error(f"Failed to create file part for document {material.id}: {e}", exc_info=True)
+                                    material_content = material.description or ''
+                            else:
+                                material_content = material.description or ''
+                        except Exception as e:
+                            logger.error(f"Error processing document material {material.id}: {e}", exc_info=True)
+                            material_content = material.description or ''
+                    
+                    else:
+                        material_content = material.description or ''
+                    
+                    # Add to appropriate list
+                    if document_part:
+                        file_parts.append(document_part)
+                        logger.info(f"Added document file part for: {material.title} (total file_parts: {len(file_parts)})")
+                    elif material_content and material_content.strip():
+                        lesson_text_content.append(f"=== {material.title} ({material.material_type}) ===\n{material_content}")
+                        text_content_parts.append(f"=== {material.title} ({material.material_type}) ===\n{material_content}")
+                        logger.info(f"Added text content for: {material.title}")
+                    else:
+                        logger.warning(f"No content added for material {material.id} ({material.material_type})")
+                
+                # Add lesson content to lesson_contents list
+                if lesson_materials and lesson_text_content:
+                    combined_lesson_content = "\n\n".join(lesson_text_content)
+                    lesson_contents.append({
+                        'lesson_title': lesson.title,
+                        'lesson_order': lesson.order,
+                        'content': combined_lesson_content,
+                        'material_title': ', '.join([m.title for m in lesson_materials]),
+                        'material_type': ', '.join([m.material_type for m in lesson_materials])
+                    })
+            
+            # Combine text content
+            combined_content = "\n\n".join(text_content_parts) if text_content_parts else None
+            
+            # Validate that we have at least some content
+            if not combined_content and not file_parts and not lesson_contents:
+                logger.error(f"No content found in selected materials. Materials processed: {materials.count()}, text_parts: {len(text_content_parts)}, file_parts: {len(file_parts)}, lesson_contents: {len(lesson_contents)}")
+                return Response(
+                    {'error': 'No content found in selected materials'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get question count parameters
+            total_questions = int(request.data.get('total_questions', 10))
+            multiple_choice_count = int(request.data.get('multiple_choice_count', 0))
+            true_false_count = int(request.data.get('true_false_count', 0))
+            fill_blank_count = int(request.data.get('fill_blank_count', 0))
+            short_answer_count = int(request.data.get('short_answer_count', 0))
+            essay_count = int(request.data.get('essay_count', 0))
+            
+            # Get system instruction
+            system_instruction = request.data.get('system_instruction', '').strip()
+            if not system_instruction:
+                if assessment.assessment_type == 'test':
+                    system_instruction = """You are an expert test creator specializing in educational content assessment.
+Generate comprehensive test questions that evaluate student understanding and knowledge retention across multiple course topics."""
+                else:
+                    system_instruction = """You are an expert exam creator specializing in comprehensive educational assessment.
+Generate thorough exam questions that evaluate deep understanding, critical thinking, and comprehensive knowledge across the entire course."""
+            
+            # Get template attributes from request (with fallbacks)
+            temperature = float(request.data.get('temperature', 0.7))
+            model_name = request.data.get('model_name', '').strip() or None
+            max_tokens = request.data.get('max_tokens')
+            if max_tokens is not None:
+                try:
+                    max_tokens = int(max_tokens)
+                except (ValueError, TypeError):
+                    max_tokens = None
+            
+            # Initialize service and generate questions
+            service = GeminiAssessmentService()
+            result = service.generate(
+                system_instruction=system_instruction,
+                lesson_contents=lesson_contents,
+                assessment_type=assessment.assessment_type,
+                content=combined_content if combined_content else None,
+                file_parts=file_parts if file_parts else None,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                model_name=model_name,
+                total_questions=total_questions,
+                multiple_choice_count=multiple_choice_count,
+                true_false_count=true_false_count,
+                fill_blank_count=fill_blank_count,
+                short_answer_count=short_answer_count,
+                essay_count=essay_count
+            )
+            
+            return Response(result, status=status.HTTP_200_OK)
+            
+        except PermissionError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except ValueError as e:
+            logger.error(f"Validation error in AI assessment generation: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in AI assessment generation: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Error during AI generation: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
