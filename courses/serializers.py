@@ -1668,6 +1668,10 @@ class LessonMaterialCreateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating lesson materials
     """
+    # Use CharField for file_url to allow more lenient validation for link materials
+    # We'll validate and convert to URL format in validate_file_url
+    file_url = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    
     class Meta:
         model = LessonMaterial
         fields = [
@@ -1688,6 +1692,42 @@ class LessonMaterialCreateSerializer(serializers.ModelSerializer):
         if value is not None and value < 0:
             raise serializers.ValidationError("File size cannot be negative")
         return value
+    
+    def validate_file_url(self, value):
+        """Validate file URL - required for link materials, more lenient validation"""
+        material_type = self.initial_data.get('material_type')
+        
+        if material_type == 'link':
+            if not value or (isinstance(value, str) and not value.strip()):
+                raise serializers.ValidationError("URL is required for link materials")
+            # Ensure value is a string
+            if not isinstance(value, str):
+                raise serializers.ValidationError("URL must be a string")
+            # Basic URL format validation - allow any string starting with http:// or https://
+            value = value.strip()
+            if not value.startswith(('http://', 'https://')):
+                raise serializers.ValidationError("URL must start with http:// or https://")
+            # For link materials, we accept the URL as-is (even if Django URLField would reject it)
+            # The model's URLField will handle storage
+        elif value:
+            # For other material types, validate as URL if provided
+            value = value.strip() if isinstance(value, str) else value
+        
+        return value
+    
+    def validate(self, data):
+        """Cross-field validation"""
+        material_type = data.get('material_type')
+        
+        # For link materials, file_url is required
+        if material_type == 'link':
+            file_url = data.get('file_url')
+            if not file_url or (isinstance(file_url, str) and not file_url.strip()):
+                raise serializers.ValidationError({
+                    'file_url': ['URL is required for link materials']
+                })
+        
+        return data
 
 
 class LessonMaterialUpdateSerializer(serializers.ModelSerializer):
