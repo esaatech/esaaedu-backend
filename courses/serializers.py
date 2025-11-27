@@ -1572,13 +1572,16 @@ class ClassEventListSerializer(serializers.ModelSerializer):
     lesson_title = serializers.CharField(source='lesson.title', read_only=True)
     project_title = serializers.CharField(source='project.title', read_only=True)
     project_platform_name = serializers.CharField(source='project_platform.display_name', read_only=True)
+    assessment_title = serializers.CharField(source='assessment.title', read_only=True)
+    assessment_type = serializers.CharField(source='assessment.assessment_type', read_only=True)
     duration_minutes = serializers.IntegerField(read_only=True)
     
     class Meta:
         model = ClassEvent
         fields = [
             'id', 'title', 'description', 'event_type', 'start_time', 'end_time',
-            'lesson_title', 'project_title', 'project_platform_name', 'lesson_type', 
+            'lesson_title', 'project_title', 'project_platform_name', 
+            'assessment_title', 'assessment_type', 'lesson_type', 
             'duration_minutes', 'meeting_platform', 'meeting_link',
             'meeting_id', 'meeting_password', 'due_date', 'submission_type', 'created_at'
         ]
@@ -1592,6 +1595,9 @@ class ClassEventDetailSerializer(serializers.ModelSerializer):
     project_id = serializers.CharField(source='project.id', read_only=True)
     project_platform_name = serializers.CharField(source='project_platform.display_name', read_only=True)
     project_platform_id = serializers.CharField(source='project_platform.id', read_only=True)
+    assessment_id = serializers.CharField(source='assessment.id', read_only=True)
+    assessment_title = serializers.CharField(source='assessment.title', read_only=True)
+    assessment_type = serializers.CharField(source='assessment.assessment_type', read_only=True)
     class_name = serializers.CharField(source='class_instance.name', read_only=True)
     duration_minutes = serializers.IntegerField(read_only=True)
     
@@ -1601,6 +1607,7 @@ class ClassEventDetailSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'event_type', 'start_time', 'end_time',
             'lesson', 'lesson_id', 'lesson_title', 'project', 'project_id', 'project_title',
             'project_platform', 'project_platform_id', 'project_platform_name',
+            'assessment', 'assessment_id', 'assessment_title', 'assessment_type',
             'lesson_type', 'class_name', 'duration_minutes',
             'meeting_platform', 'meeting_link', 'meeting_id', 'meeting_password',
             'due_date', 'submission_type', 'created_at', 'updated_at'
@@ -1615,14 +1622,15 @@ class ClassEventCreateUpdateSerializer(serializers.ModelSerializer):
         fields = [
             'title', 'description', 'event_type', 'start_time', 'end_time', 
             'lesson', 'project', 'project_platform', 'project_title', 'due_date', 'submission_type',
-            'lesson_type', 'meeting_platform', 'meeting_link', 'meeting_id', 'meeting_password'
+            'lesson_type', 'meeting_platform', 'meeting_link', 'meeting_id', 'meeting_password',
+            'assessment'
         ]
     
     def validate(self, data):
         """Validate event data"""
         event_type = data.get('event_type')
         
-        # For non-project events, validate start_time and end_time
+        # For non-project events (lesson, meeting, break, test, exam), validate start_time and end_time
         if event_type != 'project':
             if data.get('start_time') and data.get('end_time'):
                 if data['end_time'] <= data['start_time']:
@@ -1631,6 +1639,11 @@ class ClassEventCreateUpdateSerializer(serializers.ModelSerializer):
         # Validate lesson events
         if event_type == 'lesson' and not data.get('lesson'):
             raise serializers.ValidationError("Lesson events must have an associated lesson")
+        
+        # Validate assessment events (test and exam)
+        if event_type in ['test', 'exam']:
+            if not data.get('assessment'):
+                raise serializers.ValidationError("Assessment events must have an associated assessment")
         
         # Validate project events
         if event_type == 'project':

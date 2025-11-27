@@ -2093,6 +2093,8 @@ class ClassEvent(models.Model):
         ('meeting', 'Meeting'),
         ('project', 'Project'),
         ('break', 'Break'),
+        ('test', 'Test'),
+        ('exam', 'Exam'),
     ]
     
     MEETING_PLATFORMS = [
@@ -2135,6 +2137,14 @@ class ClassEvent(models.Model):
         null=True,
         blank=True,
         help_text="Platform for project events"
+    )
+    
+    assessment = models.ForeignKey(
+        'CourseAssessment',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Associated assessment (if event type is test or exam)"
     )
     
     # Project-specific fields (for project events)
@@ -2243,7 +2253,7 @@ class ClassEvent(models.Model):
         """Validate event data"""
         from django.core.exceptions import ValidationError
         
-        # For non-project events, validate start_time and end_time
+        # For non-project events (lesson, meeting, break, test, exam), validate start_time and end_time
         if self.event_type != 'project':
             if self.start_time and self.end_time:
                 if self.end_time <= self.start_time:
@@ -2257,6 +2267,16 @@ class ClassEvent(models.Model):
         
         if self.event_type == 'project' and not self.project_platform:
             raise ValidationError("Project events must specify a platform")
+        
+        # Validate assessment events (test and exam)
+        if self.event_type in ['test', 'exam']:
+            if not self.assessment:
+                raise ValidationError("Assessment events must have an associated assessment")
+            
+            # Validate assessment belongs to same course as class
+            if self.assessment and self.class_instance:
+                if self.assessment.course != self.class_instance.course:
+                    raise ValidationError("Assessment must belong to the same course as the class")
         
         # For project events, due_date is required
         if self.event_type == 'project' and not self.due_date:
