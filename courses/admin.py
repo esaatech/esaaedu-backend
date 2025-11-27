@@ -212,9 +212,9 @@ class ClassSessionAdmin(admin.ModelAdmin):
 
 @admin.register(ClassEvent)
 class ClassEventAdmin(admin.ModelAdmin):
-    list_display = ['title', 'class_instance', 'event_type', 'lesson_type', 'project', 'project_platform', 'due_date', 'start_time', 'end_time', 'duration_minutes', 'created_at']
+    list_display = ['title', 'class_instance', 'event_type', 'lesson_type', 'project', 'project_platform', 'assessment', 'due_date', 'start_time', 'end_time', 'duration_minutes', 'created_at']
     list_filter = ['event_type', 'lesson_type', 'project_platform', 'submission_type', 'start_time', 'class_instance__course__category', 'created_at']
-    search_fields = ['title', 'description', 'class_instance__name', 'class_instance__course__title', 'project__title', 'project_title']
+    search_fields = ['title', 'description', 'class_instance__name', 'class_instance__course__title', 'project__title', 'project_title', 'assessment__title']
     readonly_fields = ['id', 'duration_minutes', 'created_at', 'updated_at']
     date_hierarchy = 'start_time'
     
@@ -224,7 +224,7 @@ class ClassEventAdmin(admin.ModelAdmin):
         }),
         ('Schedule', {
             'fields': ('start_time', 'end_time', 'duration_minutes'),
-            'description': 'Required for lesson/meeting/break events. Leave empty for project events.'
+            'description': 'Required for lesson/meeting/break/test/exam events. Leave empty for project events.'
         }),
         ('Project Details', {
             'fields': ('due_date', 'project_title', 'submission_type'),
@@ -232,8 +232,8 @@ class ClassEventAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
         ('Event Content', {
-            'fields': ('lesson', 'project', 'project_platform'),
-            'description': 'Select lesson for lesson events, or project + platform for project events'
+            'fields': ('lesson', 'project', 'project_platform', 'assessment'),
+            'description': 'Select lesson for lesson events, project + platform for project events, or assessment for test/exam events'
         }),
         ('Meeting Details (for Live Lessons)', {
             'fields': ('meeting_platform', 'meeting_link', 'meeting_id', 'meeting_password'),
@@ -247,7 +247,7 @@ class ClassEventAdmin(admin.ModelAdmin):
     )
     
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related('class_instance', 'class_instance__course', 'lesson')
+        return super().get_queryset(request).select_related('class_instance', 'class_instance__course', 'lesson', 'assessment')
 
 
 # CourseIntroduction admin removed - all fields are now managed in CourseAdmin
