@@ -18,7 +18,7 @@ from .serializers import (
     AssignmentQuestionSerializer, AssignmentSubmissionSerializer, AssignmentGradingSerializer,
     AssignmentFeedbackSerializer
 )
-from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, LessonMaterial, VideoMaterial, BookPage, Lesson, DocumentMaterial
+from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, LessonMaterial, VideoMaterial, BookPage, Lesson, DocumentMaterial, AudioVideoMaterial
 from student.models import EnrolledCourse, Conversation, Message
 from student.serializers import (
     ConversationListSerializer, ConversationSerializer,
@@ -2985,6 +2985,257 @@ class DocumentUploadView(APIView):
         except Exception as e:
             import traceback
             logger.error(f"Error in document upload: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Error during file upload: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AudioVideoUploadView(APIView):
+    """
+    API view for uploading audio/video files to Google Cloud Storage.
+    Handles file upload, validation, and creates AudioVideoMaterial instance.
+    Supports file replacement - deletes old file when new one is uploaded.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        """
+        Upload an audio/video file to GCS and create AudioVideoMaterial instance.
+        
+        Expected request:
+        - file: File object (MP3, MP4, WAV, OGG, WebM, etc.)
+        - lesson_material_id: UUID (optional, for linking to existing LessonMaterial)
+        
+        Returns:
+        - file_url: GCS URL
+        - file_size: Size in bytes
+        - file_size_mb: Size in MB
+        - file_extension: File extension
+        - file_name: Stored filename
+        - original_filename: Original filename
+        - mime_type: MIME type
+        - audio_video_material_id: UUID of created AudioVideoMaterial
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can upload audio/video files'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Get uploaded file
+            uploaded_file = request.FILES.get('file')
+            if not uploaded_file:
+                return Response(
+                    {'error': 'No file provided'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Validate file size (max 500MB for videos)
+            max_size = 500 * 1024 * 1024  # 500MB in bytes
+            if uploaded_file.size > max_size:
+                return Response(
+                    {'error': f'File size exceeds maximum allowed size of 500MB. File size: {round(uploaded_file.size / (1024 * 1024), 2)}MB'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Validate file extension and MIME type
+            import mimetypes
+            original_filename = uploaded_file.name
+            
+            # CRITICAL: Database column is VARCHAR(200), so we MUST truncate to 200 chars max
+            # Truncate original filename early to prevent database errors
+            max_original_filename_length = 200
+            if len(original_filename) > max_original_filename_length:
+                # Keep extension and truncate the base name
+                if '.' in original_filename:
+                    name_part, ext_part = original_filename.rsplit('.', 1)
+                    max_name_length = max_original_filename_length - len(ext_part) - 1  # -1 for the dot
+                    if max_name_length < 1:
+                        # If extension is too long, just use first 200 chars
+                        original_filename = original_filename[:max_original_filename_length]
+                    else:
+                        truncated_name = name_part[:max_name_length] if len(name_part) > max_name_length else name_part
+                        original_filename = f"{truncated_name}.{ext_part}"
+                else:
+                    original_filename = original_filename[:max_original_filename_length]
+            
+            file_extension = original_filename.split('.')[-1].lower() if '.' in original_filename else ''
+            
+            # Allowed extensions
+            allowed_audio_extensions = ['mp3', 'wav', 'ogg', 'aac', 'm4a']
+            allowed_video_extensions = ['mp4', 'webm', 'ogg', 'mov', 'avi', 'wmv']
+            allowed_extensions = allowed_audio_extensions + allowed_video_extensions
+            
+            if file_extension not in allowed_extensions:
+                return Response(
+                    {'error': f'File extension "{file_extension}" not allowed. Allowed extensions: {", ".join(allowed_extensions)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Determine MIME type
+            mime_type = uploaded_file.content_type or mimetypes.guess_type(original_filename)[0]
+            
+            # MIME type mapping
+            mime_type_map = {
+                'mp3': 'audio/mpeg',
+                'mp4': 'video/mp4',
+                'wav': 'audio/wav',
+                'ogg': 'audio/ogg',
+                'webm': 'video/webm',
+                'aac': 'audio/aac',
+                'm4a': 'audio/m4a',
+                'mov': 'video/quicktime',
+                'avi': 'video/x-msvideo',
+                'wmv': 'video/x-ms-wmv',
+            }
+            
+            if not mime_type:
+                mime_type = mime_type_map.get(file_extension, 'application/octet-stream')
+            
+            # Validate MIME type
+            allowed_audio_mimes = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/wave', 'audio/ogg', 'audio/aac', 'audio/m4a']
+            allowed_video_mimes = ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime', 'video/x-msvideo', 'video/x-ms-wmv']
+            allowed_mimes = allowed_audio_mimes + allowed_video_mimes
+            
+            if mime_type not in allowed_mimes:
+                return Response(
+                    {'error': f'MIME type "{mime_type}" not allowed. Allowed types: audio/video files'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Generate unique filename for storage
+            import uuid
+            # CRITICAL: Database file_name column is VARCHAR(200), not 255!
+            # UUID is 36 chars + 1 dash = 37 chars
+            # Storage path prefix "audio-video/" is 13 chars
+            # Total prefix overhead: 13 + 37 = 50 chars
+            # Available for filename: 200 - 50 = 150 chars
+            # But original_filename is already truncated to 200, so we need to truncate it further
+            # to fit in the storage path
+            max_filename_for_path = 150  # 200 - 50 (prefix overhead)
+            if len(original_filename) > max_filename_for_path:
+                # Truncate further for the storage path
+                if '.' in original_filename:
+                    name_part, ext_part = original_filename.rsplit('.', 1)
+                    max_name_length = max_filename_for_path - len(ext_part) - 1
+                    if max_name_length < 1:
+                        # Fallback: use UUID only with extension
+                        unique_filename = f"{uuid.uuid4()}.{ext_part}"
+                    else:
+                        truncated_name = name_part[:max_name_length] if len(name_part) > max_name_length else name_part
+                        unique_filename = f"{uuid.uuid4()}-{truncated_name}.{ext_part}"
+                else:
+                    unique_filename = f"{uuid.uuid4()}-{original_filename[:max_filename_for_path]}"
+            else:
+                unique_filename = f"{uuid.uuid4()}-{original_filename}"
+            
+            storage_path = f"audio-video/{unique_filename}"
+            
+            # Final safety check - ensure storage_path doesn't exceed 200 chars
+            if len(storage_path) > 200:
+                # Emergency fallback: use UUID only
+                file_ext = original_filename.split('.')[-1] if '.' in original_filename else 'mp4'
+                unique_filename = f"{uuid.uuid4()}.{file_ext}"
+                storage_path = f"audio-video/{unique_filename}"
+
+            # Upload to GCS
+            from django.core.files.storage import default_storage
+            from django.conf import settings
+            
+            # Check if GCS is configured
+            if not hasattr(settings, 'GS_BUCKET_NAME') or not settings.GS_BUCKET_NAME:
+                return Response(
+                    {'error': 'Google Cloud Storage is not configured. Please set GCS_BUCKET_NAME and GCS_PROJECT_ID environment variables.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            try:
+                # Save file to GCS storage
+                saved_path = default_storage.save(storage_path, uploaded_file)
+                
+                # Get file URL from GCS
+                file_url = default_storage.url(saved_path)
+                # Ensure full URL format for GCS
+                if not file_url.startswith('http'):
+                    file_url = f"https://storage.googleapis.com/{settings.GS_BUCKET_NAME}/{saved_path}"
+                
+                logger.info(f"Audio/Video file uploaded successfully: {saved_path}")
+                
+            except Exception as e:
+                logger.error(f"Error uploading audio/video file to storage: {e}")
+                return Response(
+                    {'error': f'Failed to upload file: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            # Get optional lesson_material_id
+            lesson_material_id = request.data.get('lesson_material_id')
+            lesson_material = None
+            
+            if lesson_material_id:
+                try:
+                    lesson_material = LessonMaterial.objects.get(
+                        id=lesson_material_id,
+                        material_type='audio'
+                    )
+                except LessonMaterial.DoesNotExist:
+                    # Will link later when LessonMaterial is created
+                    pass
+
+            # Create AudioVideoMaterial instance
+            # CRITICAL: Both file_name and original_filename database columns are VARCHAR(200)
+            # Ensure both are truncated to exactly 200 characters max
+            try:
+                # Ensure original_filename is max 200 chars
+                safe_original_filename = original_filename[:200] if len(original_filename) > 200 else original_filename
+                
+                # Ensure saved_path (file_name) is max 200 chars
+                safe_file_name = saved_path[:200] if len(saved_path) > 200 else saved_path
+                
+                audio_video_material = AudioVideoMaterial.objects.create(
+                    file_name=safe_file_name,
+                    original_filename=safe_original_filename,
+                    file_url=file_url,
+                    file_size=uploaded_file.size,
+                    file_extension=file_extension,
+                    mime_type=mime_type,
+                    uploaded_by=request.user,
+                    lesson_material=lesson_material
+                )
+                
+                logger.info(f"AudioVideoMaterial created: {audio_video_material.id}")
+                
+            except Exception as e:
+                logger.error(f"Error creating AudioVideoMaterial: {e}")
+                # Try to delete uploaded file if AudioVideoMaterial creation fails
+                try:
+                    default_storage.delete(saved_path)
+                except:
+                    pass
+                return Response(
+                    {'error': f'Failed to create audio/video material: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            # Return success response
+            return Response({
+                'file_url': file_url,
+                'file_size': uploaded_file.size,
+                'file_size_mb': round(uploaded_file.size / (1024 * 1024), 2),
+                'file_extension': file_extension,
+                'file_name': saved_path,
+                'original_filename': original_filename,
+                'mime_type': mime_type,
+                'audio_video_material_id': str(audio_video_material.id),
+                'message': 'Audio/Video uploaded successfully'
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in audio/video upload: {e}\n{traceback.format_exc()}")
             return Response(
                 {'error': f'Error during file upload: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

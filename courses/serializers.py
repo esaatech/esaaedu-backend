@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage, VideoMaterial, DocumentMaterial, AudioVideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion
 
 User = get_user_model()
 
@@ -31,16 +31,141 @@ class CourseReviewSerializer(serializers.ModelSerializer):
 class LessonMaterialSerializer(serializers.ModelSerializer):
     """
     Serializer for lesson materials
+    Supports audio_video_material_id for linking AudioVideoMaterial
     """
     file_size_mb = serializers.ReadOnlyField()
+    audio_video_material_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    audio_video_data = serializers.SerializerMethodField()
     
     class Meta:
         model = LessonMaterial
         fields = [
             'id', 'title', 'description', 'material_type', 'file_url', 
-            'file_size', 'file_size_mb', 'file_extension', 'order', 'created_at'
+            'file_size', 'file_size_mb', 'file_extension', 'order', 'created_at',
+            'audio_video_material_id', 'audio_video_data'
         ]
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = ['id', 'created_at', 'audio_video_data']
+    
+    def get_audio_video_data(self, obj):
+        """Get AudioVideoMaterial data if exists"""
+        try:
+            if hasattr(obj, 'audio_video_data') and obj.audio_video_data:
+                av_data = obj.audio_video_data
+                return {
+                    'id': str(av_data.id),
+                    'file_name': av_data.file_name,
+                    'original_filename': av_data.original_filename,
+                    'file_url': av_data.file_url,
+                    'file_size': av_data.file_size,
+                    'file_size_mb': av_data.file_size_mb,
+                    'file_extension': av_data.file_extension,
+                    'mime_type': av_data.mime_type,
+                    'is_audio': av_data.is_audio,
+                    'is_video': av_data.is_video,
+                    'uploaded_by_email': av_data.uploaded_by.email if av_data.uploaded_by else None,
+                }
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting audio_video_data: {e}")
+        return None
+    
+    def create(self, validated_data):
+        """Create LessonMaterial and link AudioVideoMaterial if provided"""
+        audio_video_material_id = validated_data.pop('audio_video_material_id', None)
+        
+        # Create the material
+        material = super().create(validated_data)
+        
+        # Link AudioVideoMaterial if provided
+        if audio_video_material_id:
+            try:
+                audio_video_material = AudioVideoMaterial.objects.get(id=audio_video_material_id)
+                audio_video_material.lesson_material = material
+                audio_video_material.save()
+                # Update material file fields from AudioVideoMaterial
+                material.file_url = audio_video_material.file_url
+                material.file_size = audio_video_material.file_size
+                material.file_extension = audio_video_material.file_extension
+                material.save()
+            except AudioVideoMaterial.DoesNotExist:
+                pass
+        
+        return material
+    
+    def update(self, instance, validated_data):
+        """Update LessonMaterial and handle file replacement"""
+        audio_video_material_id = validated_data.pop('audio_video_material_id', None)
+        
+        # If a new audio_video_material_id is provided, delete the old one first
+        # This handles file replacement when updating audio/video materials
+        if audio_video_material_id and instance.material_type == 'audio':
+            try:
+                # Find and delete old AudioVideoMaterial (this will delete file from GCS via delete() method)
+                old_audio_video = AudioVideoMaterial.objects.filter(lesson_material=instance).first()
+                if old_audio_video:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.info(f"Deleting old AudioVideoMaterial {old_audio_video.id} for LessonMaterial {instance.id}")
+                    # Delete old AudioVideoMaterial - this triggers delete() which removes file from GCS
+                    old_audio_video.delete()
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error deleting old AudioVideoMaterial: {e}")
+        
+        # Handle file replacement - delete old file from GCS (fallback check)
+        old_file_url = instance.file_url
+        new_file_url = validated_data.get('file_url')
+        
+        # If file_url is being updated but audio_video_material_id wasn't provided, delete old AudioVideoMaterial
+        if new_file_url and old_file_url and new_file_url != old_file_url and instance.material_type == 'audio' and not audio_video_material_id:
+            try:
+                old_audio_video = AudioVideoMaterial.objects.get(lesson_material=instance)
+                # Delete file from GCS
+                from django.core.files.storage import default_storage
+                if old_audio_video.file_name and default_storage.exists(old_audio_video.file_name):
+                    try:
+                        default_storage.delete(old_audio_video.file_name)
+                    except Exception as e:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"Error deleting old audio/video file from GCS: {e}")
+                # Delete AudioVideoMaterial record
+                old_audio_video.delete()
+            except AudioVideoMaterial.DoesNotExist:
+                pass
+        
+        # Link new AudioVideoMaterial if provided
+        if audio_video_material_id:
+            try:
+                audio_video_material = AudioVideoMaterial.objects.get(id=audio_video_material_id)
+                # If there's an existing AudioVideoMaterial, delete its file first
+                if audio_video_material.lesson_material and audio_video_material.lesson_material != instance:
+                    # This material was linked to another lesson, unlink it
+                    old_lesson = audio_video_material.lesson_material
+                    audio_video_material.lesson_material = None
+                    audio_video_material.save()
+                    
+                    # Update the old lesson's file_url if needed
+                    if old_lesson.file_url == audio_video_material.file_url:
+                        old_lesson.file_url = None
+                        old_lesson.file_size = None
+                        old_lesson.file_extension = None
+                        old_lesson.save()
+                
+                # Link to new lesson material
+                audio_video_material.lesson_material = instance
+                audio_video_material.save()
+                
+                # Update instance file fields from AudioVideoMaterial
+                instance.file_url = audio_video_material.file_url
+                instance.file_size = audio_video_material.file_size
+                instance.file_extension = audio_video_material.file_extension
+            except AudioVideoMaterial.DoesNotExist:
+                pass
+        
+        return super().update(instance, validated_data)
 
 
 # ===== OPTIMIZED LESSON SERIALIZERS FOR 2-CALL STRATEGY =====
@@ -1992,6 +2117,37 @@ class DocumentMaterialSerializer(serializers.ModelSerializer):
             'uploaded_by',
             'uploaded_by_email',
             'is_pdf',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class AudioVideoMaterialSerializer(serializers.ModelSerializer):
+    """
+    Serializer for audio/video materials with file metadata
+    """
+    file_size_mb = serializers.ReadOnlyField()
+    is_audio = serializers.ReadOnlyField()
+    is_video = serializers.ReadOnlyField()
+    uploaded_by_email = serializers.EmailField(source='uploaded_by.email', read_only=True)
+    
+    class Meta:
+        model = AudioVideoMaterial
+        fields = [
+            'id',
+            'lesson_material',
+            'file_name',
+            'original_filename',
+            'file_url',
+            'file_size',
+            'file_size_mb',
+            'file_extension',
+            'mime_type',
+            'uploaded_by',
+            'uploaded_by_email',
+            'is_audio',
+            'is_video',
             'created_at',
             'updated_at',
         ]

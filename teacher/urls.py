@@ -38,6 +38,9 @@ urlpatterns = [
     # Document Upload URLs
     path('documents/upload/', views.DocumentUploadView.as_view(), name='document_upload'),
     
+    # Audio/Video Upload URLs
+    path('audio-video/upload/', views.AudioVideoUploadView.as_view(), name='audio_video_upload'),
+    
     # Messaging URLs
     path('students/<int:student_id>/conversations/', views.StudentConversationsListView.as_view(), name='student_conversations'),
     path('conversations/<uuid:conversation_id>/messages/', views.ConversationMessagesView.as_view(), name='conversation_messages'),

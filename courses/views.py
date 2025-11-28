@@ -4734,7 +4734,50 @@ class LessonMaterial(APIView):
                     logger.error(f"Error deleting DocumentMaterial for LessonMaterial {material_id}: {e}")
                     # Continue with LessonMaterial deletion even if DocumentMaterial deletion fails
             
-            # Delete the LessonMaterial (this will cascade delete related DocumentMaterial if linked)
+            # For audio/video materials, find and delete associated AudioVideoMaterial before deleting LessonMaterial
+            # This ensures the file is deleted from GCS
+            if material.material_type == 'audio':
+                try:
+                    from .models import AudioVideoMaterial
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    
+                    # Try to find AudioVideoMaterial linked to this LessonMaterial
+                    audio_video_material = AudioVideoMaterial.objects.filter(lesson_material=material).first()
+                    
+                    # If not found by relationship, try to find by file_url
+                    if not audio_video_material and material.file_url:
+                        audio_video_material = AudioVideoMaterial.objects.filter(file_url=material.file_url).first()
+                    
+                    # If still not found, try to find by file_name (extract from file_url)
+                    if not audio_video_material and material.file_url:
+                        # Extract file path from GCS URL
+                        # URL format: https://storage.googleapis.com/bucket-name/path/to/file
+                        try:
+                            from urllib.parse import urlparse
+                            parsed_url = urlparse(material.file_url)
+                            # Get path after bucket name (e.g., /audio-video/uuid-filename.mp4)
+                            path_parts = parsed_url.path.split('/', 2)
+                            if len(path_parts) >= 3:
+                                file_path = path_parts[2]  # Get everything after /bucket-name/
+                                audio_video_material = AudioVideoMaterial.objects.filter(file_name=file_path).first()
+                        except Exception as e:
+                            logger.warning(f"Could not parse file_url to find AudioVideoMaterial: {e}")
+                    
+                    # If found, delete it (this will trigger file deletion from GCS via AudioVideoMaterial.delete())
+                    if audio_video_material:
+                        logger.info(f"Found AudioVideoMaterial {audio_video_material.id} for LessonMaterial {material_id}, deleting...")
+                        audio_video_material.delete()
+                        logger.info(f"Successfully deleted AudioVideoMaterial {audio_video_material.id} and file from GCS")
+                    else:
+                        logger.warning(f"Could not find AudioVideoMaterial for LessonMaterial {material_id} with file_url: {material.file_url}")
+                except Exception as e:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Error deleting AudioVideoMaterial for LessonMaterial {material_id}: {e}")
+                    # Continue with LessonMaterial deletion even if AudioVideoMaterial deletion fails
+            
+            # Delete the LessonMaterial (this will cascade delete related DocumentMaterial/AudioVideoMaterial if linked)
             material.delete()
             
             return Response({

@@ -647,6 +647,139 @@ class DocumentMaterial(models.Model):
         super().delete(*args, **kwargs)
 
 
+class AudioVideoMaterial(models.Model):
+    """
+    Audio/Video-specific data for audio/video materials.
+    Similar to DocumentMaterial for documents, this extends LessonMaterial with audio/video-specific fields.
+    Stores metadata about uploaded audio/video files (MP3, MP4, WAV, etc.)
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Link to LessonMaterial (optional - can exist independently for caching)
+    lesson_material = models.OneToOneField(
+        LessonMaterial,
+        on_delete=models.CASCADE,
+        related_name='audio_video_data',
+        blank=True,
+        null=True,
+        limit_choices_to={'material_type': 'audio'},
+        help_text="Link to LessonMaterial if this is part of a lesson"
+    )
+    
+    # File Information
+    file_name = models.CharField(
+        max_length=255,
+        help_text="Stored filename in GCS (e.g., 'audio-video/uuid-filename.mp4')"
+    )
+    original_filename = models.CharField(
+        max_length=255,
+        help_text="Original filename from user upload (e.g., 'My Lesson Video.mp4')"
+    )
+    file_url = models.URLField(
+        help_text="Full GCS URL to the audio/video file"
+    )
+    
+    # File Metadata
+    file_size = models.PositiveIntegerField(
+        help_text="File size in bytes"
+    )
+    file_extension = models.CharField(
+        max_length=10,
+        help_text="File extension (e.g., 'mp3', 'mp4', 'wav', 'ogg')"
+    )
+    mime_type = models.CharField(
+        max_length=100,
+        help_text="MIME type (e.g., 'audio/mpeg', 'video/mp4', 'audio/wav')"
+    )
+    
+    # Upload Information
+    uploaded_by = models.ForeignKey(
+        'users.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='uploaded_audio_videos',
+        help_text="Teacher who uploaded this audio/video"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['file_url']),
+            models.Index(fields=['file_extension']),
+            models.Index(fields=['mime_type']),
+            models.Index(fields=['uploaded_by']),
+            models.Index(fields=['lesson_material']),
+        ]
+        verbose_name = "Audio/Video Material"
+        verbose_name_plural = "Audio/Video Materials"
+    
+    def __str__(self):
+        if self.lesson_material:
+            return f"Audio/Video Material: {self.lesson_material.title}"
+        return f"Audio/Video Material: {self.original_filename}"
+    
+    @property
+    def file_size_mb(self):
+        """Convert file size to MB for display"""
+        if self.file_size:
+            return round(self.file_size / (1024 * 1024), 2)
+        return None
+    
+    @property
+    def is_audio(self):
+        """Check if this is an audio file"""
+        return self.mime_type.startswith('audio/')
+    
+    @property
+    def is_video(self):
+        """Check if this is a video file"""
+        return self.mime_type.startswith('video/')
+    
+    def delete(self, *args, **kwargs):
+        """
+        Override delete to also delete the file from Google Cloud Storage.
+        This ensures that when an AudioVideoMaterial is deleted (either directly or via CASCADE
+        when LessonMaterial is deleted), the associated file is also removed from GCS.
+        Follows the same pattern as DocumentMaterial.
+        """
+        # Delete file from GCS before deleting the model
+        if self.file_name:
+            try:
+                from django.core.files.storage import default_storage
+                from django.conf import settings
+                
+                # Only delete from GCS if GCS is configured
+                if hasattr(settings, 'GS_BUCKET_NAME') and settings.GS_BUCKET_NAME:
+                    try:
+                        # Delete the file from GCS
+                        default_storage.delete(self.file_name)
+                        logger.info(f"Deleted audio/video file from GCS: {self.file_name}")
+                    except Exception as e:
+                        # Log error but don't fail the deletion
+                        logger.error(f"Failed to delete audio/video file from GCS ({self.file_name}): {e}")
+                        # Continue with model deletion even if file deletion fails
+                else:
+                    # If GCS is not configured, try local storage
+                    try:
+                        import os
+                        if os.path.exists(self.file_name):
+                            os.remove(self.file_name)
+                            logger.info(f"Deleted audio/video file from local storage: {self.file_name}")
+                    except Exception as e:
+                        logger.error(f"Failed to delete audio/video file from local storage ({self.file_name}): {e}")
+            except Exception as e:
+                logger.error(f"Error deleting audio/video file ({self.file_name}): {e}")
+                # Continue with model deletion even if file deletion fails
+        
+        # Call parent delete to actually delete the model
+        super().delete(*args, **kwargs)
+
+
 class Project(models.Model):
     SUBMISSION_TYPES = [
         ('link', 'Link/URL'),
