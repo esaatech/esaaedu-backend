@@ -1966,15 +1966,15 @@ def class_events(request, class_id):
         )
     
     try:
-        from .models import ClassEvent, Project, ProjectPlatform, Lesson, CourseAssessment
-        from .serializers import ClassEventListSerializer, ClassEventCreateUpdateSerializer, ClassEventDetailSerializer, ProjectListSerializer, ProjectPlatformSerializer, LessonListSerializer, CourseAssessmentListSerializer
+        from .models import ClassEvent, Project, ProjectPlatform, Lesson
+        from .serializers import ClassEventListSerializer, ClassEventCreateUpdateSerializer, ClassEventDetailSerializer, ProjectListSerializer, ProjectPlatformSerializer, LessonListSerializer
         
         # Verify the class belongs to the teacher
         class_instance = get_object_or_404(Class, id=class_id, teacher=request.user)
         
         if request.method == 'GET':
             events = ClassEvent.objects.filter(class_instance=class_instance).select_related(
-                'lesson', 'project', 'project_platform', 'assessment'
+                'lesson', 'project', 'project_platform'
             ).order_by('start_time')
             serializer = ClassEventListSerializer(events, many=True)
             
@@ -1990,10 +1990,6 @@ def class_events(request, class_id):
             available_lessons = Lesson.objects.filter(course=class_instance.course).order_by('order')
             lessons_serializer = LessonListSerializer(available_lessons, many=True)
             
-            # Get available assessments for this course
-            available_assessments = CourseAssessment.objects.filter(course=class_instance.course).order_by('order', 'created_at')
-            assessments_serializer = CourseAssessmentListSerializer(available_assessments, many=True)
-            
             return Response({
                 'class_id': class_id,
                 'class_name': class_instance.name,
@@ -2002,8 +1998,7 @@ def class_events(request, class_id):
                 'events': serializer.data,
                 'available_projects': projects_serializer.data,
                 'available_platforms': platforms_serializer.data,
-                'available_lessons': lessons_serializer.data,
-                'available_assessments': assessments_serializer.data
+                'available_lessons': lessons_serializer.data
             }, status=status.HTTP_200_OK)
         
         elif request.method == 'POST':
@@ -4437,10 +4432,12 @@ class LessonMaterial(APIView):
                     elif material.material_type == 'note':
                         # For notes, we might want to show if content exists
                         material_data['has_content'] = bool(material.content)
-                    elif material.material_type in ['document', 'pdf', 'presentation']:
+                    elif material.material_type in ['document', 'pdf', 'presentation', 'audio']:
                         # For files, show file info
+                        material_data['file_size'] = material.file_size
                         material_data['file_size_mb'] = material.file_size_mb
                         material_data['file_extension'] = material.file_extension
+                        material_data['file_url'] = material.file_url
                     
                     materials_data.append(material_data)
             else:
@@ -4631,6 +4628,34 @@ class LessonMaterial(APIView):
                         import logging
                         logger = logging.getLogger(__name__)
                         logger.error(f"Error deleting old DocumentMaterial during update: {e}")
+                        # Continue with update even if old file deletion fails
+            
+            # For audio/video materials, handle file deletion when file_url changes (same pattern as documents)
+            if material.material_type == 'audio':
+                old_file_url = material.file_url
+                new_file_url = request.data.get('file_url')
+                
+                # If file_url is being changed or removed, delete old AudioVideoMaterial and file
+                if old_file_url and (new_file_url != old_file_url or new_file_url is None or new_file_url == ''):
+                    try:
+                        from .models import AudioVideoMaterial
+                        # Try to find AudioVideoMaterial linked to this LessonMaterial
+                        audio_video_material = AudioVideoMaterial.objects.filter(lesson_material=material).first()
+                        
+                        # If not found by relationship, try to find by file_url
+                        if not audio_video_material and old_file_url:
+                            audio_video_material = AudioVideoMaterial.objects.filter(file_url=old_file_url).first()
+                        
+                        # If found, delete it (this will trigger file deletion from GCS via delete() method)
+                        if audio_video_material:
+                            import logging
+                            logger = logging.getLogger(__name__)
+                            logger.info(f"Deleting old AudioVideoMaterial {audio_video_material.id} for file replacement")
+                            audio_video_material.delete()
+                    except Exception as e:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"Error deleting old AudioVideoMaterial during update: {e}")
                         # Continue with update even if old file deletion fails
             
             # Validate and update material using serializer
