@@ -4,13 +4,15 @@
 
 ### 1. Event Types - **HARDCODED** (Not from API)
 
-#### Backend (`courses/models.py` lines 2091-2096):
+#### Backend (`courses/models.py` lines 2091-2098):
 ```python
 EVENT_TYPES = [
     ('lesson', 'Lesson'),
     ('meeting', 'Meeting'),
     ('project', 'Project'),
     ('break', 'Break'),
+    ('test', 'Test'),        # ✅ ADDED
+    ('exam', 'Exam'),        # ✅ ADDED
 ]
 ```
 
@@ -125,25 +127,31 @@ EVENT_TYPES = [
 
 ## Implementation Plan for Test & Exam Events
 
-### Step 1: Update Backend Model
+### Step 1: Update Backend Model ✅ **COMPLETED**
 
 **File:** `courses/models.py`
 
+✅ **Completed:**
+- Added 'test' and 'exam' to `EVENT_TYPES`
+- Added `assessment` ForeignKey to `ClassEvent` model
+- Updated validation in `ClassEvent.clean()` to require assessment for test/exam events
+- Updated validation to ensure assessment belongs to same course as class
+- Updated Schedule description to include test/exam events
+- Migration created: `0043_add_test_exam_event_types.py`
+
+**Implementation:**
 ```python
 EVENT_TYPES = [
     ('lesson', 'Lesson'),
     ('meeting', 'Meeting'),
     ('project', 'Project'),
     ('break', 'Break'),
-    ('test', 'Test'),        # NEW
-    ('exam', 'Exam'),        # NEW
+    ('test', 'Test'),        # ✅ ADDED
+    ('exam', 'Exam'),        # ✅ ADDED
 ]
-```
 
-**Add ForeignKey to ClassEvent model:**
-```python
 assessment = models.ForeignKey(
-    CourseAssessment,
+    'CourseAssessment',
     on_delete=models.SET_NULL,
     null=True,
     blank=True,
@@ -151,83 +159,75 @@ assessment = models.ForeignKey(
 )
 ```
 
-**Update validation in `ClassEvent.clean()`:**
-```python
-if self.event_type in ['test', 'exam']:
-    if not self.assessment:
-        raise ValidationError("Assessment events must have an associated assessment")
-    
-    # Assessment must belong to same course as class
-    if self.assessment and self.class_instance:
-        if self.assessment.course != self.class_instance.course:
-            raise ValidationError("Assessment must belong to the same course as the class")
-```
-
 ---
 
-### Step 2: Update Serializer
+### Step 2: Update Serializers ✅ **COMPLETED**
 
 **File:** `courses/serializers.py`
 
-**Update `ClassEventCreateUpdateSerializer`:**
-```python
-fields = [
-    'title', 'description', 'event_type', 'start_time', 'end_time', 
-    'lesson', 'project', 'project_platform', 'project_title', 'due_date', 'submission_type',
-    'lesson_type', 'meeting_platform', 'meeting_link', 'meeting_id', 'meeting_password',
-    'assessment'  # NEW
-]
-```
+✅ **Completed:**
+- Updated `ClassEventCreateUpdateSerializer` to include `assessment` field
+- Added validation for test/exam events requiring assessment
+- Updated `ClassEventDetailSerializer` to include assessment fields (id, title, type)
+- Updated `ClassEventListSerializer` to include assessment fields (title, type)
 
-**Update validation:**
-```python
-# Validate assessment events
-if event_type in ['test', 'exam']:
-    if not data.get('assessment'):
-        raise serializers.ValidationError("Assessment events must have an associated assessment")
-```
-
-**Update `ClassEventDetailSerializer`:**
-```python
-assessment_id = serializers.CharField(source='assessment.id', read_only=True)
-assessment_title = serializers.CharField(source='assessment.title', read_only=True)
-assessment_type = serializers.CharField(source='assessment.assessment_type', read_only=True)
-
-fields = [
-    # ... existing fields ...
-    'assessment', 'assessment_id', 'assessment_title', 'assessment_type'  # NEW
-]
-```
+**Implementation:**
+- `ClassEventCreateUpdateSerializer.fields` includes `'assessment'`
+- Validation checks: `if event_type in ['test', 'exam']: require assessment`
+- `ClassEventDetailSerializer` includes: `assessment`, `assessment_id`, `assessment_title`, `assessment_type`
+- `ClassEventListSerializer` includes: `assessment_title`, `assessment_type`
 
 ---
 
-### Step 3: Update API Endpoint
+### Step 3: Update API Endpoint ✅ **COMPLETED**
 
 **File:** `courses/views.py` - `class_events()` function
 
-**Add available assessments to GET response:**
+✅ **Completed:**
+- Added `CourseAssessment` and `CourseAssessmentListSerializer` to imports
+- Updated `select_related()` to include `'assessment'` for performance
+- Added query for `available_assessments` filtered by course
+- Added `available_assessments` to GET response
+
+**Implementation:**
 ```python
 # Get available assessments for this course
-from .models import CourseAssessment
-available_assessments = CourseAssessment.objects.filter(course=class_instance.course)
+available_assessments = CourseAssessment.objects.filter(
+    course=class_instance.course
+).order_by('order', 'created_at')
 assessments_serializer = CourseAssessmentListSerializer(available_assessments, many=True)
 
 return Response({
-    'class_id': class_id,
-    'class_name': class_instance.name,
-    'course_id': str(class_instance.course.id),
-    'course_name': class_instance.course.title,
-    'events': serializer.data,
-    'available_projects': projects_serializer.data,
-    'available_platforms': platforms_serializer.data,
-    'available_lessons': lessons_serializer.data,
-    'available_assessments': assessments_serializer.data  # NEW
+    # ... existing fields ...
+    'available_assessments': assessments_serializer.data  # ✅ ADDED
 }, status=status.HTTP_200_OK)
 ```
 
+**API Response Now Includes:**
+- `available_assessments`: Array of all assessments for the course (test and exam types)
+
 ---
 
-### Step 4: Update Frontend
+### Step 3.5: Update Admin Interface ✅ **COMPLETED**
+
+**File:** `courses/admin.py`
+
+✅ **Completed:**
+- Added `assessment` to `list_display`
+- Added `assessment__title` to `search_fields`
+- Added `assessment` to `Event Content` fieldset
+- Updated Schedule description to mention test/exam events
+- Updated `get_queryset()` to include `'assessment'` in `select_related()`
+
+**Implementation:**
+- Admin list view shows assessment column
+- Admin edit form includes assessment field in Event Content section
+- Searchable by assessment title
+- Optimized queries with assessment preloaded
+
+---
+
+### Step 4: Update Frontend ⏳ **PENDING**
 
 **File:** `ScheduleTab.tsx`
 
@@ -331,11 +331,12 @@ const payload = {
 
 ---
 
-### Step 5: Update API Service (Frontend)
+### Step 5: Update API Service (Frontend) ⏳ **PENDING**
 
 **File:** `src/services/api.ts`
 
-**Add method to fetch assessments:**
+**Note:** The assessments are already returned in the `getClassEvents()` response as `available_assessments`, so a separate API call may not be needed. However, if needed for other purposes:
+
 ```typescript
 async getCourseAssessments(courseId: string): Promise<CourseAssessment[]> {
   const response = await this.request<CourseAssessment[]>(
@@ -345,6 +346,8 @@ async getCourseAssessments(courseId: string): Promise<CourseAssessment[]> {
   return response;
 }
 ```
+
+**Alternative:** Use `available_assessments` from the existing `getClassEvents()` response.
 
 ---
 
@@ -358,21 +361,38 @@ async getCourseAssessments(courseId: string): Promise<CourseAssessment[]> {
    - Validation logic
 3. ✅ **Frontend mirrors backend** - Both need updates
 
-### Implementation Steps:
+### Implementation Status:
+
+#### ✅ Backend - COMPLETED:
 1. ✅ Add 'test' and 'exam' to `EVENT_TYPES` in model
 2. ✅ Add `assessment` ForeignKey to `ClassEvent` model
-3. ✅ Update validation logic
-4. ✅ Update serializers
+3. ✅ Update validation logic in model and serializer
+4. ✅ Update all serializers (CreateUpdate, Detail, List)
 5. ✅ Update API endpoint to return `available_assessments`
-6. ✅ Update frontend dropdown
-7. ✅ Add assessment selector UI
-8. ✅ Update save handler
-9. ✅ Add migration for new field
+6. ✅ Update admin interface (list_display, fieldsets, search)
+7. ✅ Add migration for new field (`0043_add_test_exam_event_types.py`)
+
+#### ⏳ Frontend - PENDING:
+1. ⏳ Update frontend dropdown to include test/exam options
+2. ⏳ Add assessment selector UI component
+3. ⏳ Update TypeScript interfaces
+4. ⏳ Add assessment state management
+5. ⏳ Update save handler to include assessment
+6. ⏳ Update event color mapping
+7. ⏳ Handle assessment selection and auto-population
 
 ### Similarities to Existing Types:
-- **Test/Exam** will be similar to **Lesson** events:
-  - Require FK to related model (`CourseAssessment`)
-  - Require `start_time` and `end_time`
-  - Auto-populate title/description from assessment
-  - No additional fields needed (unlike projects which need platform)
+- **Test/Exam** events are similar to **Lesson** events:
+  - ✅ Require FK to related model (`CourseAssessment`) - **IMPLEMENTED**
+  - ✅ Require `start_time` and `end_time` - **VALIDATED**
+  - ⏳ Auto-populate title/description from assessment - **PENDING (Frontend)**
+  - ✅ No additional fields needed (unlike projects which need platform) - **CONFIRMED**
+
+### Backend API Ready:
+The backend is **fully implemented** and ready for frontend integration:
+- ✅ Model supports test/exam event types
+- ✅ API returns `available_assessments` in GET requests
+- ✅ API accepts `assessment` field in POST/PUT requests
+- ✅ Validation ensures assessment is required for test/exam events
+- ✅ Admin interface supports managing assessment events
 

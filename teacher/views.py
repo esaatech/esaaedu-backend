@@ -326,7 +326,8 @@ class TeacherScheduleAPIView(APIView):
             'class_instance__course',
             'lesson',
             'project',
-            'project_platform'
+            'project_platform',
+            'assessment'
         ).order_by('start_time')
         
         return [
@@ -350,6 +351,9 @@ class TeacherScheduleAPIView(APIView):
                 'project_title': event.project_title or (event.project.title if event.project else None),
                 'project_platform_id': str(event.project_platform.id) if event.project_platform else None,
                 'project_platform_name': event.project_platform.display_name if event.project_platform else None,
+                'assessment_id': str(event.assessment.id) if event.assessment else None,
+                'assessment_title': event.assessment.title if event.assessment else None,
+                'assessment_type': event.assessment.assessment_type if event.assessment else None,
                 'due_date': event.due_date.isoformat() if event.due_date else None,
                 'submission_type': event.submission_type,
                 'duration_minutes': event.duration_minutes,
@@ -379,7 +383,8 @@ class TeacherScheduleAPIView(APIView):
             'class_instance__course',
             'lesson',
             'project',
-            'project_platform'
+            'project_platform',
+            'assessment'
         ).order_by('start_time', 'due_date')
         
         return [
@@ -396,6 +401,9 @@ class TeacherScheduleAPIView(APIView):
                 'project_id': str(event.project.id) if event.project else None,
                 'project_title': event.project_title or (event.project.title if event.project else None),
                 'project_platform_name': event.project_platform.display_name if event.project_platform else None,
+                'assessment_id': str(event.assessment.id) if event.assessment else None,
+                'assessment_title': event.assessment.title if event.assessment else None,
+                'assessment_type': event.assessment.assessment_type if event.assessment else None,
                 'due_date': event.due_date.isoformat() if event.due_date else None,
                 'submission_type': event.submission_type,
             }
@@ -412,14 +420,17 @@ class TeacherScheduleAPIView(APIView):
             'class_instance__course',
             'lesson',
             'project',
-            'project_platform'
+            'project_platform',
+            'assessment'
         )
         
         events_by_type = {
             'lesson': [],
             'meeting': [],
             'break': [],
-            'project': []
+            'project': [],
+            'test': [],
+            'exam': []
         }
         
         for event in events:
@@ -433,10 +444,17 @@ class TeacherScheduleAPIView(APIView):
                 'project_id': str(event.project.id) if event.project else None,
                 'project_title': event.project_title or (event.project.title if event.project else None),
                 'project_platform_name': event.project_platform.display_name if event.project_platform else None,
+                'assessment_id': str(event.assessment.id) if event.assessment else None,
+                'assessment_title': event.assessment.title if event.assessment else None,
+                'assessment_type': event.assessment.assessment_type if event.assessment else None,
                 'due_date': event.due_date.isoformat() if event.due_date else None,
                 'submission_type': event.submission_type,
             }
-            events_by_type[event.event_type].append(event_data)
+            # Safely append to events_by_type, creating key if it doesn't exist
+            event_type = event.event_type
+            if event_type not in events_by_type:
+                events_by_type[event_type] = []
+            events_by_type[event_type].append(event_data)
         
         return events_by_type
     
@@ -450,7 +468,8 @@ class TeacherScheduleAPIView(APIView):
             'class_instance__course',
             'lesson',
             'project',
-            'project_platform'
+            'project_platform',
+            'assessment'
         )
         
         events_by_course = {}
@@ -477,6 +496,9 @@ class TeacherScheduleAPIView(APIView):
                 'project_id': str(event.project.id) if event.project else None,
                 'project_title': event.project_title or (event.project.title if event.project else None),
                 'project_platform_name': event.project_platform.display_name if event.project_platform else None,
+                'assessment_id': str(event.assessment.id) if event.assessment else None,
+                'assessment_title': event.assessment.title if event.assessment else None,
+                'assessment_type': event.assessment.assessment_type if event.assessment else None,
                 'due_date': event.due_date.isoformat() if event.due_date else None,
                 'submission_type': event.submission_type,
             }
