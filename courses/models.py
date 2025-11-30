@@ -1636,6 +1636,14 @@ class Classroom(models.Model):
         default=True,
         help_text="Whether video cam is enabled in this classroom"
     )
+    ide_enabled = models.BooleanField(
+        default=False,
+        help_text="Whether IDE is enabled in this classroom"
+    )
+    virtual_lab_enabled = models.BooleanField(
+        default=False,
+        help_text="Whether virtual lab is enabled in this classroom"
+    )
     
     # tldraw board integration
     tldraw_board_id = models.CharField(

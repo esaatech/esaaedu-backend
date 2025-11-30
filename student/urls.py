@@ -21,6 +21,9 @@ urlpatterns = [
     # Schedule
     path('schedule/', views.StudentScheduleView.as_view(), name='student_schedule'),
     
+    # Next Classroom
+    path('classroom/next/', views.StudentNextClassroomView.as_view(), name='student_next_classroom'),
+    
     # Dashboard Overview
     path('dashboard-overview/', views.DashboardOverview.as_view(), name='dashboard_overview'),
     

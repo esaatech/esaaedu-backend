@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import uuid
 
 from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback, Conversation, Message
-from courses.models import Class, ClassEvent, Course, Lesson, Quiz, QuizAttempt, Question, Assignment, AssignmentSubmission
+from courses.models import Class, ClassEvent, Course, Lesson, Quiz, QuizAttempt, Question, Assignment, AssignmentSubmission, Classroom
 from settings.models import UserDashboardSettings
 from .serializers import (
     EnrolledCourseListSerializer, 
@@ -4281,4 +4281,176 @@ class ParentUnreadCountView(APIView):
             return Response(
                 {'error': 'Failed to get unread count', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class StudentNextClassroomView(APIView):
+    """
+    Get the next upcoming classroom for the authenticated student.
+    Returns classroom data with status (not_started, live, ended) and countdown info.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """
+        GET: Retrieve next upcoming classroom for student
+        Query params:
+        - timezone_offset (optional): Timezone offset in minutes from UTC (e.g., -300 for EST)
+        """
+        # Import status module locally to avoid any potential shadowing issues
+        from rest_framework import status as http_status
+        try:
+            # Step 1: Validate user is a student
+            if request.user.role != 'student':
+                return Response(
+                    {'error': 'Only students can access their next classroom'},
+                    status=http_status.HTTP_403_FORBIDDEN
+                )
+            
+            # Step 2: Get timezone offset from request (optional, defaults to UTC)
+            timezone_offset_minutes = int(request.GET.get('timezone_offset', 0))
+            current_time = timezone.now()
+            
+            # Step 3: Get student's enrolled courses
+            try:
+                enrollments = EnrolledCourse.objects.filter(
+                    student_profile__user=request.user,
+                    status='active'
+                ).select_related('course', 'student_profile')
+                
+                if not enrollments.exists():
+                    return Response({
+                        'has_next_class': False,
+                        'message': 'No enrolled classes found'
+                    }, status=http_status.HTTP_200_OK)
+                    
+            except Exception as e:
+                return Response(
+                    {'error': 'Failed to fetch enrolled courses', 'details': str(e)},
+                    status=http_status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Step 4: Get all upcoming/live events for enrolled classes
+            try:
+                # Get all classes for enrolled courses
+                class_ids = Class.objects.filter(
+                    course__in=[e.course for e in enrollments],
+                    is_active=True
+                ).values_list('id', flat=True)
+                
+                # Find next event (upcoming or currently live)
+                # Filter: end_time > current_time (not ended yet)
+                next_event = ClassEvent.objects.filter(
+                    class_instance_id__in=class_ids,
+                    end_time__gt=current_time,
+                    event_type__in=['lesson', 'meeting']  # Only lesson and meeting events
+                ).select_related(
+                    'class_instance',
+                    'class_instance__course',
+                    'lesson'
+                ).order_by('start_time').first()
+                
+                if not next_event:
+                    return Response({
+                        'has_next_class': False,
+                        'message': 'No upcoming classes found'
+                    }, status=http_status.HTTP_200_OK)
+                
+                # Step 5: Determine class status
+                event_start = next_event.start_time
+                event_end = next_event.end_time
+                
+                if current_time < event_start:
+                    class_status = 'not_started'
+                    time_until_start = int((event_start - current_time).total_seconds())
+                elif current_time >= event_start and current_time < event_end:
+                    class_status = 'live'
+                    time_until_start = 0
+                else:
+                    class_status = 'ended'
+                    time_until_start = 0
+                
+                # Step 6: Get classroom if exists
+                classroom = None
+                classroom_data = None
+                try:
+                    classroom = Classroom.objects.get(class_instance=next_event.class_instance)
+                    # Import serializer here to avoid circular imports
+                    from courses.serializers import ClassroomSerializer
+                    classroom_data = ClassroomSerializer(classroom).data
+                except Classroom.DoesNotExist:
+                    # Classroom doesn't exist yet, that's okay
+                    pass
+                
+                # Step 7: Get meeting link
+                meeting_link = None
+                meeting_platform = None
+                room_code = None
+                
+                # Priority: event.meeting_link > classroom room_code (Jitsi)
+                if next_event.meeting_link:
+                    meeting_link = next_event.meeting_link
+                    meeting_platform = next_event.meeting_platform or 'other'
+                elif classroom and classroom.room_code:
+                    # Construct Jitsi link from room_code
+                    jitsi_domain = getattr(classroom, 'jitsi_domain', 'meet.jit.si')
+                    meeting_link = f"https://{jitsi_domain}/{classroom.room_code}"
+                    meeting_platform = 'jitsi'
+                    room_code = classroom.room_code
+                
+                # Step 8: Format response message
+                if class_status == 'not_started':
+                    hours = time_until_start // 3600
+                    minutes = (time_until_start % 3600) // 60
+                    if hours > 0:
+                        message = f"Class starts in {hours} hour{'s' if hours > 1 else ''}"
+                        if minutes > 0:
+                            message += f" {minutes} minute{'s' if minutes > 1 else ''}"
+                    else:
+                        message = f"Class starts in {minutes} minute{'s' if minutes > 1 else ''}"
+                elif class_status == 'live':
+                    message = "Class is live now"
+                else:
+                    message = "Class has ended"
+                
+                # Step 9: Prepare response
+                response_data = {
+                    'has_next_class': True,
+                    'next_class': {
+                        'class_id': str(next_event.class_instance.id),
+                        'class_name': next_event.class_instance.name,
+                        'course_id': str(next_event.class_instance.course.id),
+                        'course_title': next_event.class_instance.course.title,
+                        'classroom_id': str(classroom.id) if classroom and hasattr(classroom, 'id') else None,
+                        'status': class_status,
+                        'start_time': event_start.isoformat(),
+                        'end_time': event_end.isoformat(),
+                        'time_until_start': time_until_start if class_status == 'not_started' else None,
+                        'is_live_now': class_status == 'live',
+                        'meeting_link': meeting_link,
+                        'meeting_platform': meeting_platform,
+                        'room_code': room_code,
+                        'event_title': next_event.title,
+                        'event_description': next_event.description or '',
+                        'classroom': classroom_data,
+                    },
+                    'message': message
+                }
+                
+                return Response(response_data, status=http_status.HTTP_200_OK)
+                
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return Response(
+                    {'error': 'Failed to fetch next classroom', 'details': str(e)},
+                    status=http_status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+                
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': 'Failed to get next classroom', 'details': str(e)},
+                status=http_status.HTTP_500_INTERNAL_SERVER_ERROR
             )

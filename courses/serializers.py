@@ -1527,7 +1527,8 @@ class ClassroomSerializer(serializers.ModelSerializer):
         model = Classroom
         fields = [
             'id', 'room_code', 'is_active', 'chat_enabled', 'board_enabled',
-            'video_enabled', 'class_instance', 'is_session_active',
+            'video_enabled', 'ide_enabled', 'virtual_lab_enabled',
+            'class_instance', 'is_session_active',
             'active_session', 'student_count', 'tldraw_board_url',
             'created_at', 'updated_at'
         ]
@@ -1575,7 +1576,8 @@ class ClassroomUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Classroom
         fields = [
-            'is_active', 'chat_enabled', 'board_enabled', 'video_enabled'
+            'is_active', 'chat_enabled', 'board_enabled', 'video_enabled',
+            'ide_enabled', 'virtual_lab_enabled'
         ]
 
 
