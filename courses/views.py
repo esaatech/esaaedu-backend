@@ -3853,6 +3853,7 @@ class TeacherDashboardAPIView(APIView):
             'today_classes': [
                 {
                     'id': str(cls.id),
+                    'class_id': str(cls.class_instance.id),
                     'title': cls.title,
                     'course_name': cls.class_instance.course.title,
                     'scheduled_date': cls.start_time.date().isoformat(),
@@ -3871,6 +3872,7 @@ class TeacherDashboardAPIView(APIView):
             'upcoming_classes': [
                 {
                     'id': str(cls.id),
+                    'class_id': str(cls.class_instance.id),
                     'title': cls.title,
                     'course_name': cls.class_instance.course.title,
                     'scheduled_date': cls.start_time.date().isoformat(),
