@@ -13,7 +13,7 @@ This command creates AIPromptTemplate entries for all AI services:
 - exam_generation: Comprehensive exam generation with deep assessment across all course topics
 """
 from django.core.management.base import BaseCommand
-from ai.models import AIPromptTemplate
+from ai.models import AIPromptTemplate, SystemInstruction
 
 
 class Command(BaseCommand):
@@ -322,12 +322,42 @@ Remember: Exams should provide a comprehensive evaluation of student mastery acr
         updated_count = 0
         
         for template_data in templates:
+            # Create or get SystemInstruction for this template
+            system_instruction_name = f"{template_data['name']}_system_instruction"
+            current_instruction = SystemInstruction.objects.filter(
+                name=system_instruction_name,
+                is_active=True
+            ).first()
+            
+            # Check if we need to create a new version
+            needs_new_version = False
+            if current_instruction:
+                if current_instruction.content != template_data['default_system_instruction']:
+                    needs_new_version = True
+            else:
+                needs_new_version = True
+            
+            # Create new version if needed
+            if needs_new_version:
+                system_instruction = SystemInstruction.objects.create(
+                    name=system_instruction_name,
+                    content=template_data['default_system_instruction'],
+                    description=f"Initial version for {template_data['display_name']}",
+                    is_active=True
+                )
+                self.stdout.write(
+                    self.style.SUCCESS(f'  Created SystemInstruction v{system_instruction.version} for {template_data["display_name"]}')
+                )
+            else:
+                system_instruction = current_instruction
+            
+            # Create or update the template
             template, created = AIPromptTemplate.objects.get_or_create(
                 name=template_data['name'],
                 defaults={
                     'display_name': template_data['display_name'],
                     'description': template_data['description'],
-                    'default_system_instruction': template_data['default_system_instruction'],
+                    'system_instruction': system_instruction,
                     'model_name': template_data['model_name'],
                     'temperature': template_data['temperature'],
                     'max_tokens': template_data['max_tokens'],
@@ -341,10 +371,10 @@ Remember: Exams should provide a comprehensive evaluation of student mastery acr
                     self.style.SUCCESS(f'✓ Created: {template_data["display_name"]}')
                 )
             else:
-                # Update if system instruction is different or template is inactive
+                # Update if system instruction changed or template is inactive
                 updated = False
-                if template.default_system_instruction != template_data['default_system_instruction']:
-                    template.default_system_instruction = template_data['default_system_instruction']
+                if template.system_instruction != system_instruction:
+                    template.system_instruction = system_instruction
                     updated = True
                 if not template.is_active:
                     template.is_active = True

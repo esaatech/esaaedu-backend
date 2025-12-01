@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import AIConversation, AIPrompt, AIPromptTemplate
+from .models import AIConversation, AIPrompt, AIPromptTemplate, SystemInstruction
 
 
 @admin.register(AIConversation)
@@ -66,20 +66,49 @@ class AIPromptAdmin(admin.ModelAdmin):
         invalidate_prompt_cache(obj.prompt_type)
 
 
+@admin.register(SystemInstruction)
+class SystemInstructionAdmin(admin.ModelAdmin):
+    list_display = ['name', 'version', 'is_active', 'created_at', 'created_by', 'last_modified_by']
+    list_filter = ['is_active', 'name', 'created_at']
+    search_fields = ['name', 'content', 'description']
+    readonly_fields = ['version', 'created_at', 'updated_at', 'created_by', 'last_modified_by']
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('name', 'version', 'is_active')
+        }),
+        ('Content', {
+            'fields': ('content', 'description'),
+            'description': 'The system instruction text. When saving a new version, the version number will auto-increment.'
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at', 'created_by', 'last_modified_by'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def save_model(self, request, obj, form, change):
+        """Track who created/modified the instruction"""
+        if not change:  # Creating new
+            obj.created_by = request.user
+        obj.last_modified_by = request.user
+        super().save_model(request, obj, form, change)
+
+
 @admin.register(AIPromptTemplate)
 class AIPromptTemplateAdmin(admin.ModelAdmin):
     list_display = ['display_name', 'name', 'model_name', 'temperature', 'is_active', 'created_at', 'updated_at']
     list_filter = ['is_active', 'model_name', 'created_at']
-    search_fields = ['name', 'display_name', 'description', 'default_system_instruction']
-    readonly_fields = ['created_at', 'updated_at', 'created_by', 'last_modified_by']
+    search_fields = ['name', 'display_name', 'description', 'system_instruction__content']
+    readonly_fields = ['created_at', 'updated_at', 'created_by', 'last_modified_by', 'default_system_instruction']
     
     fieldsets = (
         ('Basic Information', {
             'fields': ('name', 'display_name', 'description', 'is_active')
         }),
         ('Default System Instruction', {
-            'fields': ('default_system_instruction',),
-            'description': 'Default prompt shown to teachers. They can override this when generating content.'
+            'fields': ('system_instruction', 'default_system_instruction'),
+            'description': 'Select a versioned system instruction. The default_system_instruction field shows the content for reference (read-only). Teachers can override this when generating content.'
         }),
         ('AI Configuration', {
             'fields': ('model_name', 'temperature', 'max_tokens'),

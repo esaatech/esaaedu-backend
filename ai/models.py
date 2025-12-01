@@ -2,12 +2,94 @@
 AI models for storing conversation history and generation metadata
 """
 from django.db import models
+from django.db.models import Max
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 import uuid
 import json
 
 User = get_user_model()
+
+
+class SystemInstruction(models.Model):
+    """
+    Versioned system instructions for AI prompts.
+    Allows tracking different versions of system instructions over time.
+    """
+    name = models.CharField(
+        max_length=100,
+        help_text="Identifier for this system instruction (e.g., 'quiz_generation_system_instruction')"
+    )
+    version = models.IntegerField(
+        default=1,
+        help_text="Version number for this instruction (auto-increments per name)"
+    )
+    content = models.TextField(
+        help_text="The actual system instruction text"
+    )
+    description = models.TextField(
+        blank=True,
+        help_text="Optional description of what changed in this version"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this is the current active version"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_system_instructions',
+        help_text="User who created this version"
+    )
+    last_modified_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='modified_system_instructions',
+        help_text="User who last modified this version"
+    )
+    
+    class Meta:
+        verbose_name = "System Instruction"
+        verbose_name_plural = "System Instructions"
+        ordering = ['name', '-version']
+        unique_together = [['name', 'version']]
+        indexes = [
+            models.Index(fields=['name', 'is_active']),
+            models.Index(fields=['name', '-version']),
+        ]
+    
+    def __str__(self):
+        status = "Active" if self.is_active else "Inactive"
+        return f"{self.name} v{self.version} ({status})"
+    
+    def save(self, *args, **kwargs):
+        """Auto-increment version if creating new version of existing name"""
+        if not self.pk:
+            # Get the highest version for this name
+            max_version = SystemInstruction.objects.filter(
+                name=self.name
+            ).aggregate(Max('version'))['version__max']
+            
+            if max_version is not None:
+                self.version = max_version + 1
+            else:
+                self.version = 1
+        
+        # If this version is being set as active, deactivate other versions
+        if self.is_active:
+            SystemInstruction.objects.filter(
+                name=self.name
+            ).exclude(pk=self.pk).update(is_active=False)
+        
+        super().save(*args, **kwargs)
 
 
 class AIConversation(models.Model):
@@ -214,9 +296,23 @@ class AIPromptTemplate(models.Model):
     )
     
     # Default System Instruction (shown to teachers, can be overridden)
-    default_system_instruction = models.TextField(
-        help_text="Default system instruction shown to teachers. They can override this."
+    # Now references a versioned SystemInstruction model
+    system_instruction = models.ForeignKey(
+        'SystemInstruction',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='prompt_templates',
+        help_text="Versioned system instruction. Teachers can override this when generating content."
     )
+    
+    # Keep default_system_instruction as a property for backward compatibility
+    @property
+    def default_system_instruction(self):
+        """Backward compatibility property that returns the system instruction content"""
+        if self.system_instruction:
+            return self.system_instruction.content
+        return ""
     
     # AI Configuration (from template, not overridable by teachers)
     model_name = models.CharField(
