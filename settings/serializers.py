@@ -29,6 +29,10 @@ class UserDashboardSettingsSerializer(serializers.ModelSerializer):
             'default_quiz_time_limit',
             'auto_grade_multiple_choice',
             'show_correct_answers_by_default',
+            # Classroom tool URLs (teachers only)
+            'whiteboard_url',
+            'ide_url',
+            'virtual_lab_url',
             'created_at',
             'updated_at'
         ]
@@ -88,3 +92,7 @@ class DashboardConfigSerializer(serializers.Serializer):
     default_quiz_time_limit = serializers.IntegerField(required=False)
     auto_grade_multiple_choice = serializers.BooleanField(required=False)
     show_correct_answers_by_default = serializers.BooleanField(required=False)
+    # Classroom tool URLs (teachers only)
+    whiteboard_url = serializers.URLField(required=False, allow_blank=True)
+    ide_url = serializers.URLField(required=False, allow_blank=True)
+    virtual_lab_url = serializers.URLField(required=False, allow_blank=True)

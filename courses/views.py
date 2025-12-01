@@ -3998,7 +3998,12 @@ class TeacherDashboardAPIView(APIView):
         from settings.models import UserDashboardSettings
         
         try:
+            from settings.models import ClassroomToolDefaults
+            
             settings = UserDashboardSettings.get_or_create_settings(teacher)
+            # Get app-wide defaults
+            app_defaults = ClassroomToolDefaults.get_or_create_defaults()
+            
             return {
                 'default_quiz_points': settings.default_quiz_points,
                 'default_assignment_points': settings.default_assignment_points,
@@ -4008,10 +4013,25 @@ class TeacherDashboardAPIView(APIView):
                 'show_correct_answers_by_default': settings.show_correct_answers_by_default,
                 'theme_preference': settings.theme_preference,
                 'notifications_enabled': settings.notifications_enabled,
+                'whiteboard_url': settings.whiteboard_url or app_defaults.whiteboard_url,
+                'ide_url': settings.ide_url or app_defaults.ide_url,
+                'virtual_lab_url': settings.virtual_lab_url or app_defaults.virtual_lab_url,
             }
         except Exception as e:
             print(f"Error getting teacher settings: {e}")
             # Return default values if settings fail
+            try:
+                from settings.models import ClassroomToolDefaults
+                app_defaults = ClassroomToolDefaults.get_or_create_defaults()
+                default_whiteboard = app_defaults.whiteboard_url
+                default_ide = app_defaults.ide_url
+                default_virtual_lab = app_defaults.virtual_lab_url
+            except:
+                # Fallback to hardcoded defaults if app defaults fail
+                default_whiteboard = 'https://www.tldraw.com'
+                default_ide = 'https://trinket.io'
+                default_virtual_lab = 'https://phet.colorado.edu'
+            
             return {
                 'default_quiz_points': 1,
                 'default_assignment_points': 5,
@@ -4021,6 +4041,9 @@ class TeacherDashboardAPIView(APIView):
                 'show_correct_answers_by_default': True,
                 'theme_preference': 'system',
                 'notifications_enabled': True,
+                'whiteboard_url': default_whiteboard,
+                'ide_url': default_ide,
+                'virtual_lab_url': default_virtual_lab,
             }
 
 

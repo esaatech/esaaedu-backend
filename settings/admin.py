@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import UserDashboardSettings, CourseSettings
+from .models import UserDashboardSettings, CourseSettings, ClassroomToolDefaults
 
 
 @admin.register(CourseSettings)
@@ -116,3 +116,41 @@ class UserDashboardSettingsAdmin(admin.ModelAdmin):
         if obj:  # Editing existing object
             readonly_fields.append('user_type')
         return readonly_fields
+
+
+@admin.register(ClassroomToolDefaults)
+class ClassroomToolDefaultsAdmin(admin.ModelAdmin):
+    """Admin interface for ClassroomToolDefaults (Singleton)"""
+    list_display = (
+        'whiteboard_url',
+        'ide_url',
+        'virtual_lab_url',
+        'updated_at'
+    )
+    
+    list_display_links = ('whiteboard_url',)  # Make the first field clickable to edit
+    
+    readonly_fields = ('id', 'created_at', 'updated_at')
+    
+    fieldsets = (
+        ('Default URLs', {
+            'fields': (
+                'whiteboard_url',
+                'ide_url',
+                'virtual_lab_url'
+            ),
+            'description': 'App-wide default URLs for classroom tools. These are used when teachers haven\'t set custom URLs in their settings.'
+        }),
+        ('Timestamps', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def has_add_permission(self, request):
+        # Only allow adding if no defaults exist
+        return not ClassroomToolDefaults.objects.exists()
+    
+    def has_delete_permission(self, request, obj=None):
+        # Prevent deletion of defaults
+        return False

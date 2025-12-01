@@ -188,6 +188,28 @@ class UserDashboardSettings(models.Model):
         help_text="Show correct answers to students after quiz completion by default (teachers only)"
     )
     
+    # Classroom Tool URLs (teachers only)
+    whiteboard_url = models.URLField(
+        max_length=500,
+        blank=True,
+        default='https://www.tldraw.com',
+        help_text="Default URL for interactive whiteboard (teachers only)"
+    )
+    
+    ide_url = models.URLField(
+        max_length=500,
+        blank=True,
+        default='https://trinket.io',
+        help_text="Default URL for IDE (teachers only)"
+    )
+    
+    virtual_lab_url = models.URLField(
+        max_length=500,
+        blank=True,
+        default='https://phet.colorado.edu',
+        help_text="Default URL for virtual lab (teachers only)"
+    )
+    
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -228,6 +250,9 @@ class UserDashboardSettings(models.Model):
                 'default_quiz_time_limit': 10,
                 'auto_grade_multiple_choice': False,
                 'show_correct_answers_by_default': True,
+                'whiteboard_url': 'https://www.tldraw.com',
+                'ide_url': 'https://trinket.io',
+                'virtual_lab_url': 'https://phet.colorado.edu',
             })
         
         settings, created = cls.objects.get_or_create(
@@ -256,6 +281,9 @@ class UserDashboardSettings(models.Model):
         
         # Add teacher-specific config if user is a teacher
         if self.user_type == 'teacher':
+            # Get app-wide defaults for classroom tools
+            app_defaults = ClassroomToolDefaults.get_or_create_defaults()
+            
             config.update({
                 'default_quiz_points': self.default_quiz_points,
                 'default_assignment_points': self.default_assignment_points,
@@ -263,6 +291,63 @@ class UserDashboardSettings(models.Model):
                 'default_quiz_time_limit': self.default_quiz_time_limit,
                 'auto_grade_multiple_choice': self.auto_grade_multiple_choice,
                 'show_correct_answers_by_default': self.show_correct_answers_by_default,
+                # Use teacher's custom URLs or fall back to app-wide defaults
+                'whiteboard_url': self.whiteboard_url or app_defaults.whiteboard_url,
+                'ide_url': self.ide_url or app_defaults.ide_url,
+                'virtual_lab_url': self.virtual_lab_url or app_defaults.virtual_lab_url,
             })
         
         return config
+
+
+class ClassroomToolDefaults(models.Model):
+    """
+    App-wide default URLs for classroom tools (whiteboard, IDE, virtual lab)
+    Singleton model - only one instance should exist
+    These defaults are used when teachers haven't set custom URLs in their settings
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    whiteboard_url = models.URLField(
+        max_length=500,
+        default='https://www.tldraw.com',
+        help_text="Default URL for interactive whiteboard"
+    )
+    
+    ide_url = models.URLField(
+        max_length=500,
+        default='https://trinket.io',
+        help_text="Default URL for IDE"
+    )
+    
+    virtual_lab_url = models.URLField(
+        max_length=500,
+        default='https://phet.colorado.edu',
+        help_text="Default URL for virtual lab"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Classroom Tool Defaults"
+        verbose_name_plural = "Classroom Tool Defaults"
+        ordering = ['-updated_at']
+    
+    def __str__(self):
+        return "Classroom Tool Defaults"
+    
+    @classmethod
+    def get_or_create_defaults(cls):
+        """
+        Get the singleton instance, creating it if it doesn't exist
+        Returns the defaults object with app-wide default URLs
+        """
+        if cls.objects.exists():
+            return cls.objects.first()
+        return cls.objects.create(
+            whiteboard_url='https://www.tldraw.com',
+            ide_url='https://trinket.io',
+            virtual_lab_url='https://phet.colorado.edu',
+        )

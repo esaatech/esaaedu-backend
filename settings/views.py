@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 
-from .models import UserDashboardSettings
+from .models import UserDashboardSettings, ClassroomToolDefaults
 from .serializers import UserDashboardSettingsSerializer, DashboardConfigSerializer
 
 
@@ -117,6 +117,7 @@ class TeacherDashboardSettingsView(APIView):
     def get(self, request):
         """
         GET: Retrieve current teacher's dashboard settings
+        Includes app-wide defaults for classroom tool URLs
         """
         try:
             # Ensure user is a teacher
@@ -128,7 +129,19 @@ class TeacherDashboardSettingsView(APIView):
             
             settings = UserDashboardSettings.get_or_create_settings(request.user)
             serializer = UserDashboardSettingsSerializer(settings)
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+            # Get app-wide defaults for classroom tools
+            app_defaults = ClassroomToolDefaults.get_or_create_defaults()
+            
+            # Add app defaults to response
+            response_data = serializer.data
+            response_data['app_defaults'] = {
+                'whiteboard_url': app_defaults.whiteboard_url,
+                'ide_url': app_defaults.ide_url,
+                'virtual_lab_url': app_defaults.virtual_lab_url,
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
                 {'error': 'Failed to retrieve teacher settings', 'details': str(e)},
