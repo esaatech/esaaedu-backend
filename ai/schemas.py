@@ -189,20 +189,20 @@ def get_course_introduction_schema() -> Dict[str, Any]:
                 "description": "List of prerequisites as JSON array"
             },
             "duration_weeks": {
-                "type": "integer",
-                "description": "Course duration in weeks"
+                "type": ["integer", "null"],
+                "description": "Course duration in weeks (OPTIONAL - do not generate this field unless explicitly requested. These operational fields are managed separately and should not be included in course introduction generation)"
             },
             "sessions_per_week": {
-                "type": "integer",
-                "description": "Number of sessions per week"
+                "type": ["integer", "null"],
+                "description": "Number of sessions per week (OPTIONAL - do not generate this field unless explicitly requested. These operational fields are managed separately and should not be included in course introduction generation)"
             },
             "total_projects": {
-                "type": "integer",
-                "description": "Number of projects students will create"
+                "type": ["integer", "null"],
+                "description": "Number of projects students will create (OPTIONAL - do not generate this field unless explicitly requested. These operational fields are managed separately and should not be included in course introduction generation)"
             },
             "max_students": {
-                "type": "integer",
-                "description": "Maximum number of students for the course (optional - will use default if not provided)"
+                "type": ["integer", "null"],
+                "description": "Maximum number of students for the course (OPTIONAL - do not generate this field unless explicitly requested. These operational fields are managed separately and should not be included in course introduction generation)"
             },
             "value_propositions": {
                 "type": "array",
@@ -223,7 +223,7 @@ def get_course_introduction_schema() -> Dict[str, Any]:
                 "description": "List of course benefits and value propositions (icon will be added automatically)"
             }
         },
-        "required": ["overview", "learning_objectives", "value_propositions"]
+        "required": ["overview", "learning_objectives", "prerequisites_text", "value_propositions"]
     }
 
 
