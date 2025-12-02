@@ -4340,10 +4340,19 @@ class StudentNextClassroomView(APIView):
                 
                 # Find next event (upcoming or currently live)
                 # Filter: end_time > current_time (not ended yet)
+                # Only include time-constrained events:
+                # - Live lessons (event_type='lesson' with lesson.type='live_class')
+                # - Tests (event_type='test')
+                # - Exams (event_type='exam')
+                # Exclude: projects, meetings, breaks, and non-live lessons
                 next_event = ClassEvent.objects.filter(
                     class_instance_id__in=class_ids,
-                    end_time__gt=current_time,
-                    event_type__in=['lesson', 'meeting']  # Only lesson and meeting events
+                    end_time__gt=current_time
+                ).filter(
+                    # Include tests and exams
+                    Q(event_type__in=['test', 'exam']) |
+                    # Include live lessons only (lesson.type == 'live_class')
+                    Q(event_type='lesson', lesson__type='live_class')
                 ).select_related(
                     'class_instance',
                     'class_instance__course',
