@@ -179,6 +179,181 @@ class SlackNotificationService:
         
         return blocks
     
+    def send_assessment_form_notification(self, assessment_submission):
+        """
+        Send notification for new assessment form submission
+        """
+        if not self.is_available():
+            print("Slack notifications not available")
+            return False
+        
+        try:
+            # Create the message
+            message = self._format_assessment_message(assessment_submission)
+            
+            # Send to Slack
+            response = self.client.chat_postMessage(
+                channel=self.channel,
+                text="New STEM Assessment Submission",
+                blocks=message
+            )
+            
+            print(f"Assessment form notification sent successfully: {response['ts']}")
+            return True
+            
+        except SlackApiError as e:
+            print(f"Error sending Slack notification: {e.response['error']}")
+            return False
+        except Exception as e:
+            print(f"Unexpected error sending Slack notification: {str(e)}")
+            return False
+    
+    def _format_assessment_message(self, submission):
+        """
+        Format assessment submission into Slack message blocks
+        """
+        # Format interest areas
+        interest_areas = ', '.join(submission.interest_areas) if submission.interest_areas else 'None'
+        
+        # Format device access
+        device_access = ', '.join(submission.device_access) if submission.device_access else 'None'
+        
+        # Format availability days
+        availability_days = ', '.join(submission.availability_days) if submission.availability_days else 'None'
+        
+        # Format coding experience
+        coding_experience = "Yes" if submission.has_coding_experience else "No"
+        coding_tools_display = submission.coding_tools if submission.coding_tools else "N/A"
+        
+        blocks = [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": f"🎓 New STEM Assessment Submission"
+                }
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Parent Name:*\n{submission.parent_name}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Contact:*\n{submission.parent_contact}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Email:*\n{submission.email}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Student Name:*\n{submission.student_name}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Student Age:*\n{submission.student_age} years"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*School Level:*\n{submission.school_level or 'Not specified'}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Location:*\n{submission.city_country or 'Not specified'}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Coding Experience:*\n{coding_experience}"
+                    }
+                ]
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Interest Areas:*\n{interest_areas}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Device Access:*\n{device_access}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Available Days:*\n{availability_days}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Preferred Time:*\n{submission.preferred_time_slots or 'Not specified'}"
+                    }
+                ]
+            }
+        ]
+        
+        # Add coding tools if they have experience
+        if submission.has_coding_experience and submission.coding_tools:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Coding Tools/Languages:*\n{submission.coding_tools}"
+                }
+            })
+        
+        # Add goals if provided
+        if submission.goals:
+            goals_text = submission.goals
+            if len(goals_text) > 500:
+                goals_text = goals_text[:500] + "..."
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Goals:*\n```{goals_text}```"
+                }
+            })
+        
+        # Add footer with actions
+        blocks.extend([
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"Submitted: {submission.created_at.strftime('%Y-%m-%d %H:%M:%S')} UTC | ID: {str(submission.id)[:8]}..."
+                    }
+                ]
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "View in Admin"
+                        },
+                        "url": f"{settings.ADMIN_URL}/admin/home/assessmentsubmission/{submission.id}/change/",
+                        "action_id": "view_admin"
+                    },
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "Contact Parent"
+                        },
+                        "url": f"mailto:{submission.email}?subject=STEM Assessment Follow-up",
+                        "action_id": "contact_parent"
+                    }
+                ]
+            }
+        ])
+        
+        return blocks
+    
     def send_system_notification(self, title, message, color="#36a64f"):
         """
         Send a general system notification
@@ -247,3 +422,10 @@ def send_system_notification(title, message, color="#36a64f"):
     Convenience function to send system notification
     """
     return slack_service.send_system_notification(title, message, color)
+
+
+def send_assessment_notification(assessment_submission):
+    """
+    Convenience function to send assessment form notification
+    """
+    return slack_service.send_assessment_form_notification(assessment_submission)

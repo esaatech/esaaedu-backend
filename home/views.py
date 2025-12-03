@@ -4,11 +4,11 @@ from rest_framework import status, permissions
 from rest_framework.decorators import api_view, permission_classes
 from django.db.models import Q, Avg
 from django.db import models
-from .models import ContactMethod, SupportTeamMember, FAQ, SupportHours, ContactSubmission
+from .models import ContactMethod, SupportTeamMember, FAQ, SupportHours, ContactSubmission, AssessmentSubmission
 from .serializers import (
     ContactMethodSerializer, SupportTeamMemberSerializer, FAQSerializer,
     SupportHoursSerializer, ContactSubmissionSerializer, ContactSubmissionCreateSerializer,
-    ContactOverviewSerializer
+    ContactOverviewSerializer, AssessmentSubmissionSerializer, AssessmentSubmissionCreateSerializer
 )
 from courses.models import CourseReview, Course
 
@@ -441,3 +441,103 @@ class LandingPageView(APIView):
         ).aggregate(avg_rating=Avg('rating'))['avg_rating']
         
         return round(float(avg_rating), 1) if avg_rating else 0.0
+
+
+class AssessmentSubmissionView(APIView):
+    """
+    Assessment Submission CBV - Handles STEM assessment form submissions
+    POST: Submit assessment form (public endpoint)
+    """
+    permission_classes = [permissions.AllowAny]  # Public endpoint
+    
+    def post(self, request):
+        """
+        POST: Submit assessment form
+        Validates and saves assessment form submission
+        """
+        try:
+            serializer = AssessmentSubmissionCreateSerializer(data=request.data)
+            
+            if serializer.is_valid():
+                # Save the assessment submission
+                assessment_submission = serializer.save()
+                
+                # Send Slack notification (optional)
+                try:
+                    from slack_notifications import send_assessment_notification
+                    send_assessment_notification(assessment_submission)
+                except Exception as e:
+                    print(f"Failed to send Slack notification: {str(e)}")
+                    # Don't fail the request if Slack notification fails
+                
+                # Return success response
+                response_serializer = AssessmentSubmissionSerializer(assessment_submission)
+                
+                return Response(
+                    {
+                        'success': True,
+                        'message': 'Thank you for your submission! Our team will contact you shortly.',
+                        'submission_id': str(assessment_submission.id)
+                    },
+                    status=status.HTTP_201_CREATED
+                )
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+            print(f"Assessment submission error: {error_details}")
+            return Response(
+                {
+                    'error': 'Failed to submit assessment form',
+                    'details': str(e),
+                    'traceback': error_details if settings.DEBUG else None
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AssessmentSubmissionListView(APIView):
+    """
+    Assessment Submissions List CBV - View all submissions (admin only)
+    GET: List all assessment submissions
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """GET: List all assessment submissions (admin only)"""
+        try:
+            if not request.user.is_staff:
+                return Response(
+                    {'error': 'Only admin users can view assessment submissions'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get query parameters for filtering
+            status_filter = request.query_params.get('status')
+            search = request.query_params.get('search')
+            
+            submissions = AssessmentSubmission.objects.all()
+            
+            # Apply filters
+            if status_filter:
+                submissions = submissions.filter(status=status_filter)
+            
+            if search:
+                submissions = submissions.filter(
+                    Q(parent_name__icontains=search) |
+                    Q(student_name__icontains=search) |
+                    Q(email__icontains=search)
+                )
+            
+            submissions = submissions.order_by('-created_at')
+            serializer = AssessmentSubmissionSerializer(submissions, many=True)
+            
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to retrieve assessment submissions', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

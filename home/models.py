@@ -185,3 +185,84 @@ class ContactSubmission(models.Model):
     @property
     def full_name(self):
         return f"{self.first_name} {self.last_name}"
+
+
+class AssessmentSubmission(models.Model):
+    """
+    STEM Assessment form submissions
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Parent/Guardian Information
+    parent_name = models.CharField(max_length=100)
+    parent_contact = models.CharField(max_length=20)
+    email = models.EmailField()
+    
+    # Student Information
+    student_name = models.CharField(max_length=100)
+    student_age = models.PositiveIntegerField(
+        validators=[MinValueValidator(3), MaxValueValidator(18)]
+    )
+    school_level = models.CharField(max_length=50, blank=True)
+    city_country = models.CharField(max_length=100, blank=True)
+    
+    # STEM Interest Areas (stored as JSON)
+    interest_areas = models.JSONField(
+        default=list,
+        help_text="List of selected STEM interest areas"
+    )
+    
+    # Coding Experience
+    has_coding_experience = models.BooleanField(default=False)
+    coding_tools = models.TextField(blank=True, help_text="Tools/languages used if has experience")
+    
+    # Device Access (stored as JSON)
+    device_access = models.JSONField(
+        default=list,
+        help_text="List of available devices"
+    )
+    
+    # Availability
+    availability_days = models.JSONField(
+        default=list,
+        help_text="List of available days of the week"
+    )
+    preferred_time_slots = models.CharField(max_length=100, blank=True)
+    
+    # Goals
+    goals = models.TextField(blank=True, help_text="What parent wants child to gain from program")
+    
+    # Status tracking
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ('new', 'New'),
+            ('contacted', 'Contacted'),
+            ('enrolled', 'Enrolled'),
+            ('not_interested', 'Not Interested'),
+            ('closed', 'Closed'),
+        ],
+        default='new'
+    )
+    
+    # Response tracking
+    response_notes = models.TextField(blank=True, help_text="Internal notes about follow-up")
+    contacted_at = models.DateTimeField(null=True, blank=True)
+    contacted_by = models.ForeignKey(
+        'users.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="User who contacted this submission"
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Assessment Submission"
+        verbose_name_plural = "Assessment Submissions"
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.parent_name} - {self.student_name} ({self.student_age} years)"

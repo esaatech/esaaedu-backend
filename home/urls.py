@@ -19,4 +19,10 @@ urlpatterns = [
     # Contact submissions management (admin only)
     path('contact/submissions/', views.ContactSubmissionView.as_view(), name='contact_submissions'),
     path('contact/submissions/<uuid:submission_id>/', views.ContactSubmissionView.as_view(), name='contact_submission_detail'),
+    
+    # Assessment form submission (public endpoint)
+    path('assessment/', views.AssessmentSubmissionView.as_view(), name='assessment_submission'),
+    
+    # Assessment submissions management (admin only)
+    path('assessment/submissions/', views.AssessmentSubmissionListView.as_view(), name='assessment_submissions_list'),
 ]

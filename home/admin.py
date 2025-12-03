@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import ContactMethod, SupportTeamMember, FAQ, SupportHours, ContactSubmission
+from .models import ContactMethod, SupportTeamMember, FAQ, SupportHours, ContactSubmission, AssessmentSubmission
 
 
 @admin.register(ContactMethod)
@@ -140,6 +140,70 @@ class ContactSubmissionAdmin(admin.ModelAdmin):
         updated = queryset.update(status='resolved')
         self.message_user(request, f'{updated} submissions marked as resolved.')
     mark_as_resolved.short_description = "Mark selected as resolved"
+    
+    def mark_as_closed(self, request, queryset):
+        updated = queryset.update(status='closed')
+        self.message_user(request, f'{updated} submissions marked as closed.')
+    mark_as_closed.short_description = "Mark selected as closed"
+
+
+@admin.register(AssessmentSubmission)
+class AssessmentSubmissionAdmin(admin.ModelAdmin):
+    list_display = ['parent_name', 'student_name', 'student_age', 'email', 'status', 'created_at', 'contacted_at']
+    list_filter = ['status', 'has_coding_experience', 'school_level', 'created_at']
+    search_fields = ['parent_name', 'student_name', 'email', 'city_country']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    date_hierarchy = 'created_at'
+    ordering = ['-created_at']
+    
+    fieldsets = (
+        ('Parent/Guardian Information', {
+            'fields': ('parent_name', 'parent_contact', 'email')
+        }),
+        ('Student Information', {
+            'fields': ('student_name', 'student_age', 'school_level', 'city_country')
+        }),
+        ('STEM Interests', {
+            'fields': ('interest_areas',)
+        }),
+        ('Coding Experience', {
+            'fields': ('has_coding_experience', 'coding_tools')
+        }),
+        ('Device Access', {
+            'fields': ('device_access',)
+        }),
+        ('Availability', {
+            'fields': ('availability_days', 'preferred_time_slots')
+        }),
+        ('Goals', {
+            'fields': ('goals',)
+        }),
+        ('Status & Response', {
+            'fields': ('status', 'response_notes', 'contacted_at', 'contacted_by')
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    actions = ['mark_as_contacted', 'mark_as_enrolled', 'mark_as_not_interested', 'mark_as_closed']
+    
+    def mark_as_contacted(self, request, queryset):
+        from django.utils import timezone
+        updated = queryset.update(status='contacted', contacted_at=timezone.now(), contacted_by=request.user)
+        self.message_user(request, f'{updated} submissions marked as contacted.')
+    mark_as_contacted.short_description = "Mark selected as contacted"
+    
+    def mark_as_enrolled(self, request, queryset):
+        updated = queryset.update(status='enrolled')
+        self.message_user(request, f'{updated} submissions marked as enrolled.')
+    mark_as_enrolled.short_description = "Mark selected as enrolled"
+    
+    def mark_as_not_interested(self, request, queryset):
+        updated = queryset.update(status='not_interested')
+        self.message_user(request, f'{updated} submissions marked as not interested.')
+    mark_as_not_interested.short_description = "Mark selected as not interested"
     
     def mark_as_closed(self, request, queryset):
         updated = queryset.update(status='closed')
