@@ -1522,6 +1522,7 @@ class ClassroomSerializer(serializers.ModelSerializer):
     active_session = serializers.SerializerMethodField()
     student_count = serializers.IntegerField(read_only=True)
     tldraw_board_url = serializers.SerializerMethodField()
+    teacher_settings = serializers.SerializerMethodField()
     
     class Meta:
         model = Classroom
@@ -1530,7 +1531,7 @@ class ClassroomSerializer(serializers.ModelSerializer):
             'video_enabled', 'ide_enabled', 'virtual_lab_enabled',
             'class_instance', 'is_session_active',
             'active_session', 'student_count', 'tldraw_board_url',
-            'created_at', 'updated_at'
+            'teacher_settings', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'room_code', 'created_at', 'updated_at']
     
@@ -1548,6 +1549,32 @@ class ClassroomSerializer(serializers.ModelSerializer):
     def get_tldraw_board_url(self, obj):
         """Get tldraw board URL (generates board ID on-demand if needed)"""
         return obj.get_tldraw_board_url()
+    
+    def get_teacher_settings(self, obj):
+        """Get teacher settings for tool URLs"""
+        try:
+            from settings.models import UserDashboardSettings, ClassroomToolDefaults
+            
+            teacher = obj.class_instance.teacher
+            if not teacher:
+                return None
+            
+            settings = UserDashboardSettings.get_or_create_settings(teacher)
+            app_defaults = ClassroomToolDefaults.get_or_create_defaults()
+            
+            return {
+                'whiteboard_url': settings.whiteboard_url or app_defaults.whiteboard_url,
+                'ide_url': settings.ide_url or app_defaults.ide_url,
+                'virtual_lab_url': settings.virtual_lab_url or app_defaults.virtual_lab_url,
+                'app_defaults': {
+                    'whiteboard_url': app_defaults.whiteboard_url,
+                    'ide_url': app_defaults.ide_url,
+                    'virtual_lab_url': app_defaults.virtual_lab_url,
+                }
+            }
+        except Exception as e:
+            # Return None if settings can't be retrieved - frontend will handle gracefully
+            return None
 
 
 class ClassroomCreateSerializer(serializers.ModelSerializer):
