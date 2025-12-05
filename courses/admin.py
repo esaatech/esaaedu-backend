@@ -30,7 +30,7 @@ class CourseAdmin(admin.ModelAdmin):
             'fields': ('title', 'description', 'long_description', 'teacher', 'category')
         }),
         ('Course Details', {
-            'fields': ('age_range', 'level', 'price', 'features')
+            'fields': ('age_range', 'level', 'required_computer_skills_level', 'price', 'features')
         }),
         ('Introduction/Detailed Info', {
             'fields': ('overview', 'learning_objectives', 'prerequisites_text', 

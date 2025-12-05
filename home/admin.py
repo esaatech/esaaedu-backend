@@ -150,7 +150,7 @@ class ContactSubmissionAdmin(admin.ModelAdmin):
 @admin.register(AssessmentSubmission)
 class AssessmentSubmissionAdmin(admin.ModelAdmin):
     list_display = ['parent_name', 'student_name', 'student_age', 'email', 'status', 'created_at', 'contacted_at']
-    list_filter = ['status', 'has_coding_experience', 'school_level', 'created_at']
+    list_filter = ['status', 'has_coding_experience', 'computer_skills_level', 'school_level', 'created_at']
     search_fields = ['parent_name', 'student_name', 'email', 'city_country']
     readonly_fields = ['id', 'created_at', 'updated_at']
     date_hierarchy = 'created_at'
@@ -168,6 +168,9 @@ class AssessmentSubmissionAdmin(admin.ModelAdmin):
         }),
         ('Coding Experience', {
             'fields': ('has_coding_experience', 'coding_tools')
+        }),
+        ('Computer Skills', {
+            'fields': ('computer_skills_level',)
         }),
         ('Device Access', {
             'fields': ('device_access',)

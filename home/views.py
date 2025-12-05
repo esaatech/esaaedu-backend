@@ -4,6 +4,7 @@ from rest_framework import status, permissions
 from rest_framework.decorators import api_view, permission_classes
 from django.db.models import Q, Avg
 from django.db import models
+from django.conf import settings
 from .models import ContactMethod, SupportTeamMember, FAQ, SupportHours, ContactSubmission, AssessmentSubmission
 from .serializers import (
     ContactMethodSerializer, SupportTeamMemberSerializer, FAQSerializer,
@@ -486,12 +487,21 @@ class AssessmentSubmissionView(APIView):
             
         except Exception as e:
             import traceback
+            import logging
+            logger = logging.getLogger(__name__)
             error_details = traceback.format_exc()
+            logger.error(f"Assessment submission error: {error_details}")
             print(f"Assessment submission error: {error_details}")
+            
+            # Check if it's a database error (likely migration not run)
+            error_message = str(e)
+            if 'no such column' in error_message.lower() or 'column' in error_message.lower() and 'does not exist' in error_message.lower():
+                error_message = "Database migration required. Please run: python manage.py migrate"
+            
             return Response(
                 {
                     'error': 'Failed to submit assessment form',
-                    'details': str(e),
+                    'details': error_message,
                     'traceback': error_details if settings.DEBUG else None
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

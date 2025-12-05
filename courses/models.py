@@ -59,6 +59,21 @@ class Course(models.Model):
     age_range = models.CharField(max_length=50, help_text="Target age range (e.g., 'Ages 6-10')")
     level = models.CharField(max_length=20, choices=LEVEL_CHOICES, default='beginner')
     
+    # Computer Skills Requirement (for course recommendations)
+    REQUIRED_COMPUTER_SKILLS_CHOICES = [
+        ('beginner', 'Beginner'),
+        ('intermediate', 'Intermediate'),
+        ('advanced', 'Advanced'),
+        ('any', 'Any Level'),
+    ]
+    required_computer_skills_level = models.CharField(
+        max_length=20,
+        choices=REQUIRED_COMPUTER_SKILLS_CHOICES,
+        default='any',
+        blank=True,
+        help_text="Required computer/technology experience level for this course. Used for assessment-based recommendations."
+    )
+    
     # Pricing & Features
     price = models.DecimalField(
         max_digits=10, 

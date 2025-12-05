@@ -216,6 +216,19 @@ class AssessmentSubmission(models.Model):
     has_coding_experience = models.BooleanField(default=False)
     coding_tools = models.TextField(blank=True, help_text="Tools/languages used if has experience")
     
+    # Computer Skills Level
+    COMPUTER_SKILLS_CHOICES = [
+        ('beginner', 'Beginner'),
+        ('intermediate', 'Intermediate'),
+        ('advanced', 'Advanced'),
+    ]
+    computer_skills_level = models.CharField(
+        max_length=20,
+        choices=COMPUTER_SKILLS_CHOICES,
+        blank=True,
+        help_text="Computer/technology experience level"
+    )
+    
     # Device Access (stored as JSON)
     device_access = models.JSONField(
         default=list,

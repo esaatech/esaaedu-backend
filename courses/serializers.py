@@ -603,7 +603,7 @@ class CourseListSerializer(serializers.ModelSerializer):
         model = Course
         fields = [
             'id', 'title', 'description', 'category', 'age_range', 'duration_weeks', 'duration', 
-            'level', 'price', 'featured', 'popular', 'color', 'icon',
+            'level', 'required_computer_skills_level', 'price', 'featured', 'popular', 'color', 'icon',
             'max_students', 'schedule', 'certificate', 'status',
             'teacher_name', 'total_lessons', 'enrolled_students_count', 'active_students_count',
             'created_at', 'updated_at'
@@ -644,7 +644,7 @@ class CourseDetailSerializer(serializers.ModelSerializer):
         fields = [
             # Basic course info
             'id', 'title', 'description', 'long_description', 'category',
-            'age_range', 'level', 'price', 'features',
+            'age_range', 'level', 'required_computer_skills_level', 'price', 'features',
             'featured', 'popular', 'color', 'icon', 'image', 'max_students',
             'schedule', 'certificate', 'status', 'teacher_name', 'teacher_id',
             
@@ -708,7 +708,7 @@ class CourseCreateUpdateSerializer(serializers.ModelSerializer):
         fields = [
             # Basic course info
             'title', 'description', 'long_description', 'category',
-            'age_range', 'level', 'price', 'is_free', 'features',
+            'age_range', 'level', 'required_computer_skills_level', 'price', 'is_free', 'features',
             'featured', 'popular', 'color', 'icon', 'image', 'max_students',
             'schedule', 'certificate', 'status',
             
@@ -742,13 +742,16 @@ class FrontendCourseSerializer(serializers.ModelSerializer):
     classSize = serializers.SerializerMethodField()
     age = serializers.CharField(source='age_range')
     longDescription = serializers.CharField(source='long_description')
+    category = serializers.CharField(read_only=False)  # Explicitly include category field
+    status = serializers.CharField(read_only=False)  # Explicitly include status field
+    age_range = serializers.CharField(read_only=False)  # Explicitly include age_range field
     
     class Meta:
         model = Course
         fields = [
             'id', 'icon', 'title', 'description', 'longDescription',
-            'age', 'duration_weeks', 'duration', 'level', 'color', 'projects', 'price',
-            'popular', 'featured', 'features', 'schedule', 'classSize', 'certificate'
+            'age', 'duration_weeks', 'duration', 'level', 'required_computer_skills_level', 'color', 'projects', 'price',
+            'popular', 'featured', 'features', 'schedule', 'classSize', 'certificate', 'status', 'category', 'age_range'
         ]
     
     def get_projects(self, obj):

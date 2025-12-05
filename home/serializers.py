@@ -150,6 +150,7 @@ class AssessmentSubmissionCreateSerializer(serializers.ModelSerializer):
             'parent_name', 'parent_contact', 'email',
             'student_name', 'student_age', 'school_level', 'city_country',
             'interest_areas', 'has_coding_experience', 'coding_tools',
+            'computer_skills_level',
             'device_access', 'availability_days', 'preferred_time_slots',
             'goals'
         ]
@@ -204,4 +205,12 @@ class AssessmentSubmissionCreateSerializer(serializers.ModelSerializer):
         """Validate availability days"""
         if not value or not isinstance(value, list) or len(value) == 0:
             raise serializers.ValidationError("Please select at least one day")
+        return value
+    
+    def validate_computer_skills_level(self, value):
+        """Validate computer skills level"""
+        if value is None or value == '':
+            return None
+        if value not in ['beginner', 'intermediate', 'advanced']:
+            raise serializers.ValidationError("Please select a valid computer skills level")
         return value
