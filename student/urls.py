@@ -57,6 +57,12 @@ urlpatterns = [
     path('parent/messages/<uuid:message_id>/read/', views.ParentMarkMessageReadView.as_view(), name='parent_mark_message_read'),
     path('parent/dashboard/messages/unread-count/', views.ParentUnreadCountView.as_view(), name='parent_unread_count'),
     
+    # Code Snippet URLs
+    path('code-snippets/', views.CodeSnippetListView.as_view(), name='code_snippet_list'),
+    path('code-snippets/create/', views.CodeSnippetCreateView.as_view(), name='code_snippet_create'),
+    path('code-snippets/<uuid:code_id>/', views.CodeSnippetDetailView.as_view(), name='code_snippet_detail'),
+    path('code-snippets/share/<str:share_token>/', views.CodeSnippetShareView.as_view(), name='code_snippet_share'),
+    
     # TODO: Add other student-related endpoints as needed
     # path('attendance/', views.student_attendance, name='student_attendance'),
     # path('attendance/<uuid:attendance_id>/', views.student_attendance_detail, name='student_attendance_detail'),

@@ -3,7 +3,7 @@ from .models import (
     EnrolledCourse, StudentAttendance, StudentGrade, StudentBehavior, 
     StudentNote, StudentCommunication, StudentLessonProgress,
     LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback,
-    Conversation, Message
+    Conversation, Message, CodeSnippet
 )
 
 
@@ -560,3 +560,60 @@ class MessageAdmin(admin.ModelAdmin):
         """Show first 50 characters of message content"""
         return obj.content[:50] + "..." if len(obj.content) > 50 else obj.content
     content_preview.short_description = 'Content Preview'
+
+
+@admin.register(CodeSnippet)
+class CodeSnippetAdmin(admin.ModelAdmin):
+    list_display = [
+        'id', 'student', 'title', 'language', 'is_shared', 
+        'created_at', 'updated_at', 'share_token'
+    ]
+    list_filter = [
+        'language', 'is_shared', 'created_at', 'updated_at'
+    ]
+    search_fields = [
+        'title', 'code', 'student__email', 'student__first_name', 
+        'student__last_name', 'share_token'
+    ]
+    readonly_fields = [
+        'id', 'share_token', 'share_url', 'created_at', 'updated_at'
+    ]
+    date_hierarchy = 'created_at'
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('student', 'title', 'language')
+        }),
+        ('Code Content', {
+            'fields': ('code',),
+            'classes': ('wide',)
+        }),
+        ('Sharing', {
+            'fields': ('is_shared', 'share_token', 'share_url')
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def share_url(self, obj):
+        """Display the shareable URL"""
+        if obj.is_shared and obj.share_token:
+            return obj.get_share_link()
+        return 'Not shared'
+    share_url.short_description = 'Share URL'
+    
+    actions = ['make_shared', 'make_private']
+    
+    def make_shared(self, request, queryset):
+        """Make selected snippets shareable"""
+        count = queryset.update(is_shared=True)
+        self.message_user(request, f'{count} code snippets are now shareable.')
+    make_shared.short_description = "Make selected snippets shareable"
+    
+    def make_private(self, request, queryset):
+        """Make selected snippets private"""
+        count = queryset.update(is_shared=False)
+        self.message_user(request, f'{count} code snippets are now private.')
+    make_private.short_description = "Make selected snippets private"

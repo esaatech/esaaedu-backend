@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 import uuid
+import secrets
 
 User = get_user_model()
 
@@ -1580,4 +1581,102 @@ class Message(models.Model):
     def is_read(self):
         """Check if message has been read"""
         return self.read_at is not None
+
+
+class CodeSnippet(models.Model):
+    """
+    Code snippets saved by students
+    Can be shared via unique link and submitted for assignments/tests/exams
+    Used by both students (to save/submit) and teachers (to view/grade)
+    """
+    LANGUAGE_CHOICES = [
+        ('python', 'Python'),
+        ('javascript', 'JavaScript'),
+        ('html', 'HTML'),
+        ('css', 'CSS'),
+        ('json', 'JSON'),
+        ('java', 'Java'),
+        ('cpp', 'C++'),
+        ('c', 'C'),
+        ('other', 'Other'),
+    ]
+    
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    student = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='code_snippets',
+        limit_choices_to={'role': 'student'},
+        help_text="Student who created this code snippet"
+    )
+    
+    # Code Content
+    title = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Optional title for the code snippet"
+    )
+    code = models.TextField(help_text="The actual code content")
+    language = models.CharField(
+        max_length=50,
+        choices=LANGUAGE_CHOICES,
+        default='python',
+        help_text="Programming language"
+    )
+    
+    # Sharing (default to True as requested)
+    is_shared = models.BooleanField(
+        default=True,
+        help_text="Whether this code snippet is shareable (default: True)"
+    )
+    share_token = models.CharField(
+        max_length=64,
+        unique=True,
+        null=True,
+        blank=True,
+        help_text="Unique token for sharing (auto-generated)"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'code_snippets'
+        ordering = ['-updated_at']
+        indexes = [
+            models.Index(fields=['student', '-updated_at']),
+            models.Index(fields=['share_token']),
+            models.Index(fields=['language']),
+            models.Index(fields=['is_shared']),
+        ]
+        verbose_name = "Code Snippet"
+        verbose_name_plural = "Code Snippets"
+    
+    def __str__(self):
+        title = self.title or f"Untitled {self.get_language_display()} Code"
+        return f"{self.student.get_full_name()} - {title}"
+    
+    def save(self, *args, **kwargs):
+        # Generate share_token if not set and is_shared is True
+        if self.is_shared and not self.share_token:
+            self.share_token = secrets.token_urlsafe(32)
+        # Remove share_token if is_shared is False
+        elif not self.is_shared and self.share_token:
+            self.share_token = None
+        super().save(*args, **kwargs)
+    
+    @property
+    def share_url(self):
+        """Get the shareable URL for this code snippet"""
+        if self.is_shared and self.share_token:
+            return f"/code/{self.share_token}"
+        return None
+    
+    def get_share_link(self, base_url=""):
+        """Get full shareable link with base URL"""
+        if self.share_url:
+            return f"{base_url}{self.share_url}"
+        return None
 

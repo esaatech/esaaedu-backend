@@ -4,7 +4,7 @@ from .models import (
     EnrolledCourse, StudentAttendance, StudentGrade, 
     StudentBehavior, StudentNote, StudentCommunication,
     QuizQuestionFeedback, QuizAttemptFeedback,
-    Conversation, Message
+    Conversation, Message, CodeSnippet
 )
 from courses.models import AssignmentSubmission
 
@@ -824,4 +824,84 @@ class CreateMessageSerializer(serializers.Serializer):
         if not value or not value.strip():
             raise serializers.ValidationError("Message content cannot be empty")
         return value.strip()
+
+
+# ===== CODE SNIPPET SERIALIZERS =====
+
+class CodeSnippetListSerializer(serializers.ModelSerializer):
+    """List view of code snippets"""
+    student_name = serializers.CharField(source='student.get_full_name', read_only=True)
+    share_url = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = CodeSnippet
+        fields = [
+            'id', 'student_name', 'title', 'language', 'code',
+            'is_shared', 'share_token', 'share_url',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'student_name', 'share_token', 'share_url', 'created_at', 'updated_at']
+    
+    def get_share_url(self, obj):
+        """Get shareable URL"""
+        request = self.context.get('request')
+        base_url = request.build_absolute_uri('/')[:-1] if request else ''
+        return obj.get_share_link(base_url)
+
+
+class CodeSnippetDetailSerializer(serializers.ModelSerializer):
+    """Detailed view of code snippet"""
+    student = BasicUserSerializer(read_only=True)
+    share_url = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = CodeSnippet
+        fields = [
+            'id', 'student', 'title', 'code', 'language',
+            'is_shared', 'share_token', 'share_url',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'student', 'share_token', 'share_url', 'created_at', 'updated_at']
+    
+    def get_share_url(self, obj):
+        """Get shareable URL"""
+        request = self.context.get('request')
+        base_url = request.build_absolute_uri('/')[:-1] if request else ''
+        return obj.get_share_link(base_url)
+
+
+class CodeSnippetCreateUpdateSerializer(serializers.ModelSerializer):
+    """Create/Update code snippet"""
+    
+    class Meta:
+        model = CodeSnippet
+        fields = [
+            'title', 'code', 'language', 'is_shared'
+        ]
+    
+    def validate_code(self, value):
+        """Validate code is not empty"""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Code cannot be empty")
+        return value.strip()
+    
+    def validate_language(self, value):
+        """Validate language is a valid choice"""
+        valid_languages = [choice[0] for choice in CodeSnippet.LANGUAGE_CHOICES]
+        if value not in valid_languages:
+            raise serializers.ValidationError(f"Language must be one of: {', '.join(valid_languages)}")
+        return value
+
+
+class CodeSnippetShareSerializer(serializers.ModelSerializer):
+    """Serializer for viewing shared code snippets (public access)"""
+    student_name = serializers.CharField(source='student.get_full_name', read_only=True)
+    
+    class Meta:
+        model = CodeSnippet
+        fields = [
+            'id', 'student_name', 'title', 'code', 'language',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = fields
 

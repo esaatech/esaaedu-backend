@@ -1,4 +1,5 @@
 from django.shortcuts import get_object_or_404
+from django.http import Http404
 from rest_framework import status, permissions
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
@@ -11,7 +12,7 @@ from django.db.models import Q, Count, Avg
 from datetime import datetime, timedelta
 import uuid
 
-from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback, Conversation, Message
+from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback, Conversation, Message, CodeSnippet
 from courses.models import Class, ClassEvent, Course, Lesson, Quiz, QuizAttempt, Question, Assignment, AssignmentSubmission, Classroom
 from settings.models import UserDashboardSettings
 from .serializers import (
@@ -37,7 +38,10 @@ from .serializers import (
     AssignmentSubmissionResponseSerializer,
     # Messaging Serializers
     ConversationListSerializer, ConversationSerializer,
-    MessageSerializer, CreateMessageSerializer
+    MessageSerializer, CreateMessageSerializer,
+    # Code Snippet Serializers
+    CodeSnippetListSerializer, CodeSnippetDetailSerializer,
+    CodeSnippetCreateUpdateSerializer, CodeSnippetShareSerializer
 )
 from users.models import StudentProfile
 
@@ -4462,4 +4466,236 @@ class StudentNextClassroomView(APIView):
             return Response(
                 {'error': 'Failed to get next classroom', 'details': str(e)},
                 status=http_status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ===== CODE SNIPPET VIEWS =====
+
+class CodeSnippetListView(APIView):
+    """
+    List all code snippets for the authenticated student
+    GET /api/student/code-snippets/
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get all code snippets for the current student"""
+        try:
+            # Only students can access their own code snippets
+            if request.user.role != 'student':
+                return Response(
+                    {'error': 'Only students can access code snippets'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            snippets = CodeSnippet.objects.filter(student=request.user)
+            
+            # Optional filtering
+            language = request.query_params.get('language', None)
+            if language:
+                snippets = snippets.filter(language=language)
+            
+            is_shared = request.query_params.get('is_shared', None)
+            if is_shared is not None:
+                is_shared_bool = is_shared.lower() == 'true'
+                snippets = snippets.filter(is_shared=is_shared_bool)
+            
+            serializer = CodeSnippetListSerializer(snippets, many=True, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch code snippets', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CodeSnippetDetailView(APIView):
+    """
+    Retrieve, update, or delete a code snippet
+    GET /api/student/code-snippets/<uuid:code_id>/
+    PUT /api/student/code-snippets/<uuid:code_id>/
+    PATCH /api/student/code-snippets/<uuid:code_id>/
+    DELETE /api/student/code-snippets/<uuid:code_id>/
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get_object(self, code_id, user):
+        """Get code snippet and verify ownership"""
+        try:
+            snippet = CodeSnippet.objects.get(id=code_id)
+            # Only the owner can access
+            if snippet.student != user:
+                raise PermissionError("You don't have permission to access this code snippet")
+            return snippet
+        except CodeSnippet.DoesNotExist:
+            raise Http404("Code snippet not found")
+    
+    def get(self, request, code_id):
+        """Retrieve a code snippet"""
+        try:
+            if request.user.role != 'student':
+                return Response(
+                    {'error': 'Only students can access code snippets'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            snippet = self.get_object(code_id, request.user)
+            serializer = CodeSnippetDetailSerializer(snippet, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except Http404 as e:
+            return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
+        except PermissionError as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch code snippet', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, code_id):
+        """Update a code snippet (full update)"""
+        try:
+            if request.user.role != 'student':
+                return Response(
+                    {'error': 'Only students can update code snippets'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            snippet = self.get_object(code_id, request.user)
+            serializer = CodeSnippetCreateUpdateSerializer(snippet, data=request.data)
+            
+            if serializer.is_valid():
+                serializer.save()
+                # Return full detail
+                detail_serializer = CodeSnippetDetailSerializer(snippet, context={'request': request})
+                return Response(detail_serializer.data, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Http404 as e:
+            return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
+        except PermissionError as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to update code snippet', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def patch(self, request, code_id):
+        """Partially update a code snippet"""
+        try:
+            if request.user.role != 'student':
+                return Response(
+                    {'error': 'Only students can update code snippets'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            snippet = self.get_object(code_id, request.user)
+            serializer = CodeSnippetCreateUpdateSerializer(snippet, data=request.data, partial=True)
+            
+            if serializer.is_valid():
+                serializer.save()
+                # Return full detail
+                detail_serializer = CodeSnippetDetailSerializer(snippet, context={'request': request})
+                return Response(detail_serializer.data, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Http404 as e:
+            return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
+        except PermissionError as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to update code snippet', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def delete(self, request, code_id):
+        """Delete a code snippet"""
+        try:
+            if request.user.role != 'student':
+                return Response(
+                    {'error': 'Only students can delete code snippets'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            snippet = self.get_object(code_id, request.user)
+            snippet.delete()
+            return Response(
+                {'message': 'Code snippet deleted successfully'},
+                status=status.HTTP_204_NO_CONTENT
+            )
+            
+        except Http404 as e:
+            return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)
+        except PermissionError as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to delete code snippet', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CodeSnippetCreateView(APIView):
+    """
+    Create a new code snippet
+    POST /api/student/code-snippets/
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        """Create a new code snippet"""
+        try:
+            if request.user.role != 'student':
+                return Response(
+                    {'error': 'Only students can create code snippets'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            serializer = CodeSnippetCreateUpdateSerializer(data=request.data)
+            
+            if serializer.is_valid():
+                # Set the student to the current user
+                snippet = serializer.save(student=request.user)
+                # Return full detail
+                detail_serializer = CodeSnippetDetailSerializer(snippet, context={'request': request})
+                return Response(detail_serializer.data, status=status.HTTP_201_CREATED)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to create code snippet', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CodeSnippetShareView(APIView):
+    """
+    View a shared code snippet by token (public access)
+    GET /api/student/code-snippets/share/<str:share_token>/
+    """
+    permission_classes = []  # Public access for shared snippets
+    
+    def get(self, request, share_token):
+        """Retrieve a shared code snippet by token"""
+        try:
+            snippet = CodeSnippet.objects.get(share_token=share_token, is_shared=True)
+            serializer = CodeSnippetShareSerializer(snippet, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except CodeSnippet.DoesNotExist:
+            return Response(
+                {'error': 'Code snippet not found or not shared'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch shared code snippet', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
