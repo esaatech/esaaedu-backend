@@ -4479,7 +4479,7 @@ class CodeSnippetListView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        """Get all code snippets for the current student"""
+        """Get all code snippets for the current student (including teacher snippets for their lessons)"""
         try:
             # Only students can access their own code snippets
             if request.user.role != 'student':
@@ -4488,7 +4488,29 @@ class CodeSnippetListView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
+            # Get student's own snippets
             snippets = CodeSnippet.objects.filter(student=request.user)
+            
+            # Also include teacher snippets for lessons the student is enrolled in
+            # Get student's enrolled courses and their lessons
+            enrolled_courses = EnrolledCourse.objects.filter(
+                student_profile__user=request.user,
+                status='active'
+            ).select_related('course')
+            
+            lesson_ids = []
+            for enrollment in enrolled_courses:
+                # Get all lessons for enrolled courses
+                course_lessons = Lesson.objects.filter(course=enrollment.course).values_list('id', flat=True)
+                lesson_ids.extend(course_lessons)
+            
+            # Add teacher snippets for student's lessons
+            if lesson_ids:
+                teacher_snippets = CodeSnippet.objects.filter(
+                    is_teacher_snippet=True,
+                    lesson__id__in=lesson_ids
+                )
+                snippets = snippets | teacher_snippets
             
             # Optional filtering
             language = request.query_params.get('language', None)
@@ -4499,6 +4521,16 @@ class CodeSnippetListView(APIView):
             if is_shared is not None:
                 is_shared_bool = is_shared.lower() == 'true'
                 snippets = snippets.filter(is_shared=is_shared_bool)
+            
+            # Filter by lesson if provided
+            lesson_id = request.query_params.get('lesson_id', None)
+            if lesson_id:
+                snippets = snippets.filter(
+                    Q(lesson__id=lesson_id) | Q(student=request.user, lesson__isnull=True)
+                )
+            
+            # Order by updated_at descending
+            snippets = snippets.order_by('-updated_at').distinct()
             
             serializer = CodeSnippetListSerializer(snippets, many=True, context={'request': request})
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -4534,9 +4566,9 @@ class CodeSnippetDetailView(APIView):
     def get(self, request, code_id):
         """Retrieve a code snippet"""
         try:
-            if request.user.role != 'student':
+            if request.user.role not in ['student', 'teacher']:
                 return Response(
-                    {'error': 'Only students can access code snippets'},
+                    {'error': 'Only students and teachers can access code snippets'},
                     status=status.HTTP_403_FORBIDDEN
                 )
             
@@ -4557,9 +4589,9 @@ class CodeSnippetDetailView(APIView):
     def put(self, request, code_id):
         """Update a code snippet (full update)"""
         try:
-            if request.user.role != 'student':
+            if request.user.role not in ['student', 'teacher']:
                 return Response(
-                    {'error': 'Only students can update code snippets'},
+                    {'error': 'Only students and teachers can update code snippets'},
                     status=status.HTTP_403_FORBIDDEN
                 )
             
@@ -4587,9 +4619,9 @@ class CodeSnippetDetailView(APIView):
     def patch(self, request, code_id):
         """Partially update a code snippet"""
         try:
-            if request.user.role != 'student':
+            if request.user.role not in ['student', 'teacher']:
                 return Response(
-                    {'error': 'Only students can update code snippets'},
+                    {'error': 'Only students and teachers can update code snippets'},
                     status=status.HTTP_403_FORBIDDEN
                 )
             
@@ -4617,9 +4649,9 @@ class CodeSnippetDetailView(APIView):
     def delete(self, request, code_id):
         """Delete a code snippet"""
         try:
-            if request.user.role != 'student':
+            if request.user.role not in ['student', 'teacher']:
                 return Response(
-                    {'error': 'Only students can delete code snippets'},
+                    {'error': 'Only students and teachers can delete code snippets'},
                     status=status.HTTP_403_FORBIDDEN
                 )
             
@@ -4649,19 +4681,22 @@ class CodeSnippetCreateView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request):
-        """Create a new code snippet"""
+        """Create a new code snippet (student or teacher)"""
         try:
-            if request.user.role != 'student':
+            if request.user.role not in ['student', 'teacher']:
                 return Response(
-                    {'error': 'Only students can create code snippets'},
+                    {'error': 'Only students and teachers can create code snippets'},
                     status=status.HTTP_403_FORBIDDEN
                 )
             
             serializer = CodeSnippetCreateUpdateSerializer(data=request.data)
             
             if serializer.is_valid():
-                # Set the student to the current user
-                snippet = serializer.save(student=request.user)
+                # Set student or teacher based on role
+                if request.user.role == 'student':
+                    snippet = serializer.save(student=request.user)
+                else:  # teacher
+                    snippet = serializer.save(teacher=request.user)
                 # Return full detail
                 detail_serializer = CodeSnippetDetailSerializer(snippet, context={'request': request})
                 return Response(detail_serializer.data, status=status.HTTP_201_CREATED)

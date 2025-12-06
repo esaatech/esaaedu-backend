@@ -1608,7 +1608,38 @@ class CodeSnippet(models.Model):
         on_delete=models.CASCADE,
         related_name='code_snippets',
         limit_choices_to={'role': 'student'},
-        help_text="Student who created this code snippet"
+        null=True,
+        blank=True,
+        help_text="Student who created this code snippet (null for teacher snippets)"
+    )
+    teacher = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='teacher_code_snippets',
+        limit_choices_to={'role': 'teacher'},
+        null=True,
+        blank=True,
+        help_text="Teacher who created this code snippet (for lesson examples)"
+    )
+    lesson = models.ForeignKey(
+        'courses.Lesson',
+        on_delete=models.CASCADE,
+        related_name='code_snippets',
+        null=True,
+        blank=True,
+        help_text="Lesson this snippet is associated with (for teacher snippets)"
+    )
+    class_instance = models.ForeignKey(
+        'courses.Class',
+        on_delete=models.CASCADE,
+        related_name='code_snippets',
+        null=True,
+        blank=True,
+        help_text="Class this snippet is associated with (optional)"
+    )
+    is_teacher_snippet = models.BooleanField(
+        default=False,
+        help_text="Whether this is a teacher-created snippet (visible to all students in the lesson)"
     )
     
     # Code Content
@@ -1659,6 +1690,12 @@ class CodeSnippet(models.Model):
         return f"{self.student.get_full_name()} - {title}"
     
     def save(self, *args, **kwargs):
+        # Set is_teacher_snippet based on teacher field
+        if self.teacher and not self.student:
+            self.is_teacher_snippet = True
+        elif self.student and not self.teacher:
+            self.is_teacher_snippet = False
+        
         # Generate share_token if not set and is_shared is True
         if self.is_shared and not self.share_token:
             self.share_token = secrets.token_urlsafe(32)
