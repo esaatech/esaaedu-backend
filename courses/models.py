@@ -1066,6 +1066,7 @@ class AssignmentQuestion(models.Model):
         ('matching', 'Matching'),
         ('ordering', 'Ordering/Ranking'),
         ('flashcard', 'Flashcard'),
+        ('code', 'Code'),
     ]
     
     # Basic Information
@@ -2658,6 +2659,7 @@ class CourseAssessmentQuestion(models.Model):
         ('essay', 'Essay'),
         ('matching', 'Matching'),
         ('ordering', 'Ordering/Ranking'),
+        ('code', 'Code'),
     ]
     
     # Basic Information

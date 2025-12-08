@@ -2255,6 +2255,13 @@ class CourseAssessmentQuestionCreateSerializer(serializers.ModelSerializer):
         """Validate question content based on type"""
         if not isinstance(value, dict):
             raise serializers.ValidationError("Content must be a JSON object")
+        
+        # Validate code question content
+        question_type = self.initial_data.get('type')
+        if question_type == 'code':
+            if 'language' not in value:
+                raise serializers.ValidationError("Code questions require 'language' field")
+        
         return value
 
 

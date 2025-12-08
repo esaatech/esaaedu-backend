@@ -332,6 +332,11 @@ class AssignmentQuestionSerializer(serializers.ModelSerializer):
             if 'options' not in value or 'correct_answer' not in value:
                 raise serializers.ValidationError("Multiple choice questions require 'options' and 'correct_answer'")
         
+        elif question_type == 'code':
+            # Code questions require language, starter_code and instructions are optional
+            if 'language' not in value:
+                raise serializers.ValidationError("Code questions require 'language' field")
+        
         elif question_type == 'true_false':
             if 'correct_answer' not in value:
                 raise serializers.ValidationError("True/False questions require 'correct_answer'")
