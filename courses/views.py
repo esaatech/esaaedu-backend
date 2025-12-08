@@ -88,11 +88,115 @@ def featured_courses(request):
         )
 
 
+def get_course_billing_data_helper(course):
+    """
+    Helper function to get comprehensive billing information for a course
+    Reusable across different views
+    """
+    try:
+        billing_product = getattr(course, 'billing_product', None)
+        if not billing_product:
+            return None
+        
+        # Calculate prices using existing logic
+        from .price_calculator import calculate_course_prices
+        prices = calculate_course_prices(float(course.price), getattr(course, 'duration_weeks', 8))
+        
+        # Get Stripe price IDs
+        one_time_price = billing_product.prices.filter(billing_period='one_time', is_active=True).first()
+        monthly_price = billing_product.prices.filter(billing_period='monthly', is_active=True).first()
+        
+        billing_data = {
+            "stripe_product_id": billing_product.stripe_product_id,
+            "pricing_options": {
+                "one_time": {
+                    "amount": prices['one_time_price'],
+                    "currency": "usd",
+                    "stripe_price_id": one_time_price.stripe_price_id if one_time_price else None,
+                    "savings": round(prices['monthly_total'] - prices['one_time_price'], 2) if prices['total_months'] > 1 else 0
+                }
+            },
+            "trial": {
+                "duration_days": 14,
+                "available": True,
+                "requires_payment_method": True
+            }
+        }
+        
+        # Add monthly option if available
+        if prices['total_months'] > 1 and monthly_price:
+            billing_data["pricing_options"]["monthly"] = {
+                "amount": prices['monthly_price'],
+                "currency": "usd",
+                "stripe_price_id": monthly_price.stripe_price_id,
+                "total_months": prices['total_months'],
+                "total_amount": prices['monthly_total']
+            }
+        
+        return billing_data
+        
+    except Exception as e:
+        print(f"Error getting billing data for course {course.id}: {e}")
+        return None
+
+
+def get_course_available_classes_data_helper(course):
+    """
+    Helper function to get available classes for a course
+    Reusable across different views
+    Uses the same logic as course_available_classes function
+    """
+    try:
+        # Get active classes for this course that have available spots
+        classes = Class.objects.filter(
+            course=course,
+            is_active=True
+        ).select_related('course', 'teacher').prefetch_related('students', 'sessions').order_by('name')
+        
+        # Filter classes with available spots
+        available_classes = []
+        for cls in classes:
+            if cls.student_count < cls.max_capacity:
+                # Get session information
+                sessions_info = []
+                for session in cls.sessions.filter(is_active=True).order_by('session_number'):
+                    sessions_info.append({
+                        'session_number': session.session_number,
+                        'day_of_week': session.day_of_week,
+                        'day_name': dict(ClassSession.DAY_CHOICES)[session.day_of_week],
+                        'start_time': session.start_time.strftime('%I:%M %p'),
+                        'end_time': session.end_time.strftime('%I:%M %p'),
+                        'formatted_schedule': session.formatted_schedule
+                    })
+                
+                available_classes.append({
+                    'id': str(cls.id),
+                    'name': cls.name,
+                    'description': cls.description,
+                    'max_capacity': cls.max_capacity,
+                    'student_count': cls.student_count,
+                    'course_id': str(cls.course.id),
+                    'course_title': cls.course.title,
+                    'sessions': sessions_info,
+                    'formatted_schedule': cls.formatted_schedule,
+                    'session_count': cls.session_count,
+                    'teacher_name': cls.teacher.get_full_name() or cls.teacher.email,
+                    'available_spots': cls.available_spots
+                })
+        
+        return available_classes
+        
+    except Exception as e:
+        print(f"Error getting available classes for course {course.title}: {e}")
+        return []
+
+
 @api_view(['GET'])
 @permission_classes([permissions.AllowAny])
 def public_courses_list(request):
     """
     Get all published courses for public viewing
+    Now includes available_classes and billing data for consistency with dashboard endpoint
     """
     try:
         courses = Course.objects.filter(status='published').select_related('teacher').order_by('-featured', '-created_at')
@@ -100,13 +204,34 @@ def public_courses_list(request):
         # Apply pagination
         paginator = CoursesPagination()
         page = paginator.paginate_queryset(courses, request)
+        courses_to_process = page if page is not None else courses
+        
+        # Build comprehensive course data with available_classes and billing
+        courses_data = []
+        for course in courses_to_process:
+            try:
+                # Get base course data from serializer
+                serializer = FrontendCourseSerializer(course)
+                course_data = serializer.data
+                
+                # Add available_classes and billing (same as recommended courses)
+                course_data['available_classes'] = get_course_available_classes_data_helper(course)
+                course_data['billing'] = get_course_billing_data_helper(course)
+                
+                courses_data.append(course_data)
+            except Exception as course_error:
+                print(f"ERROR processing course {course.title}: {course_error}")
+                # Still include the course but without classes/billing
+                serializer = FrontendCourseSerializer(course)
+                course_data = serializer.data
+                course_data['available_classes'] = []
+                course_data['billing'] = None
+                courses_data.append(course_data)
         
         if page is not None:
-            serializer = FrontendCourseSerializer(page, many=True)
-            return paginator.get_paginated_response(serializer.data)
+            return paginator.get_paginated_response(courses_data)
         
-        serializer = FrontendCourseSerializer(courses, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(courses_data, status=status.HTTP_200_OK)
         
     except Exception as e:
         return Response(
@@ -4252,104 +4377,16 @@ class StudentCourseDashboardView(APIView):
     def get_course_billing_data(self, course):
         """
         Get comprehensive billing information for a course
+        Uses the shared helper function
         """
-        try:
-            billing_product = getattr(course, 'billing_product', None)
-            if not billing_product:
-                return None
-            
-            # Calculate prices using existing logic
-            from .price_calculator import calculate_course_prices
-            prices = calculate_course_prices(float(course.price), getattr(course, 'duration_weeks', 8))
-            
-            # Get Stripe price IDs
-            one_time_price = billing_product.prices.filter(billing_period='one_time', is_active=True).first()
-            monthly_price = billing_product.prices.filter(billing_period='monthly', is_active=True).first()
-            
-            billing_data = {
-                "stripe_product_id": billing_product.stripe_product_id,
-                "pricing_options": {
-                    "one_time": {
-                        "amount": prices['one_time_price'],
-                        "currency": "usd",
-                        "stripe_price_id": one_time_price.stripe_price_id if one_time_price else None,
-                        "savings": round(prices['monthly_total'] - prices['one_time_price'], 2) if prices['total_months'] > 1 else 0
-                    }
-                },
-                "trial": {
-                    "duration_days": 14,
-                    "available": True,
-                    "requires_payment_method": True
-                }
-            }
-            
-            # Add monthly option if available
-            if prices['total_months'] > 1 and monthly_price:
-                billing_data["pricing_options"]["monthly"] = {
-                    "amount": prices['monthly_price'],
-                    "currency": "usd",
-                    "stripe_price_id": monthly_price.stripe_price_id,
-                    "total_months": prices['total_months'],
-                    "total_amount": prices['monthly_total']
-                }
-            
-            return billing_data
-            
-        except Exception as e:
-            print(f"Error getting billing data for course {course.id}: {e}")
-            return None
+        return get_course_billing_data_helper(course)
     
     def get_course_available_classes_data(self, course):
         """
         Get available classes for a course (eliminates separate API call)
-        Uses the same logic as course_available_classes function
+        Uses the shared helper function
         """
-        try:
-            from courses.models import Class, ClassSession
-            
-            # Get active classes for this course that have available spots
-            # Use the same logic as the working course_available_classes function
-            classes = Class.objects.filter(
-                course=course,
-                is_active=True
-            ).select_related('course', 'teacher').prefetch_related('students', 'sessions').order_by('name')
-            
-            # Filter classes with available spots
-            available_classes = []
-            for cls in classes:
-                if cls.student_count < cls.max_capacity:
-                    # Get session information
-                    sessions_info = []
-                    for session in cls.sessions.filter(is_active=True).order_by('session_number'):
-                        sessions_info.append({
-                            'session_number': session.session_number,
-                            'day_of_week': session.day_of_week,
-                            'day_name': dict(ClassSession.DAY_CHOICES)[session.day_of_week],
-                            'start_time': session.start_time.strftime('%I:%M %p'),
-                            'end_time': session.end_time.strftime('%I:%M %p'),
-                            'formatted_schedule': session.formatted_schedule
-                        })
-                    
-                    available_classes.append({
-                        'id': cls.id,
-                        'name': cls.name,
-                        'description': cls.description,
-                        'max_capacity': cls.max_capacity,
-                        'student_count': cls.student_count,
-                        'course_id': cls.course.id,
-                        'course_title': cls.course.title,
-                        'sessions': sessions_info,
-                        'formatted_schedule': cls.formatted_schedule,
-                        'session_count': cls.session_count,
-                        'teacher_name': cls.teacher.get_full_name() or cls.teacher.email,
-                        'available_spots': cls.available_spots
-                    })
-            
-            return available_classes
-            
-        except Exception as e:
-            print(f"Error getting available classes for course {course.title}: {e}")
-            return []
+        return get_course_available_classes_data_helper(course)
     
     def get_course_enrollment_status(self, course, user):
         """
