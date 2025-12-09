@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from student import views as student_views
 
 app_name = 'teacher'
 
@@ -22,6 +23,12 @@ urlpatterns = [
     path('assignments/<uuid:assignment_id>/grading/', views.AssignmentGradingView.as_view(), name='assignment_grading'),
     path('assignments/<uuid:assignment_id>/grading/<uuid:submission_id>/', views.AssignmentGradingView.as_view(), name='assignment_submission_grading'),
     path('assignments/<uuid:assignment_id>/grading/<uuid:submission_id>/ai-grade/', views.AssignmentAIGradingView.as_view(), name='assignment_ai_grading'),
+    
+    # Code Snippet URLs (for teacher Tools page)
+    path('code-snippets/', student_views.TeacherCodeSnippetListView.as_view(), name='teacher_code_snippet_list'),
+    path('code-snippets/create/', student_views.CodeSnippetCreateView.as_view(), name='teacher_code_snippet_create'),
+    path('code-snippets/<uuid:code_id>/', student_views.CodeSnippetDetailView.as_view(), name='teacher_code_snippet_detail'),
+    path('code-snippets/share/<str:share_token>/', student_views.CodeSnippetShareView.as_view(), name='teacher_code_snippet_share'),
     
     # AI Generation URLs
     path('courses/<uuid:course_id>/ai/generate-introduction/', views.AIGenerateCourseIntroductionView.as_view(), name='ai_generate_course_introduction'),

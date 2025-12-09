@@ -4505,10 +4505,16 @@ class CodeSnippetListView(APIView):
                 lesson_ids.extend(course_lessons)
             
             # Add teacher snippets for student's lessons
+            # IMPORTANT: Only include teacher snippets that have lesson or class_instance (class snippets)
+            # Teacher-only snippets (no lesson/class_instance) should NOT be visible to students
             if lesson_ids:
+                from django.db.models import Q
                 teacher_snippets = CodeSnippet.objects.filter(
                     is_teacher_snippet=True,
                     lesson__id__in=lesson_ids
+                ).filter(
+                    # Only include snippets that have lesson or class_instance (class snippets)
+                    Q(lesson__isnull=False) | Q(class_instance__isnull=False)
                 )
                 snippets = snippets | teacher_snippets
             
@@ -4556,9 +4562,16 @@ class CodeSnippetDetailView(APIView):
         """Get code snippet and verify ownership"""
         try:
             snippet = CodeSnippet.objects.get(id=code_id)
-            # Only the owner can access
-            if snippet.student != user:
-                raise PermissionError("You don't have permission to access this code snippet")
+            # Students can only access their own snippets
+            # Teachers can access their own snippets (both class and teacher-only)
+            if user.role == 'student':
+                if snippet.student != user:
+                    raise PermissionError("You don't have permission to access this code snippet")
+            elif user.role == 'teacher':
+                if snippet.teacher != user:
+                    raise PermissionError("You don't have permission to access this code snippet")
+            else:
+                raise PermissionError("Invalid user role")
             return snippet
         except CodeSnippet.DoesNotExist:
             raise Http404("Code snippet not found")
@@ -4706,6 +4719,115 @@ class CodeSnippetCreateView(APIView):
         except Exception as e:
             return Response(
                 {'error': 'Failed to create code snippet', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class TeacherCodeSnippetListView(APIView):
+    """
+    List all code snippets for the authenticated teacher
+    GET /api/teacher/code-snippets/
+    Shows both class snippets (with lesson/class_instance) and teacher-only snippets
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get all code snippets for the current teacher"""
+        try:
+            # Only teachers can access their code snippets
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can access teacher code snippets'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get teacher's own snippets (both class snippets and teacher-only)
+            snippets = CodeSnippet.objects.filter(
+                teacher=request.user,
+                is_teacher_snippet=True
+            )
+            
+            # Optional filtering
+            language = request.query_params.get('language', None)
+            if language:
+                snippets = snippets.filter(language=language)
+            
+            is_shared = request.query_params.get('is_shared', None)
+            if is_shared is not None:
+                is_shared_bool = is_shared.lower() == 'true'
+                snippets = snippets.filter(is_shared=is_shared_bool)
+            
+            # Filter by class_only: if True, only show snippets with lesson/class_instance
+            class_only = request.query_params.get('class_only', None)
+            if class_only is not None and class_only.lower() == 'true':
+                from django.db.models import Q
+                snippets = snippets.filter(
+                    Q(lesson__isnull=False) | Q(class_instance__isnull=False)
+                )
+            
+            # Order by updated_at descending
+            snippets = snippets.order_by('-updated_at').distinct()
+            
+            serializer = CodeSnippetListSerializer(snippets, many=True, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch code snippets', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class TeacherCodeSnippetListView(APIView):
+    """
+    List all code snippets for the authenticated teacher
+    GET /api/teacher/code-snippets/
+    Shows both class snippets (with lesson/class_instance) and teacher-only snippets
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get all code snippets for the current teacher"""
+        try:
+            # Only teachers can access their code snippets
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can access teacher code snippets'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get teacher's own snippets (both class snippets and teacher-only)
+            snippets = CodeSnippet.objects.filter(
+                teacher=request.user,
+                is_teacher_snippet=True
+            )
+            
+            # Optional filtering
+            language = request.query_params.get('language', None)
+            if language:
+                snippets = snippets.filter(language=language)
+            
+            is_shared = request.query_params.get('is_shared', None)
+            if is_shared is not None:
+                is_shared_bool = is_shared.lower() == 'true'
+                snippets = snippets.filter(is_shared=is_shared_bool)
+            
+            # Filter by class_only: if True, only show snippets with lesson/class_instance
+            class_only = request.query_params.get('class_only', None)
+            if class_only is not None and class_only.lower() == 'true':
+                snippets = snippets.filter(
+                    Q(lesson__isnull=False) | Q(class_instance__isnull=False)
+                )
+            
+            # Order by updated_at descending
+            snippets = snippets.order_by('-updated_at').distinct()
+            
+            serializer = CodeSnippetListSerializer(snippets, many=True, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch code snippets', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
