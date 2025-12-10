@@ -141,11 +141,17 @@ class Course(models.Model):
         default="Code",
         help_text="Lucide icon name for course"
     )
-    image = models.ImageField(
-        upload_to='course_images/',
+    image = models.URLField(
         blank=True,
         null=True,
-        help_text="Course cover image (optional)"
+        max_length=500,
+        help_text="Course cover image URL (optional, uploaded to GCS)"
+    )
+    thumbnail = models.URLField(
+        blank=True,
+        null=True,
+        max_length=500,
+        help_text="Course thumbnail image URL (optional, auto-generated)"
     )
     
     # Course Management

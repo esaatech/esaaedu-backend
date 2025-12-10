@@ -3242,6 +3242,187 @@ class AudioVideoUploadView(APIView):
             )
 
 
+class CourseImageUploadView(APIView):
+    """
+    API view for uploading course images to Google Cloud Storage.
+    Handles image upload, compression, thumbnail generation, and returns both URLs.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        """
+        Upload a course image to GCS, compress it, generate thumbnail, and return both URLs.
+        
+        Expected request:
+        - image: Image file (JPEG, PNG, WebP)
+        
+        Returns:
+        - image_url: GCS URL for full-size compressed image
+        - thumbnail_url: GCS URL for thumbnail
+        - file_size: Size in bytes (after compression)
+        - file_size_mb: Size in MB
+        - file_extension: File extension
+        - original_filename: Original filename
+        - message: Success message
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can upload course images'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Get uploaded image
+            uploaded_image = request.FILES.get('image')
+            if not uploaded_image:
+                return Response(
+                    {'error': 'No image provided'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Validate file size (max 10MB)
+            max_size = 10 * 1024 * 1024  # 10MB in bytes
+            if uploaded_image.size > max_size:
+                return Response(
+                    {'error': f'Image size exceeds maximum allowed size of 10MB. File size: {round(uploaded_image.size / (1024 * 1024), 2)}MB'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Validate file extension
+            original_filename = uploaded_image.name
+            file_extension = original_filename.split('.')[-1].lower() if '.' in original_filename else ''
+            allowed_extensions = ['jpg', 'jpeg', 'png', 'webp']
+            
+            if file_extension not in allowed_extensions:
+                return Response(
+                    {'error': f'Image extension "{file_extension}" not allowed. Allowed extensions: {", ".join(allowed_extensions)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Check if GCS is configured
+            from django.core.files.storage import default_storage
+            from django.conf import settings
+            from django.core.files.base import ContentFile
+            from PIL import Image
+            from io import BytesIO
+            import uuid
+            
+            if not hasattr(settings, 'GS_BUCKET_NAME') or not settings.GS_BUCKET_NAME:
+                return Response(
+                    {'error': 'Google Cloud Storage is not configured. Please set GCS_BUCKET_NAME and GCS_PROJECT_ID environment variables.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            try:
+                # Process image with Pillow
+                img = Image.open(uploaded_image)
+                
+                # Convert RGBA/LA/P to RGB if needed
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    # Create white background for transparent images
+                    background = Image.new('RGB', img.size, (255, 255, 255))
+                    if img.mode == 'P':
+                        img = img.convert('RGBA')
+                    if img.mode == 'RGBA':
+                        background.paste(img, mask=img.split()[-1])
+                    else:
+                        background.paste(img)
+                    img = background
+                elif img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                # Resize full image to max 1920x1920 (maintains aspect ratio)
+                max_size_full = (1920, 1920)
+                img.thumbnail(max_size_full, Image.Resampling.LANCZOS)
+                
+                # Compress and save full image
+                full_output = BytesIO()
+                img.save(
+                    full_output,
+                    format='JPEG',
+                    quality=85,
+                    optimize=True,
+                    progressive=True
+                )
+                full_output.seek(0)
+                
+                # Generate thumbnail (400x400)
+                img_thumb = img.copy()
+                img_thumb.thumbnail((400, 400), Image.Resampling.LANCZOS)
+                
+                # Compress and save thumbnail
+                thumb_output = BytesIO()
+                img_thumb.save(
+                    thumb_output,
+                    format='JPEG',
+                    quality=85,
+                    optimize=True,
+                    progressive=True
+                )
+                thumb_output.seek(0)
+                
+                # Generate unique filenames
+                unique_id = uuid.uuid4()
+                base_name = original_filename.rsplit('.', 1)[0] if '.' in original_filename else 'image'
+                # Sanitize base name
+                base_name = ''.join(c for c in base_name if c.isalnum() or c in (' ', '-', '_')).strip()[:50]
+                
+                full_filename = f"{unique_id}-{base_name}.jpg"
+                thumb_filename = f"{unique_id}-{base_name}-thumb.jpg"
+                
+                full_storage_path = f"course_images/{full_filename}"
+                thumb_storage_path = f"course_images/thumbnails/{thumb_filename}"
+                
+                # Upload full image to GCS
+                full_file = ContentFile(full_output.getvalue())
+                saved_full_path = default_storage.save(full_storage_path, full_file)
+                full_url = default_storage.url(saved_full_path)
+                if not full_url.startswith('http'):
+                    full_url = f"https://storage.googleapis.com/{settings.GS_BUCKET_NAME}/{saved_full_path}"
+                
+                # Upload thumbnail to GCS
+                thumb_file = ContentFile(thumb_output.getvalue())
+                saved_thumb_path = default_storage.save(thumb_storage_path, thumb_file)
+                thumb_url = default_storage.url(saved_thumb_path)
+                if not thumb_url.startswith('http'):
+                    thumb_url = f"https://storage.googleapis.com/{settings.GS_BUCKET_NAME}/{saved_thumb_path}"
+                
+                # Get compressed file sizes
+                full_size = len(full_output.getvalue())
+                thumb_size = len(thumb_output.getvalue())
+                
+                logger.info(f"Course image uploaded successfully: {saved_full_path}, thumbnail: {saved_thumb_path}")
+                
+                # Return success response
+                return Response({
+                    'image_url': full_url,
+                    'thumbnail_url': thumb_url,
+                    'file_size': full_size,
+                    'file_size_mb': round(full_size / (1024 * 1024), 2),
+                    'file_extension': 'jpg',
+                    'original_filename': original_filename,
+                    'message': 'Course image uploaded and compressed successfully'
+                }, status=status.HTTP_201_CREATED)
+                
+            except Exception as e:
+                logger.error(f"Error processing/uploading course image: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return Response(
+                    {'error': f'Failed to process/upload image: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in course image upload: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Error during image upload: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 class AIGenerateQuizView(APIView):
     """
     REST API endpoint for generating quizzes using AI from lesson materials.

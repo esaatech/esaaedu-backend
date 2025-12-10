@@ -709,7 +709,7 @@ class CourseCreateUpdateSerializer(serializers.ModelSerializer):
             # Basic course info
             'title', 'description', 'long_description', 'category',
             'age_range', 'level', 'required_computer_skills_level', 'price', 'is_free', 'features',
-            'featured', 'popular', 'color', 'icon', 'image', 'max_students',
+            'featured', 'popular', 'color', 'icon', 'image', 'thumbnail', 'max_students',
             'schedule', 'certificate', 'status',
             
             # Introduction/detailed info
@@ -730,6 +730,119 @@ class CourseCreateUpdateSerializer(serializers.ModelSerializer):
     
     def validate(self, data):
         return data
+    
+    def update(self, instance, validated_data):
+        """
+        Update course and handle image deletion from GCS when image is replaced or removed.
+        """
+        from django.core.files.storage import default_storage
+        from django.conf import settings
+        from urllib.parse import urlparse
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        # Get old image URLs from database BEFORE update
+        # This is critical - we need the original values from the database
+        old_image_url = instance.image
+        old_thumbnail_url = instance.thumbnail
+        
+        # Get new image URLs from validated data
+        # Note: With partial=True, if field is not in request.data, it won't be in validated_data
+        # So we need to check if 'image' key exists in validated_data to know if it's being updated
+        new_image_url = validated_data.get('image')
+        new_thumbnail_url = validated_data.get('thumbnail')
+        
+        # Check if image field is being updated
+        image_key_in_data = 'image' in validated_data
+        thumbnail_key_in_data = 'thumbnail' in validated_data
+        
+        # Determine if we need to delete old images:
+        # Case 1: Image is being replaced (new URL is different from old)
+        # Case 2: Image is being removed (new URL is None but old exists)
+        # We only delete if:
+        # - Old image exists in database
+        # - AND image field is in the update (image_key_in_data)
+        # - AND (new URL is different OR new URL is None)
+        should_delete_old_image = (
+            old_image_url is not None and  # Old image exists in database
+            image_key_in_data and  # Image field is being updated
+            (
+                new_image_url != old_image_url  # Being replaced with different URL OR removed (None)
+            )
+        )
+        
+        should_delete_old_thumbnail = (
+            old_thumbnail_url is not None and  # Old thumbnail exists in database
+            thumbnail_key_in_data and  # Thumbnail field is being updated
+            (
+                new_thumbnail_url != old_thumbnail_url  # Being replaced with different URL OR removed (None)
+            )
+        )
+        
+        def extract_file_path_from_url(url):
+            """
+            Extract file path from GCS URL.
+            URL format: https://storage.googleapis.com/BUCKET_NAME/path/to/file
+            Returns: path/to/file (relative to bucket root)
+            """
+            if not url:
+                return None
+            
+            try:
+                if 'storage.googleapis.com' in url:
+                    # Parse URL: https://storage.googleapis.com/bucket-name/path/to/file
+                    parsed_url = urlparse(url)
+                    path_parts = parsed_url.path.split('/', 2)
+                    if len(path_parts) >= 3:
+                        # Get everything after /bucket-name/
+                        return path_parts[2]
+                    else:
+                        # Fallback: try to extract from full path
+                        if 'course_images/' in url:
+                            return url.split('course_images/', 1)[1]
+                        return None
+                else:
+                    # If not a full URL, assume it's already a path
+                    return url
+            except Exception as e:
+                logger.warning(f"Error extracting file path from URL {url}: {e}")
+                return None
+        
+        # Delete old image if it exists and is being replaced/removed
+        if should_delete_old_image:
+            try:
+                file_path = extract_file_path_from_url(old_image_url)
+                logger.info(f"Deleting old course image from GCS: {file_path} (old URL: {old_image_url}, new URL: {new_image_url})")
+                if file_path:
+                    if default_storage.exists(file_path):
+                        default_storage.delete(file_path)
+                        logger.info(f"✅ Successfully deleted old course image from GCS: {file_path}")
+                    else:
+                        logger.warning(f"⚠️ Course image file not found in GCS: {file_path}")
+                else:
+                    logger.warning(f"⚠️ Could not extract file path from URL: {old_image_url}")
+            except Exception as e:
+                logger.error(f"❌ Error deleting old course image from GCS: {e}", exc_info=True)
+        
+        # Delete old thumbnail if it exists and is being replaced/removed
+        if should_delete_old_thumbnail:
+            try:
+                thumb_path = extract_file_path_from_url(old_thumbnail_url)
+                logger.info(f"Deleting old course thumbnail from GCS: {thumb_path} (old URL: {old_thumbnail_url}, new URL: {new_thumbnail_url})")
+                if thumb_path:
+                    if default_storage.exists(thumb_path):
+                        default_storage.delete(thumb_path)
+                        logger.info(f"✅ Successfully deleted old course thumbnail from GCS: {thumb_path}")
+                    else:
+                        logger.warning(f"⚠️ Course thumbnail file not found in GCS: {thumb_path}")
+                else:
+                    logger.warning(f"⚠️ Could not extract file path from URL: {old_thumbnail_url}")
+            except Exception as e:
+                logger.error(f"❌ Error deleting old course thumbnail from GCS: {e}", exc_info=True)
+        
+        # Call parent update method
+        return super().update(instance, validated_data)
 
 
 # Frontend-compatible serializers (matching existing data structure)
