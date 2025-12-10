@@ -1,5 +1,7 @@
 from django.contrib import admin
+from django.contrib import messages
 from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, Note, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage
+from .views import delete_course_with_cleanup
 
 
 @admin.register(Course)
@@ -48,6 +50,30 @@ class CourseAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+    
+    def delete_model(self, request, obj):
+        """
+        Override delete_model to use the shared cleanup function.
+        This ensures admins use the same deletion logic as API endpoints,
+        preventing orphaned data in GCS and Stripe.
+        Admins can delete courses with enrollments (skip_enrollment_check=True).
+        """
+        result = delete_course_with_cleanup(obj, skip_enrollment_check=True)
+        
+        if result['success']:
+            self.message_user(
+                request,
+                f'Course "{result["course_title"]}" and all related data deleted successfully.',
+                messages.SUCCESS
+            )
+        else:
+            self.message_user(
+                request,
+                f'Failed to delete course: {result.get("error", "Unknown error")}',
+                messages.ERROR
+            )
+            # Raise exception to prevent Django admin from proceeding with default delete
+            raise Exception(result.get('error', 'Failed to delete course'))
 
 
 @admin.register(Lesson)

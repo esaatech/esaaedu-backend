@@ -36,6 +36,150 @@ from .serializers import (
 )
 
 
+def delete_course_with_cleanup(course, skip_enrollment_check=False):
+    """
+    Comprehensive course deletion function that handles all cleanup operations.
+    This is the single source of truth for course deletion to prevent orphaned data.
+    
+    Args:
+        course: Course instance to delete
+        skip_enrollment_check: If True, skip enrollment check (for admin deletions)
+    
+    Returns:
+        dict: {
+            'success': bool,
+            'error': str (if failed),
+            'enrollment_count': int (if blocked by enrollments)
+        }
+    """
+    from django.core.files.storage import default_storage
+    from urllib.parse import urlparse, unquote
+    from student.models import EnrolledCourse
+    
+    try:
+        # Check enrollments unless skipped (for admin)
+        if not skip_enrollment_check:
+            enrollment_count = EnrolledCourse.objects.filter(course=course).count()
+            if enrollment_count > 0:
+                return {
+                    'success': False,
+                    'error': f'Cannot delete course with {enrollment_count} active enrollments. Please contact admin.',
+                    'enrollment_count': enrollment_count
+                }
+        
+        # Store course data for logging
+        course_id = str(course.id)
+        course_title = course.title
+        
+        # Store image URLs before deletion (for GCS cleanup)
+        image_url = course.image
+        thumbnail_url = course.thumbnail
+        
+        # Delete Stripe product if it exists
+        if hasattr(course, 'stripe_product_id') and course.stripe_product_id:
+            try:
+                from .stripe_integration import delete_stripe_product
+                stripe_result = delete_stripe_product(course.stripe_product_id)
+                if stripe_result['success']:
+                    logger.info(f"✅ Successfully deleted Stripe product {course.stripe_product_id} for course {course_id}")
+                else:
+                    logger.warning(f"⚠️ Stripe product deletion failed for course {course_id}: {stripe_result.get('error', 'Unknown error')}")
+            except Exception as e:
+                logger.error(f"❌ Error deleting Stripe product for course {course_id}: {e}", exc_info=True)
+                # Don't fail course deletion if Stripe deletion fails
+        
+        # Helper function to extract file path from GCS URL
+        def extract_file_path_from_url(url):
+            """
+            Extract file path from GCS URL and URL-decode it.
+            URL format: https://storage.googleapis.com/BUCKET_NAME/path/to/file?query=param
+            Returns: path/to/file (relative to bucket root, decoded)
+            """
+            if not url:
+                return None
+            
+            try:
+                parsed_url = urlparse(url)
+                path = parsed_url.path
+                
+                if 'storage.googleapis.com' in url:
+                    # Path will be /bucket-name/path/to/file
+                    path_parts = path.split('/', 2)
+                    if len(path_parts) >= 3:
+                        file_path = path_parts[2]  # Get everything after /bucket-name/
+                        return unquote(file_path)  # URL-decode the path
+                    else:
+                        logger.warning(f"Could not parse GCS URL path for: {url}")
+                        return None
+                else:
+                    # If not a full GCS URL, assume it's already a relative path
+                    return unquote(path.lstrip('/'))  # Ensure leading slash is removed and decode
+            except Exception as e:
+                logger.warning(f"Error extracting and decoding file path from URL {url}: {e}")
+                return None
+        
+        # Delete course image from GCS if it exists
+        if image_url:
+            try:
+                file_path = extract_file_path_from_url(image_url)
+                logger.info(f"Attempting to delete course image from GCS: {file_path} (from URL: {image_url})")
+                if file_path:
+                    if default_storage.exists(file_path):
+                        default_storage.delete(file_path)
+                        logger.info(f"✅ Successfully deleted course image from GCS: {file_path}")
+                    else:
+                        logger.warning(f"⚠️ Course image file not found in GCS: {file_path}")
+                else:
+                    logger.warning(f"⚠️ Could not extract file path from URL: {image_url}")
+            except Exception as e:
+                logger.error(f"❌ Error deleting course image from GCS: {e}", exc_info=True)
+                # Don't fail course deletion if image deletion fails
+        
+        # Delete course thumbnail from GCS if it exists
+        if thumbnail_url:
+            try:
+                thumb_path = extract_file_path_from_url(thumbnail_url)
+                logger.info(f"Attempting to delete course thumbnail from GCS: {thumb_path} (from URL: {thumbnail_url})")
+                if thumb_path:
+                    if default_storage.exists(thumb_path):
+                        default_storage.delete(thumb_path)
+                        logger.info(f"✅ Successfully deleted course thumbnail from GCS: {thumb_path}")
+                    else:
+                        logger.warning(f"⚠️ Course thumbnail file not found in GCS: {thumb_path}")
+                else:
+                    logger.warning(f"⚠️ Could not extract file path from URL: {thumbnail_url}")
+            except Exception as e:
+                logger.error(f"❌ Error deleting course thumbnail from GCS: {e}", exc_info=True)
+                # Don't fail course deletion if thumbnail deletion fails
+        
+        # Delete the course (this triggers all CASCADE deletes)
+        # All related data will be automatically deleted:
+        # - Lessons → Quizzes, Assignments, LessonMaterials
+        # - Quiz → Questions, QuizAttempts
+        # - Assignment → AssignmentQuestions, AssignmentSubmissions
+        # - Project → ProjectSubmissions
+        # - LessonMaterial → BookPages, VideoMaterial, DocumentMaterial, AudioVideoMaterial
+        # - EnrolledCourse → StudentLessonProgress, TeacherLessonAssessment, TeacherAssessment
+        # - Class → ClassSession, ClassEvent, Classroom → Board → BoardPages
+        # - CourseReview, Note, CourseAssessment → CourseAssessmentQuestions
+        logger.info(f"🗑️ Deleting course {course_id} ({course_title}) and all related data...")
+        course.delete()
+        logger.info(f"✅ Successfully deleted course {course_id} ({course_title}) and all related data")
+        
+        return {
+            'success': True,
+            'course_id': course_id,
+            'course_title': course_title
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error in delete_course_with_cleanup for course {course.id}: {e}", exc_info=True)
+        return {
+            'success': False,
+            'error': f'Failed to delete course: {str(e)}'
+        }
+
+
 
 
 
@@ -655,107 +799,27 @@ class CourseCreationView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Check if course has enrollments
-            from student.models import EnrolledCourse
-            enrollment_count = EnrolledCourse.objects.filter(course=course).count()
+            # Use shared cleanup function (single source of truth)
+            result = delete_course_with_cleanup(course, skip_enrollment_check=False)
             
-            if enrollment_count > 0:
-                return Response(
-                    {'error': f'Cannot delete course with {enrollment_count} active enrollments. Please contact admin.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            if not result['success']:
+                if 'enrollment_count' in result:
+                    return Response(
+                        {'error': result['error']},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                else:
+                    return Response(
+                        {'error': result['error']},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
             
             # Store course data for response
             course_data = {
-                'id': str(course.id),
-                'title': course.title,
+                'id': result['course_id'],
+                'title': result['course_title'],
                 'teacher': course.teacher.email
             }
-            
-            # Store image URLs before deletion (for GCS cleanup)
-            image_url = course.image
-            thumbnail_url = course.thumbnail
-            
-            # Delete Stripe product if it exists
-            if hasattr(course, 'stripe_product_id') and course.stripe_product_id:
-                from .stripe_integration import delete_stripe_product
-                stripe_result = delete_stripe_product(course.stripe_product_id)
-                
-                if not stripe_result['success']:
-                    print(f"Warning: Stripe product deletion failed: {stripe_result['error']}")
-            
-            # Delete course images from GCS before deleting the course
-            from django.core.files.storage import default_storage
-            from urllib.parse import urlparse, unquote
-            import logging
-            
-            logger = logging.getLogger(__name__)
-            
-            def extract_file_path_from_url(url):
-                """
-                Extract file path from GCS URL and URL-decode it.
-                URL format: https://storage.googleapis.com/BUCKET_NAME/path/to/file?query=param
-                Returns: path/to/file (relative to bucket root, decoded)
-                """
-                if not url:
-                    return None
-                
-                try:
-                    parsed_url = urlparse(url)
-                    path = parsed_url.path
-                    
-                    if 'storage.googleapis.com' in url:
-                        # Path will be /bucket-name/path/to/file
-                        path_parts = path.split('/', 2)
-                        if len(path_parts) >= 3:
-                            file_path = path_parts[2]  # Get everything after /bucket-name/
-                            return unquote(file_path)  # URL-decode the path
-                        else:
-                            logger.warning(f"Could not parse GCS URL path for: {url}")
-                            return None
-                    else:
-                        # If not a full GCS URL, assume it's already a relative path
-                        return unquote(path.lstrip('/'))  # Ensure leading slash is removed and decode
-                except Exception as e:
-                    logger.warning(f"Error extracting and decoding file path from URL {url}: {e}")
-                    return None
-            
-            # Delete course image from GCS if it exists
-            if image_url:
-                try:
-                    file_path = extract_file_path_from_url(image_url)
-                    logger.info(f"Attempting to delete course image from GCS: {file_path} (from URL: {image_url})")
-                    if file_path:
-                        if default_storage.exists(file_path):
-                            default_storage.delete(file_path)
-                            logger.info(f"✅ Successfully deleted course image from GCS: {file_path}")
-                        else:
-                            logger.warning(f"⚠️ Course image file not found in GCS: {file_path}")
-                    else:
-                        logger.warning(f"⚠️ Could not extract file path from URL: {image_url}")
-                except Exception as e:
-                    logger.error(f"❌ Error deleting course image from GCS: {e}", exc_info=True)
-                    # Don't fail course deletion if image deletion fails
-            
-            # Delete course thumbnail from GCS if it exists
-            if thumbnail_url:
-                try:
-                    thumb_path = extract_file_path_from_url(thumbnail_url)
-                    logger.info(f"Attempting to delete course thumbnail from GCS: {thumb_path} (from URL: {thumbnail_url})")
-                    if thumb_path:
-                        if default_storage.exists(thumb_path):
-                            default_storage.delete(thumb_path)
-                            logger.info(f"✅ Successfully deleted course thumbnail from GCS: {thumb_path}")
-                        else:
-                            logger.warning(f"⚠️ Course thumbnail file not found in GCS: {thumb_path}")
-                    else:
-                        logger.warning(f"⚠️ Could not extract file path from URL: {thumbnail_url}")
-                except Exception as e:
-                    logger.error(f"❌ Error deleting course thumbnail from GCS: {e}", exc_info=True)
-                    # Don't fail course deletion if thumbnail deletion fails
-            
-            # Delete the course
-            course.delete()
             
             return Response(
                 {
@@ -875,100 +939,21 @@ def teacher_course_detail(request, course_id):
         try:
             course_title = course.title
             
-            # Check if course has enrollments
-            from student.models import EnrolledCourse
-            enrollment_count = EnrolledCourse.objects.filter(course=course).count()
+            # Use shared cleanup function (single source of truth)
+            result = delete_course_with_cleanup(course, skip_enrollment_check=False)
             
-            if enrollment_count > 0:
-                return Response(
-                    {'error': f'Cannot delete course with {enrollment_count} active enrollments. Please contact admin.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+            if not result['success']:
+                if 'enrollment_count' in result:
+                    return Response(
+                        {'error': result['error']},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                else:
+                    return Response(
+                        {'error': result['error']},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
             
-            # Store image URLs before deletion (for GCS cleanup)
-            image_url = course.image
-            thumbnail_url = course.thumbnail
-            
-            # Deactivate Stripe product before deleting course
-            from .stripe_integration import deactivate_stripe_product_for_course
-            try:
-                stripe_result = deactivate_stripe_product_for_course(course)
-                if not stripe_result['success']:
-                    print(f"Stripe deactivation failed for course {course.id}: {stripe_result['error']}")
-            except Exception as e:
-                print(f"Stripe deactivation error for course {course.id}: {str(e)}")
-            
-            # Delete course images from GCS before deleting the course
-            from django.core.files.storage import default_storage
-            from urllib.parse import urlparse, unquote
-            import logging
-            
-            logger = logging.getLogger(__name__)
-            
-            def extract_file_path_from_url(url):
-                """
-                Extract file path from GCS URL and URL-decode it.
-                URL format: https://storage.googleapis.com/BUCKET_NAME/path/to/file?query=param
-                Returns: path/to/file (relative to bucket root, decoded)
-                """
-                if not url:
-                    return None
-                
-                try:
-                    parsed_url = urlparse(url)
-                    path = parsed_url.path
-                    
-                    if 'storage.googleapis.com' in url:
-                        # Path will be /bucket-name/path/to/file
-                        path_parts = path.split('/', 2)
-                        if len(path_parts) >= 3:
-                            file_path = path_parts[2]  # Get everything after /bucket-name/
-                            return unquote(file_path)  # URL-decode the path
-                        else:
-                            logger.warning(f"Could not parse GCS URL path for: {url}")
-                            return None
-                    else:
-                        # If not a full GCS URL, assume it's already a relative path
-                        return unquote(path.lstrip('/'))  # Ensure leading slash is removed and decode
-                except Exception as e:
-                    logger.warning(f"Error extracting and decoding file path from URL {url}: {e}")
-                    return None
-            
-            # Delete course image from GCS if it exists
-            if image_url:
-                try:
-                    file_path = extract_file_path_from_url(image_url)
-                    logger.info(f"Attempting to delete course image from GCS: {file_path} (from URL: {image_url})")
-                    if file_path:
-                        if default_storage.exists(file_path):
-                            default_storage.delete(file_path)
-                            logger.info(f"✅ Successfully deleted course image from GCS: {file_path}")
-                        else:
-                            logger.warning(f"⚠️ Course image file not found in GCS: {file_path}")
-                    else:
-                        logger.warning(f"⚠️ Could not extract file path from URL: {image_url}")
-                except Exception as e:
-                    logger.error(f"❌ Error deleting course image from GCS: {e}", exc_info=True)
-                    # Don't fail course deletion if image deletion fails
-            
-            # Delete course thumbnail from GCS if it exists
-            if thumbnail_url:
-                try:
-                    thumb_path = extract_file_path_from_url(thumbnail_url)
-                    logger.info(f"Attempting to delete course thumbnail from GCS: {thumb_path} (from URL: {thumbnail_url})")
-                    if thumb_path:
-                        if default_storage.exists(thumb_path):
-                            default_storage.delete(thumb_path)
-                            logger.info(f"✅ Successfully deleted course thumbnail from GCS: {thumb_path}")
-                        else:
-                            logger.warning(f"⚠️ Course thumbnail file not found in GCS: {thumb_path}")
-                    else:
-                        logger.warning(f"⚠️ Could not extract file path from URL: {thumbnail_url}")
-                except Exception as e:
-                    logger.error(f"❌ Error deleting course thumbnail from GCS: {e}", exc_info=True)
-                    # Don't fail course deletion if thumbnail deletion fails
-            
-            course.delete()
             return Response(
                 {'message': f'Course "{course_title}" deleted successfully'},
                 status=status.HTTP_200_OK
