@@ -747,64 +747,106 @@ class CourseCreateUpdateSerializer(serializers.ModelSerializer):
         old_image_url = instance.image
         old_thumbnail_url = instance.thumbnail
         
+        # IMPORTANT: With partial=True, when image is set to None/null, 
+        # DRF might not include it in validated_data or might convert it to empty string
+        # We need to check the original request data to see if image was explicitly set to None
+        # Access the request from the context if available
+        request = self.context.get('request') if hasattr(self, 'context') else None
+        request_data = request.data if request else {}
+        
         # Get new image URLs from validated data
-        # Note: With partial=True, if field is not in request.data, it won't be in validated_data
-        # So we need to check if 'image' key exists in validated_data to know if it's being updated
         new_image_url = validated_data.get('image')
         new_thumbnail_url = validated_data.get('thumbnail')
         
-        # Check if image field is being updated
-        image_key_in_data = 'image' in validated_data
-        thumbnail_key_in_data = 'thumbnail' in validated_data
+        # Check if image field is in request data (even if None/empty)
+        # This tells us if the user explicitly set the image field
+        image_key_in_request = 'image' in request_data
+        thumbnail_key_in_request = 'thumbnail' in request_data
+        
+        # Also check validated_data (might be there if not None)
+        image_key_in_validated = 'image' in validated_data
+        thumbnail_key_in_validated = 'thumbnail' in validated_data
+        
+        # Image is being updated if it's in request data OR validated data
+        image_is_being_updated = image_key_in_request or image_key_in_validated
+        thumbnail_is_being_updated = thumbnail_key_in_request or thumbnail_key_in_validated
+        
+        # If image is in request but not in validated_data, it might be None/empty
+        # In that case, check request_data directly
+        if image_key_in_request and not image_key_in_validated:
+            # Field was in request but not in validated_data - likely None or empty string
+            request_image_value = request_data.get('image')
+            if request_image_value is None or request_image_value == '':
+                new_image_url = None
+        
+        if thumbnail_key_in_request and not thumbnail_key_in_validated:
+            request_thumbnail_value = request_data.get('thumbnail')
+            if request_thumbnail_value is None or request_thumbnail_value == '':
+                new_thumbnail_url = None
+        
+        # Log for debugging
+        logger.info(f"Image update check - Old: {old_image_url}, New: {new_image_url}, In request: {image_key_in_request}, In validated: {image_key_in_validated}")
         
         # Determine if we need to delete old images:
         # Case 1: Image is being replaced (new URL is different from old)
-        # Case 2: Image is being removed (new URL is None but old exists)
-        # We only delete if:
-        # - Old image exists in database
-        # - AND image field is in the update (image_key_in_data)
-        # - AND (new URL is different OR new URL is None)
+        # Case 2: Image is being removed (new URL is None/empty but old exists)
         should_delete_old_image = (
             old_image_url is not None and  # Old image exists in database
-            image_key_in_data and  # Image field is being updated
+            image_is_being_updated and  # Image field is being updated
             (
-                new_image_url != old_image_url  # Being replaced with different URL OR removed (None)
+                new_image_url != old_image_url  # Being replaced with different URL OR removed (None/empty)
             )
         )
         
         should_delete_old_thumbnail = (
             old_thumbnail_url is not None and  # Old thumbnail exists in database
-            thumbnail_key_in_data and  # Thumbnail field is being updated
+            thumbnail_is_being_updated and  # Thumbnail field is being updated
             (
-                new_thumbnail_url != old_thumbnail_url  # Being replaced with different URL OR removed (None)
+                new_thumbnail_url != old_thumbnail_url  # Being replaced with different URL OR removed (None/empty)
             )
         )
+        
+        logger.info(f"Should delete old image: {should_delete_old_image}, Should delete old thumbnail: {should_delete_old_thumbnail}")
         
         def extract_file_path_from_url(url):
             """
             Extract file path from GCS URL.
             URL format: https://storage.googleapis.com/BUCKET_NAME/path/to/file
-            Returns: path/to/file (relative to bucket root)
+            Returns: path/to/file (relative to bucket root, URL-decoded)
             """
             if not url:
                 return None
             
             try:
+                from urllib.parse import unquote
+                
                 if 'storage.googleapis.com' in url:
                     # Parse URL: https://storage.googleapis.com/bucket-name/path/to/file
                     parsed_url = urlparse(url)
                     path_parts = parsed_url.path.split('/', 2)
                     if len(path_parts) >= 3:
-                        # Get everything after /bucket-name/
-                        return path_parts[2]
+                        # Get everything after /bucket-name/ and URL-decode it
+                        # GCS URLs are URL-encoded, but storage paths are not
+                        encoded_path = path_parts[2]
+                        decoded_path = unquote(encoded_path)
+                        return decoded_path
                     else:
                         # Fallback: try to extract from full path
                         if 'course_images/' in url:
-                            return url.split('course_images/', 1)[1]
+                            encoded_path = url.split('course_images/', 1)[1]
+                            # Remove query parameters if any
+                            if '?' in encoded_path:
+                                encoded_path = encoded_path.split('?')[0]
+                            decoded_path = unquote(encoded_path)
+                            return f'course_images/{decoded_path}'
                         return None
                 else:
-                    # If not a full URL, assume it's already a path
-                    return url
+                    # If not a full URL, assume it's already a path (might still be encoded)
+                    # Try to decode it
+                    try:
+                        return unquote(url)
+                    except:
+                        return url
             except Exception as e:
                 logger.warning(f"Error extracting file path from URL {url}: {e}")
                 return None

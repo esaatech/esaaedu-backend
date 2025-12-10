@@ -586,7 +586,13 @@ class CourseCreationView(APIView):
             
             print(f"about to validate and update course")
             # Use existing serializer for validation and updating
-            serializer = CourseCreateUpdateSerializer(course, data=request.data, partial=True)
+            # Pass request in context so serializer can access original request data
+            serializer = CourseCreateUpdateSerializer(
+                course, 
+                data=request.data, 
+                partial=True,
+                context={'request': request}
+            )
             if serializer.is_valid():
                 updated_course = serializer.save()
                 
