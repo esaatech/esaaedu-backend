@@ -4643,12 +4643,14 @@ class LessonMaterial(APIView):
                     elif material.material_type == 'note':
                         # For notes, we might want to show if content exists
                         material_data['has_content'] = bool(material.content)
-                    elif material.material_type in ['document', 'pdf', 'presentation', 'audio']:
-                        # For files, show file info
+                    elif material.material_type in ['document', 'pdf', 'presentation', 'audio', 'link']:
+                        # For files and links, show file info
                         material_data['file_size'] = material.file_size
                         material_data['file_size_mb'] = material.file_size_mb
                         material_data['file_extension'] = material.file_extension
                         material_data['file_url'] = material.file_url
+                        # For link materials, file_url is the external URL (required)
+                        # For other types, it's the file URL
                     
                     materials_data.append(material_data)
             else:
