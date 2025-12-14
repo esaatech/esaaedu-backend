@@ -23,6 +23,9 @@ urlpatterns = [
     # Assessment form submission (public endpoint)
     path('assessment/', views.AssessmentSubmissionView.as_view(), name='assessment_submission'),
     
+    # Course recommendations based on assessment (public endpoint)
+    path('assessment/recommendations/', views.CourseRecommendationsView.as_view(), name='course_recommendations'),
+    
     # Assessment submissions management (admin only)
     path('assessment/submissions/', views.AssessmentSubmissionListView.as_view(), name='assessment_submissions_list'),
 ]

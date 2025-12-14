@@ -12,6 +12,9 @@ from .serializers import (
     ContactOverviewSerializer, AssessmentSubmissionSerializer, AssessmentSubmissionCreateSerializer
 )
 from courses.models import CourseReview, Course
+from courses.serializers import FrontendCourseSerializer
+from courses.views import get_course_available_classes_data_helper, get_course_billing_data_helper
+from .course_recommendations import recommend_courses
 
 
 class ContactView(APIView):
@@ -549,5 +552,108 @@ class AssessmentSubmissionListView(APIView):
         except Exception as e:
             return Response(
                 {'error': 'Failed to retrieve assessment submissions', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CourseRecommendationsView(APIView):
+    """
+    Course Recommendations CBV - Get course recommendations based on assessment data
+    POST: Get recommended courses based on student assessment
+    """
+    permission_classes = [permissions.AllowAny]  # Public endpoint
+    
+    def post(self, request):
+        """
+        POST: Get course recommendations based on assessment data
+        Expected request body:
+        {
+            "student_age": 8,
+            "interest_areas": ["Coding"],
+            "computer_skills_level": "beginner"
+        }
+        """
+        try:
+            # Extract assessment data from request
+            student_age = request.data.get('student_age')
+            interest_areas = request.data.get('interest_areas', [])
+            computer_skills_level = request.data.get('computer_skills_level')
+            
+            # Validate required fields
+            if not student_age:
+                return Response(
+                    {'error': 'student_age is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not isinstance(student_age, int) or student_age < 3 or student_age > 18:
+                return Response(
+                    {'error': 'student_age must be an integer between 3 and 18'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not interest_areas or not isinstance(interest_areas, list) or len(interest_areas) == 0:
+                return Response(
+                    {'error': 'interest_areas must be a non-empty list'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if computer_skills_level and computer_skills_level not in ['beginner', 'intermediate', 'advanced']:
+                return Response(
+                    {'error': 'computer_skills_level must be one of: beginner, intermediate, advanced'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get recommendations
+            recommendations = recommend_courses(
+                student_age=student_age,
+                interest_areas=interest_areas,
+                computer_skills_level=computer_skills_level,
+                limit=5
+            )
+            
+            # Serialize recommended courses
+            recommended_courses = []
+            for rec in recommendations:
+                course = rec['course']
+                course_data = FrontendCourseSerializer(course).data
+                
+                # Add available_classes and billing (same as public courses endpoint)
+                try:
+                    course_data['available_classes'] = get_course_available_classes_data_helper(course)
+                    course_data['billing'] = get_course_billing_data_helper(course)
+                except Exception as e:
+                    # If helper functions fail, add empty/default values
+                    course_data['available_classes'] = []
+                    course_data['billing'] = None
+                
+                # Add recommendation-specific fields
+                course_data['matchScore'] = rec['matchScore']
+                course_data['matchReasons'] = rec['matchReasons']
+                recommended_courses.append(course_data)
+            
+            return Response(
+                {
+                    'success': True,
+                    'recommendations': recommended_courses,
+                    'count': len(recommended_courses)
+                },
+                status=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            import traceback
+            import logging
+            logger = logging.getLogger(__name__)
+            error_details = traceback.format_exc()
+            logger.error(f"Course recommendations error: {error_details}")
+            print(f"Course recommendations error: {error_details}")
+            
+            return Response(
+                {
+                    'error': 'Failed to get course recommendations',
+                    'details': str(e),
+                    'traceback': error_details if settings.DEBUG else None
+                },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
