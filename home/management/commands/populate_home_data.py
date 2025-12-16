@@ -26,8 +26,8 @@ class Command(BaseCommand):
                 'description': 'Send us a detailed message',
                 'availability': '24/7',
                 'response_time': '< 4 hours',
-                'action_text': 'hello@sbtyacademy.com',
-                'action_value': 'mailto:hello@sbtyacademy.com',
+                'action_text': 'sbtyacademy@gmail.com',
+                'action_value': 'mailto:sbtyacademy@gmail.com',
                 'icon': 'envelope',
                 'color': 'orange',
                 'order': 2
@@ -38,8 +38,8 @@ class Command(BaseCommand):
                 'description': 'Speak directly with our team',
                 'availability': 'Mon-Fri 9AM-6PM EST',
                 'response_time': 'Immediate',
-                'action_text': '1-800-SBTY-KIDS (728-9543)',
-                'action_value': 'tel:1-800-728-9543',
+                'action_text': '+1 343 843 3159',
+                'action_value': 'tel:+13438433159',
                 'icon': 'phone',
                 'color': 'green',
                 'order': 3
@@ -51,7 +51,7 @@ class Command(BaseCommand):
                 'availability': '24/7',
                 'response_time': '< 5 minutes',
                 'action_text': 'Click to start WhatsApp chat',
-                'action_value': 'https://wa.me/1234567890',
+                'action_value': 'https://wa.me/3438433159',
                 'icon': 'whatsapp',
                 'color': 'green',
                 'order': 4
@@ -68,8 +68,13 @@ class Command(BaseCommand):
                     self.style.SUCCESS(f'Created contact method: {method.title}')
                 )
             else:
+                # Update existing contact method with new data
+                for key, value in method_data.items():
+                    if key != 'type':  # Don't update the type field
+                        setattr(method, key, value)
+                method.save()
                 self.stdout.write(
-                    self.style.NOTICE(f'Contact method already exists: {method.title}')
+                    self.style.SUCCESS(f'Updated contact method: {method.title}')
                 )
 
         # Create support team members
