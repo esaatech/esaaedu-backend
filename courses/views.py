@@ -4348,7 +4348,7 @@ class StudentCourseDashboardView(APIView):
             # Initialize response data
             response_data = {}
             
-            # 1. GET ENROLLED COURSES
+            # 1. GET ENROLLED COURSES (exclude archived)
             print("Step 1: Getting enrolled courses...")
             enrolled_courses_data = self.get_enrolled_courses_data(student_profile)
             response_data['enrolled_courses'] = enrolled_courses_data['courses']
@@ -4360,6 +4360,18 @@ class StudentCourseDashboardView(APIView):
             response_data['recommended_courses'] = recommended_courses_data['courses']
             response_data['total_recommendations'] = recommended_courses_data['total']
             
+            # 3. GET ARCHIVED COURSES (enrolled courses where course is archived)
+            print("Step 3: Getting archived courses...")
+            archived_courses_data = self.get_archived_courses_data(student_profile)
+            response_data['archived_courses'] = archived_courses_data['courses']
+            response_data['total_archived'] = archived_courses_data['total']
+            
+            # 4. GET COMPLETED COURSES (completed enrollments where course is not archived)
+            print("Step 4: Getting completed courses...")
+            completed_courses_data = self.get_completed_courses_data(student_profile)
+            response_data['completed_courses'] = completed_courses_data['courses']
+            response_data['total_completed'] = completed_courses_data['total']
+            
             # 3. ADD DASHBOARD METADATA
             response_data['dashboard_metadata'] = {
                 'user_id': str(request.user.id),
@@ -4368,7 +4380,7 @@ class StudentCourseDashboardView(APIView):
                 'api_version': '2.0'
             }
             
-            print(f"Dashboard response complete: {len(response_data['enrolled_courses'])} enrolled, {len(response_data['recommended_courses'])} recommended")
+            print(f"Dashboard response complete: {len(response_data['enrolled_courses'])} enrolled, {len(response_data['recommended_courses'])} recommended, {len(response_data['archived_courses'])} archived, {len(response_data['completed_courses'])} completed")
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -4388,10 +4400,11 @@ class StudentCourseDashboardView(APIView):
             if not student_profile:
                 return {'courses': [], 'total': 0}
             
-            # Get enrolled courses
+            # Get enrolled courses (exclude archived courses)
             enrolled_courses = EnrolledCourse.objects.filter(
                 student_profile=student_profile,
-                status__in=['active', 'completed']
+                status__in=['active', 'completed'],
+                course__status__in=['draft', 'published']  # Exclude archived courses
             ).select_related('course', 'current_lesson').order_by('-enrollment_date')
             
             courses_data = []
@@ -4521,6 +4534,149 @@ class StudentCourseDashboardView(APIView):
             
         except Exception as e:
             print(f"Error getting recommended courses: {e}")
+            return {'courses': [], 'total': 0}
+    
+    def get_archived_courses_data(self, student_profile):
+        """
+        Get archived courses (enrolled courses where course.status='archived')
+        Uses same format as recommended courses for UI consistency
+        """
+        try:
+            if not student_profile:
+                return {'courses': [], 'total': 0}
+            
+            # Get enrolled courses where the course is archived
+            archived_enrollments = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                course__status='archived'
+            ).select_related('course').order_by('-enrollment_date')
+            
+            courses_data = []
+            for enrollment in archived_enrollments:
+                course = enrollment.course
+                
+                try:
+                    # Get course image
+                    course_image = getattr(course, 'image', None)
+                    if course_image:
+                        image_url = course_image.url if hasattr(course_image, 'url') else str(course_image)
+                    else:
+                        image_url = "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=300&h=200&fit=crop"
+                    
+                    # Get instructor name
+                    instructor_name = "Little Learners Tech"
+                    if hasattr(course, 'teacher') and course.teacher:
+                        instructor_name = course.teacher.get_full_name() or course.teacher.email
+                    
+                    # Build course data (same format as recommended courses)
+                    course_data = {
+                        'id': str(course.id),
+                        'uuid': str(course.id),
+                        'title': course.title,
+                        'description': course.description,
+                        'instructor': instructor_name,
+                        'image': image_url,
+                        'thumbnail': getattr(course, 'thumbnail', None),
+                        'icon': course.icon,
+                        'total_lessons': getattr(course, 'total_lessons', 12),
+                        'duration': getattr(course, 'duration', '8 weeks'),
+                        'max_students': getattr(course, 'max_students', 12),
+                        'difficulty': getattr(course, 'level', 'beginner'),
+                        'category': course.category,
+                        'rating': get_course_average_rating(course),
+                        'price': float(course.price) if course.price else 0,
+                        'enrolled_students': 0,
+                        'status': 'archived',  # Mark as archived
+                        'enrollment_status': {
+                            'is_enrolled': True,
+                            'can_enroll': False,
+                            'enrollment_date': enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
+                            'status': enrollment.status
+                        }
+                    }
+                    courses_data.append(course_data)
+                    
+                except Exception as course_error:
+                    print(f"ERROR processing archived course {course.title}: {course_error}")
+                    continue
+            
+            return {'courses': courses_data, 'total': len(courses_data)}
+            
+        except Exception as e:
+            print(f"Error getting archived courses: {e}")
+            return {'courses': [], 'total': 0}
+    
+    def get_completed_courses_data(self, student_profile):
+        """
+        Get completed courses (enrollments with status='completed' where course is not archived)
+        Uses same format as recommended courses for UI consistency
+        """
+        try:
+            if not student_profile:
+                return {'courses': [], 'total': 0}
+            
+            # Get completed enrollments where course is not archived
+            completed_enrollments = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                status='completed',
+                course__status__in=['draft', 'published']  # Exclude archived
+            ).select_related('course').order_by('-enrollment_date')
+            
+            courses_data = []
+            for enrollment in completed_enrollments:
+                course = enrollment.course
+                
+                try:
+                    # Get course image
+                    course_image = getattr(course, 'image', None)
+                    if course_image:
+                        image_url = course_image.url if hasattr(course_image, 'url') else str(course_image)
+                    else:
+                        image_url = "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=300&h=200&fit=crop"
+                    
+                    # Get instructor name
+                    instructor_name = "Little Learners Tech"
+                    if hasattr(course, 'teacher') and course.teacher:
+                        instructor_name = course.teacher.get_full_name() or course.teacher.email
+                    
+                    # Build course data (same format as recommended courses)
+                    course_data = {
+                        'id': str(course.id),
+                        'uuid': str(course.id),
+                        'title': course.title,
+                        'description': course.description,
+                        'instructor': instructor_name,
+                        'image': image_url,
+                        'thumbnail': getattr(course, 'thumbnail', None),
+                        'icon': course.icon,
+                        'total_lessons': getattr(course, 'total_lessons', 12),
+                        'duration': getattr(course, 'duration', '8 weeks'),
+                        'max_students': getattr(course, 'max_students', 12),
+                        'difficulty': getattr(course, 'level', 'beginner'),
+                        'category': course.category,
+                        'rating': get_course_average_rating(course),
+                        'price': float(course.price) if course.price else 0,
+                        'enrolled_students': 0,
+                        'status': 'completed',  # Mark as completed
+                        'progress': float(enrollment.progress_percentage),
+                        'overall_grade': enrollment.overall_grade,
+                        'enrollment_status': {
+                            'is_enrolled': True,
+                            'can_enroll': False,
+                            'enrollment_date': enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
+                            'status': enrollment.status
+                        }
+                    }
+                    courses_data.append(course_data)
+                    
+                except Exception as course_error:
+                    print(f"ERROR processing completed course {course.title}: {course_error}")
+                    continue
+            
+            return {'courses': courses_data, 'total': len(courses_data)}
+            
+        except Exception as e:
+            print(f"Error getting completed courses: {e}")
             return {'courses': [], 'total': 0}
     
     def get_course_billing_data(self, course):
