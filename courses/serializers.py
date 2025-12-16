@@ -906,7 +906,8 @@ class FrontendCourseSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'icon', 'title', 'description', 'longDescription',
             'age', 'duration_weeks', 'duration', 'level', 'required_computer_skills_level', 'color', 'projects', 'price',
-            'popular', 'featured', 'features', 'schedule', 'classSize', 'certificate', 'status', 'category', 'age_range'
+            'popular', 'featured', 'features', 'schedule', 'classSize', 'certificate', 'status', 'category', 'age_range',
+            'image', 'thumbnail'  # Added image and thumbnail fields
         ]
     
     def get_projects(self, obj):
