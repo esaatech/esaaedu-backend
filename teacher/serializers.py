@@ -80,7 +80,7 @@ class ProjectSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'course', 'course_id', 'course_title', 'title', 'instructions',
             'submission_type', 'submission_type_display', 'allowed_file_types',
-            'points', 'due_at', 'created_at', 'submission_count', 'graded_count',
+            'points', 'due_at', 'order', 'created_at', 'submission_count', 'graded_count',
             'pending_count', 'requires_file_upload', 'requires_text_input', 'requires_url_input'
         ]
         read_only_fields = ['id', 'created_at', 'submission_count', 'graded_count', 'pending_count']
@@ -103,7 +103,7 @@ class ProjectCreateUpdateSerializer(serializers.ModelSerializer):
         model = Project
         fields = [
             'course', 'title', 'instructions', 'submission_type',
-            'allowed_file_types', 'points', 'due_at'
+            'allowed_file_types', 'points', 'due_at', 'order'
         ]
     
     def validate_course(self, value):

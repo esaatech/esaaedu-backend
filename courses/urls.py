@@ -24,6 +24,7 @@ urlpatterns = [
     path('lessons/<uuid:lesson_id>/materials/', views.LessonMaterial.as_view(), name='lesson_materials'),
     path('materials/<uuid:material_id>/', views.LessonMaterial.as_view(), name='material_detail'),
     path('<uuid:course_id>/lessons/reorder/', views.reorder_lessons, name='reorder_lessons'),
+    path('<uuid:course_id>/projects/reorder/', views.reorder_projects, name='reorder_projects'),
     
     # Book page management endpoints
     path('books/<uuid:material_id>/pages/', views.BookPageView.as_view(), name='book_pages'),

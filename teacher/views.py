@@ -600,8 +600,8 @@ class ProjectManagementView(APIView):
                     Q(course__title__icontains=search)
                 )
             
-            # Order by creation date (newest first)
-            projects = projects.order_by('-created_at')
+            # Order by order field first, then by creation date
+            projects = projects.order_by('order', '-created_at')
             
             # Serialize projects
             serializer = ProjectSerializer(projects, many=True, context={'request': request})

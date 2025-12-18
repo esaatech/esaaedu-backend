@@ -830,11 +830,12 @@ class Project(models.Model):
     
     points = models.PositiveIntegerField(default=100)   # max points for this project
     due_at = models.DateTimeField(null=True, blank=True)
+    order = models.IntegerField(default=0, help_text="Project sequence within the course")
     
     created_at = models.DateTimeField(default=timezone.now)
     
     class Meta:
-        ordering = ['-created_at']
+        ordering = ['order', '-created_at']
     
     def __str__(self):
         return f"{self.course} · {self.title}"

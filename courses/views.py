@@ -13,7 +13,7 @@ from django.conf import settings
 import jwt
 from jwt.exceptions import InvalidKeyError
 import logging
-from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, DocumentMaterial, DocumentMaterial
+from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, DocumentMaterial, DocumentMaterial, Project
 
 logger = logging.getLogger(__name__)
 from student.models import EnrolledCourse
@@ -23,7 +23,7 @@ from .serializers import (
     CourseListSerializer, CourseDetailSerializer, CourseCreateUpdateSerializer,
     FrontendCourseSerializer, FeaturedCoursesSerializer,
     LessonListSerializer, LessonDetailSerializer, LessonCreateUpdateSerializer,
-    LessonReorderSerializer, QuizListSerializer, QuizDetailSerializer,
+    LessonReorderSerializer, ProjectReorderSerializer, QuizListSerializer, QuizDetailSerializer,
     QuizCreateUpdateSerializer, QuestionListSerializer, QuestionDetailSerializer,
     QuestionCreateUpdateSerializer, NoteSerializer, NoteCreateSerializer,
 
@@ -1140,6 +1140,68 @@ def reorder_lessons(request, course_id):
     except Exception as e:
         return Response(
             {'error': 'Failed to reorder lessons', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated])
+def reorder_projects(request, course_id):
+    """
+    PUT: Reorder projects within a course
+    """
+    try:
+        course = get_object_or_404(Course, id=course_id)
+    except Course.DoesNotExist:
+        return Response(
+            {'error': 'Course not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    # Only the course teacher can reorder projects
+    if course.teacher != request.user:
+        return Response(
+            {'error': 'Only the course teacher can reorder projects'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    try:
+        serializer = ProjectReorderSerializer(data=request.data)
+        if serializer.is_valid():
+            projects_data = serializer.validated_data['projects']
+            
+            # Step 1: Set all projects to temporary negative orders to avoid constraint violations
+            projects_to_update = []
+            for project_data in projects_data:
+                project_id = project_data['id']
+                try:
+                    project = course.projects.get(id=project_id)
+                    projects_to_update.append((project, project_data['order']))
+                    # Set temporary negative order to avoid constraint violations
+                    # Use negative ID-based temp order (convert UUID to int for calculation)
+                    project.order = -(int(str(project.id).replace('-', ''), 16) % 1000000)
+                    project.save()
+                except Project.DoesNotExist:
+                    return Response(
+                        {'error': f'Project with id {project_id} not found in this course'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Step 2: Now set the actual desired orders
+            for project, new_order in projects_to_update:
+                project.order = new_order
+                project.save()
+            
+            # Return updated projects
+            projects = course.projects.all().order_by('order')
+            from .serializers import ProjectListSerializer
+            response_serializer = ProjectListSerializer(projects, many=True)
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        return Response(
+            {'error': 'Failed to reorder projects', 'details': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 

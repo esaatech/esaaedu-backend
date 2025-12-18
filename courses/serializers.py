@@ -1019,6 +1019,33 @@ class LessonReorderSerializer(serializers.Serializer):
         return value
 
 
+class ProjectReorderSerializer(serializers.Serializer):
+    """
+    Serializer for reordering projects within a course
+    """
+    projects = serializers.ListField(
+        child=serializers.DictField(child=serializers.CharField()),
+        help_text="List of project objects with id and order fields"
+    )
+    
+    def validate_projects(self, value):
+        if not value:
+            raise serializers.ValidationError("Projects list cannot be empty")
+        
+        for project_data in value:
+            if 'id' not in project_data or 'order' not in project_data:
+                raise serializers.ValidationError("Each project must have 'id' and 'order' fields")
+            
+            try:
+                order = int(project_data['order'])
+                if order < 0:
+                    raise serializers.ValidationError("Project order must be non-negative")
+            except (ValueError, TypeError):
+                raise serializers.ValidationError("Project order must be a valid integer")
+        
+        return value
+
+
 # ===== QUIZ SERIALIZERS =====
 
 class QuizListSerializer(serializers.ModelSerializer):
@@ -1874,7 +1901,7 @@ class ProjectListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Project
         fields = [
-            'id', 'title', 'instructions', 'submission_type', 'points', 'due_at', 'created_at'
+            'id', 'title', 'instructions', 'submission_type', 'points', 'due_at', 'order', 'created_at'
         ]
 
 
