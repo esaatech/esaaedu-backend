@@ -78,6 +78,11 @@ urlpatterns = [
     path('student/courses/<uuid:course_id>/lessons/', views.student_course_lessons, name='student_course_lessons'),
     path('student/courses/<uuid:course_id>/projects/', views.student_course_projects, name='student_course_projects'),
     path('student/courses/<uuid:course_id>/assessments/<str:assessment_type>/', views.student_course_assessments, name='student_course_assessments'),
+    path('student/assessments/<uuid:assessment_id>/', views.student_assessment_detail, name='student_assessment_detail'),
+    path('student/assessments/<uuid:assessment_id>/start/', views.student_start_assessment, name='student_start_assessment'),
+    path('student/assessments/<uuid:assessment_id>/submit/', views.student_submit_assessment, name='student_submit_assessment'),
+    path('student/assessments/<uuid:assessment_id>/save/', views.student_save_assessment_progress, name='student_save_assessment_progress'),
+    path('student/assessments/<uuid:assessment_id>/submissions/<uuid:submission_id>/', views.student_assessment_submission_detail, name='student_assessment_submission_detail'),
     path('student/lessons/<uuid:lesson_id>/cbv/', views.StudentLessonDetailView.as_view(), name='student_lesson_detail_cbv'),
     path('materials/<uuid:material_id>/content/', views.MaterialContentView.as_view(), name='material_content'),
 

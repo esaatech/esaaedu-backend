@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage, VideoMaterial, DocumentMaterial, AudioVideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage, VideoMaterial, DocumentMaterial, AudioVideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
 
 User = get_user_model()
 
@@ -2456,7 +2456,7 @@ class CourseAssessmentListSerializer(serializers.ModelSerializer):
     class Meta:
         model = CourseAssessment
         fields = [
-            'id', 'course', 'assessment_type', 'title', 'description',
+            'id', 'course', 'assessment_type', 'title', 'description', 'instructions',
             'time_limit_minutes', 'passing_score', 'max_attempts',
             'order', 'question_count', 'total_points', 'created_at', 'updated_at'
         ]
@@ -2508,3 +2508,39 @@ class CourseAssessmentCreateUpdateSerializer(serializers.ModelSerializer):
         if value is not None and value < 1:
             raise serializers.ValidationError("Time limit must be at least 1 minute")
         return value
+
+
+# ===== COURSE ASSESSMENT SUBMISSION SERIALIZERS =====
+
+class CourseAssessmentSubmissionSerializer(serializers.Serializer):
+    """Serializer for assessment submission requests"""
+    answers = serializers.JSONField(help_text="Student answers for each question")
+    time_remaining_seconds = serializers.IntegerField(
+        required=False, 
+        allow_null=True,
+        help_text="Remaining time in seconds (for auto-save)"
+    )
+    is_auto_submit = serializers.BooleanField(
+        default=False,
+        help_text="Whether this was auto-submitted (timeout or page close)"
+    )
+    
+    def validate_answers(self, value):
+        """Validate that answers is a dictionary"""
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Answers must be a dictionary")
+        return value
+
+
+class CourseAssessmentSubmissionResponseSerializer(serializers.ModelSerializer):
+    """Serializer for assessment submission responses"""
+    
+    class Meta:
+        model = CourseAssessmentSubmission
+        fields = [
+            'id', 'attempt_number', 'status', 'started_at', 'submitted_at',
+            'time_limit_minutes', 'time_remaining_seconds',
+            'answers', 'is_graded', 'is_teacher_draft', 'points_earned', 'points_possible', 
+            'percentage', 'passed', 'instructor_feedback', 'graded_questions'
+        ]
+        read_only_fields = fields

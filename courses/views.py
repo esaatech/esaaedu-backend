@@ -13,7 +13,7 @@ from django.conf import settings
 import jwt
 from jwt.exceptions import InvalidKeyError
 import logging
-from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, DocumentMaterial, DocumentMaterial, Project
+from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission, DocumentMaterial, DocumentMaterial, Project
 
 logger = logging.getLogger(__name__)
 from student.models import EnrolledCourse
@@ -3407,15 +3407,61 @@ def student_course_assessments(request, course_id, assessment_type):
             assessment_type=assessment_type
         ).order_by('order', 'created_at')
         
+        # Get student's submissions for these assessments
+        submissions = CourseAssessmentSubmission.objects.filter(
+            student=request.user,
+            assessment__in=assessments
+        ).select_related('assessment')
+        
+        # Build submission map
+        submission_map = {}
+        for submission in submissions:
+            assessment_id = str(submission.assessment.id)
+            if assessment_id not in submission_map:
+                submission_map[assessment_id] = []
+            submission_map[assessment_id].append({
+                'id': str(submission.id),
+                'attempt_number': submission.attempt_number,
+                'status': submission.status,
+                'submitted_at': submission.submitted_at.isoformat() if submission.submitted_at else None,
+                'is_graded': submission.is_graded,
+                'points_earned': float(submission.points_earned) if submission.points_earned else None,
+                'points_possible': float(submission.points_possible) if submission.points_possible else None,
+                'percentage': float(submission.percentage) if submission.percentage else None,
+                'passed': submission.passed,
+            })
+        
         # Serialize assessments
         from .serializers import CourseAssessmentListSerializer
         serializer = CourseAssessmentListSerializer(assessments, many=True)
+        
+        # Add submission info to each assessment
+        assessments_data = serializer.data
+        assessment_dict = {str(a.id): a for a in assessments}  # Create lookup dict
+        
+        for assessment_data in assessments_data:
+            assessment_id = assessment_data['id']
+            assessment_data['submissions'] = submission_map.get(assessment_id, [])
+            # Get latest submission for quick status check
+            latest_submission = submission_map.get(assessment_id, [])
+            if latest_submission:
+                latest = max(latest_submission, key=lambda x: x['attempt_number'])
+                assessment_data['latest_submission'] = latest
+                assessment_obj = assessment_dict.get(assessment_id)
+                if assessment_obj:
+                    submitted_count = len([s for s in latest_submission if s['status'] in ['submitted', 'auto_submitted', 'graded']])
+                    assessment_data['can_start'] = submitted_count < assessment_obj.max_attempts
+                else:
+                    assessment_data['can_start'] = True
+            else:
+                assessment_data['latest_submission'] = None
+                assessment_data['can_start'] = True
         
         return Response({
             'course_id': str(course.id),
             'course_title': course.title,
             'assessment_type': assessment_type,
-            'assessments': serializer.data
+            'assessments': assessments_data
         }, status=status.HTTP_200_OK)
         
     except Course.DoesNotExist:
@@ -3427,6 +3473,408 @@ def student_course_assessments(request, course_id, assessment_type):
         print(f"Error in student_course_assessments: {e}")
         return Response(
             {'error': 'Failed to fetch course assessments', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def student_assessment_detail(request, assessment_id):
+    """
+    Get full assessment details with questions for student
+    """
+    try:
+        assessment = get_object_or_404(
+            CourseAssessment.objects.prefetch_related('questions'),
+            id=assessment_id
+        )
+        
+        # Check if student is enrolled
+        try:
+            student_profile = request.user.student_profile
+        except AttributeError:
+            return Response(
+                {'error': 'Student profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        enrollment = EnrolledCourse.objects.filter(
+            student_profile=student_profile,
+            course=assessment.course,
+            status__in=['active', 'completed']
+        ).first()
+        
+        if not enrollment:
+            return Response(
+                {'error': 'You are not enrolled in this course'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get student's submissions
+        submissions = CourseAssessmentSubmission.objects.filter(
+            student=request.user,
+            assessment=assessment
+        ).order_by('-attempt_number')
+        
+        # Serialize assessment with questions
+        from .serializers import CourseAssessmentDetailSerializer, CourseAssessmentSubmissionResponseSerializer
+        assessment_serializer = CourseAssessmentDetailSerializer(assessment)
+        
+        # Serialize submissions
+        submissions_data = []
+        for submission in submissions:
+            submission_serializer = CourseAssessmentSubmissionResponseSerializer(submission)
+            submissions_data.append(submission_serializer.data)
+        
+        # Get latest submission - prioritize in_progress over submitted/graded
+        in_progress_submission = submissions.filter(status='in_progress').first()
+        latest_submission = in_progress_submission if in_progress_submission else submissions.first()
+        latest_submission_data = CourseAssessmentSubmissionResponseSerializer(latest_submission).data if latest_submission else None
+        
+        return Response({
+            'assessment': assessment_serializer.data,
+            'submissions': submissions_data,
+            'latest_submission': latest_submission_data,
+        }, status=status.HTTP_200_OK)
+        
+    except CourseAssessment.DoesNotExist:
+        return Response(
+            {'error': 'Assessment not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        print(f"Error in student_assessment_detail: {e}")
+        return Response(
+            {'error': 'Failed to fetch assessment details', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def student_start_assessment(request, assessment_id):
+    """
+    Start a new assessment attempt for a student
+    Creates a new submission with status 'in_progress'
+    """
+    try:
+        assessment = get_object_or_404(CourseAssessment, id=assessment_id)
+        
+        # Check if student is enrolled
+        try:
+            student_profile = request.user.student_profile
+        except AttributeError:
+            return Response(
+                {'error': 'Student profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        enrollment = EnrolledCourse.objects.filter(
+            student_profile=student_profile,
+            course=assessment.course,
+            status__in=['active', 'completed']
+        ).first()
+        
+        if not enrollment:
+            return Response(
+                {'error': 'You are not enrolled in this course'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check max attempts
+        existing_submissions = CourseAssessmentSubmission.objects.filter(
+            student=request.user,
+            assessment=assessment,
+            status__in=['submitted', 'auto_submitted', 'graded']
+        )
+        
+        if existing_submissions.count() >= assessment.max_attempts:
+            return Response(
+                {'error': f'Maximum attempts ({assessment.max_attempts}) reached for this assessment'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get next attempt number
+        last_submission = CourseAssessmentSubmission.objects.filter(
+            student=request.user,
+            assessment=assessment
+        ).order_by('-attempt_number').first()
+        
+        next_attempt_number = (last_submission.attempt_number + 1) if last_submission else 1
+        
+        # Check if there's an in_progress submission
+        in_progress_submission = CourseAssessmentSubmission.objects.filter(
+            student=request.user,
+            assessment=assessment,
+            status='in_progress'
+        ).first()
+        
+        if in_progress_submission:
+            # Return existing in-progress submission
+            from .serializers import CourseAssessmentSubmissionResponseSerializer
+            serializer = CourseAssessmentSubmissionResponseSerializer(in_progress_submission)
+            return Response({
+                'submission': serializer.data,
+                'message': 'Resuming existing attempt'
+            }, status=status.HTTP_200_OK)
+        
+        # Create new submission
+        submission = CourseAssessmentSubmission.objects.create(
+            student=request.user,
+            assessment=assessment,
+            enrollment=enrollment,
+            attempt_number=next_attempt_number,
+            status='in_progress',
+            time_limit_minutes=assessment.time_limit_minutes,
+            time_remaining_seconds=assessment.time_limit_minutes * 60 if assessment.time_limit_minutes else None,
+            answers={}
+        )
+        
+        from .serializers import CourseAssessmentSubmissionResponseSerializer
+        serializer = CourseAssessmentSubmissionResponseSerializer(submission)
+        
+        return Response({
+            'submission': serializer.data,
+            'message': 'Assessment started successfully'
+        }, status=status.HTTP_201_CREATED)
+        
+    except CourseAssessment.DoesNotExist:
+        return Response(
+            {'error': 'Assessment not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        print(f"Error in student_start_assessment: {e}")
+        return Response(
+            {'error': 'Failed to start assessment', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def student_submit_assessment(request, assessment_id):
+    """
+    Submit an assessment attempt
+    Similar to AssignmentSubmissionView logic
+    """
+    try:
+        assessment = get_object_or_404(CourseAssessment, id=assessment_id)
+        
+        # Validate request data
+        from .serializers import CourseAssessmentSubmissionSerializer
+        serializer = CourseAssessmentSubmissionSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        validated_data = serializer.validated_data
+        is_auto_submit = validated_data.get('is_auto_submit', False)
+        
+        # Get student's enrollment
+        try:
+            student_profile = request.user.student_profile
+        except AttributeError:
+            return Response(
+                {'error': 'Student profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        enrollment = EnrolledCourse.objects.filter(
+            student_profile=student_profile,
+            course=assessment.course,
+            status__in=['active', 'completed']
+        ).first()
+        
+        if not enrollment:
+            return Response(
+                {'error': 'You are not enrolled in this course'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get or create submission
+        submission = CourseAssessmentSubmission.objects.filter(
+            student=request.user,
+            assessment=assessment,
+            status='in_progress'
+        ).order_by('-started_at').first()
+        
+        if not submission:
+            return Response(
+                {'error': 'No active assessment attempt found. Please start the assessment first.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Update submission
+        submission.answers = validated_data.get('answers', submission.answers)
+        submission.time_remaining_seconds = validated_data.get('time_remaining_seconds', submission.time_remaining_seconds)
+        submission.status = 'auto_submitted' if is_auto_submit else 'submitted'
+        submission.submitted_at = timezone.now()
+        submission.save()
+        
+        # Return response
+        from .serializers import CourseAssessmentSubmissionResponseSerializer
+        response_serializer = CourseAssessmentSubmissionResponseSerializer(submission)
+        response_data = {
+            'submission': response_serializer.data,
+            'message': 'Assessment auto-submitted successfully' if is_auto_submit else 'Assessment submitted successfully'
+        }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+        
+    except CourseAssessment.DoesNotExist:
+        return Response(
+            {'error': 'Assessment not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        print(f"Error in student_submit_assessment: {e}")
+        return Response(
+            {'error': 'Failed to submit assessment', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['PUT'])
+@permission_classes([permissions.IsAuthenticated])
+def student_save_assessment_progress(request, assessment_id):
+    """
+    Auto-save assessment progress (answers and time remaining)
+    Similar to assignment draft save
+    """
+    try:
+        assessment = get_object_or_404(CourseAssessment, id=assessment_id)
+        
+        # Validate request data
+        from .serializers import CourseAssessmentSubmissionSerializer
+        serializer = CourseAssessmentSubmissionSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        validated_data = serializer.validated_data
+        
+        # Get in-progress submission
+        submission = CourseAssessmentSubmission.objects.filter(
+            student=request.user,
+            assessment=assessment,
+            status='in_progress'
+        ).order_by('-started_at').first()
+        
+        if not submission:
+            return Response(
+                {'error': 'No active assessment attempt found'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Merge answers (like assignment submission)
+        existing_answers = submission.answers or {}
+        new_answers = validated_data.get('answers', {})
+        merged_answers = {**existing_answers, **new_answers}
+        
+        submission.answers = merged_answers
+        submission.time_remaining_seconds = validated_data.get('time_remaining_seconds', submission.time_remaining_seconds)
+        submission.save()
+        
+        from .serializers import CourseAssessmentSubmissionResponseSerializer
+        response_serializer = CourseAssessmentSubmissionResponseSerializer(submission)
+        
+        return Response({
+            'submission': response_serializer.data,
+            'message': 'Progress saved successfully'
+        }, status=status.HTTP_200_OK)
+        
+    except CourseAssessment.DoesNotExist:
+        return Response(
+            {'error': 'Assessment not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        print(f"Error in student_save_assessment_progress: {e}")
+        return Response(
+            {'error': 'Failed to save progress', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def student_assessment_submission_detail(request, assessment_id, submission_id):
+    """
+    Get assessment submission details for student review
+    Similar to AssignmentSubmissionDetailView
+    """
+    try:
+        submission = get_object_or_404(
+            CourseAssessmentSubmission.objects.select_related(
+                'assessment',
+                'graded_by'
+            ).prefetch_related(
+                'assessment__questions',
+                'assessment__course'
+            ),
+            id=submission_id,
+            student=request.user,
+            assessment_id=assessment_id
+        )
+        
+        # Get assessment with questions
+        assessment = submission.assessment
+        questions = assessment.questions.all().order_by('order')
+        
+        # Build questions data
+        questions_data = []
+        for question in questions:
+            questions_data.append({
+                'id': str(question.id),
+                'question_text': question.question_text,
+                'order': question.order,
+                'points': question.points,
+                'type': question.type,
+                'content': question.content,
+                'explanation': question.explanation,
+            })
+        
+        # Build graded questions data
+        graded_questions_data = []
+        for graded_q in submission.graded_questions:
+            feedback = graded_q.get('teacher_feedback') or graded_q.get('feedback', '')
+            graded_questions_data.append({
+                'question_id': graded_q.get('question_id'),
+                'points_earned': graded_q.get('points_earned', 0),
+                'points_possible': graded_q.get('points_possible'),
+                'feedback': feedback,
+                'correct_answer': graded_q.get('correct_answer', ''),
+                'is_correct': graded_q.get('is_correct'),
+            })
+        
+        # Build submission data
+        from .serializers import CourseAssessmentSubmissionResponseSerializer
+        submission_serializer = CourseAssessmentSubmissionResponseSerializer(submission)
+        
+        return Response({
+            'submission': submission_serializer.data,
+            'assessment': {
+                'id': str(assessment.id),
+                'title': assessment.title,
+                'description': assessment.description,
+                'instructions': assessment.instructions,
+                'assessment_type': assessment.assessment_type,
+                'time_limit_minutes': assessment.time_limit_minutes,
+                'passing_score': assessment.passing_score,
+                'max_attempts': assessment.max_attempts,
+            },
+            'questions': questions_data,
+            'graded_questions': graded_questions_data,
+        }, status=status.HTTP_200_OK)
+        
+    except CourseAssessmentSubmission.DoesNotExist:
+        return Response(
+            {'error': 'Submission not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        print(f"Error in student_assessment_submission_detail: {e}")
+        return Response(
+            {'error': 'Failed to fetch submission details', 'details': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 

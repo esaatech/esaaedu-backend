@@ -2712,3 +2712,148 @@ class CourseAssessmentQuestion(models.Model):
     
     def __str__(self):
         return f"Q{self.order}: {self.question_text[:50]}..."
+
+
+class CourseAssessmentSubmission(models.Model):
+    """
+    Student submissions for course assessments (tests/exams)
+    Similar structure to AssignmentSubmission for consistency with grading system
+    """
+    STATUS_CHOICES = [
+        ('in_progress', 'In Progress'),
+        ('submitted', 'Submitted'),
+        ('auto_submitted', 'Auto-Submitted'),
+        ('graded', 'Graded'),
+    ]
+    
+    # Basic Information
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='assessment_submissions')
+    assessment = models.ForeignKey(CourseAssessment, on_delete=models.CASCADE, related_name='submissions')
+    enrollment = models.ForeignKey('student.EnrolledCourse', on_delete=models.CASCADE)
+    
+    # Submission Details
+    attempt_number = models.IntegerField(validators=[MinValueValidator(1)])
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='in_progress',
+        help_text="Submission status: in_progress, submitted, auto_submitted, or graded"
+    )
+    started_at = models.DateTimeField(auto_now_add=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    
+    # Timer tracking (for page refresh recovery)
+    time_limit_minutes = models.IntegerField(null=True, blank=True, help_text="Time limit when submission started")
+    time_remaining_seconds = models.IntegerField(null=True, blank=True, help_text="Remaining time in seconds")
+    
+    # Student Answers
+    answers = models.JSONField(
+        default=dict,
+        help_text="Student answers for each question"
+    )
+    
+    # Teacher Grading (same structure as AssignmentSubmission)
+    is_graded = models.BooleanField(default=False, help_text="Has teacher graded this submission?")
+    is_teacher_draft = models.BooleanField(default=False, help_text="Is teacher currently working on grading this submission?")
+    graded_at = models.DateTimeField(null=True, blank=True)
+    graded_by = models.ForeignKey(
+        User, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='graded_course_assessments',
+        limit_choices_to={'role': 'teacher'}
+    )
+    
+    # Scoring
+    points_earned = models.DecimalField(
+        max_digits=6, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Points earned by student"
+    )
+    points_possible = models.DecimalField(
+        max_digits=6, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Total points possible"
+    )
+    percentage = models.DecimalField(
+        max_digits=5, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Percentage score"
+    )
+    passed = models.BooleanField(default=False, help_text="Did student pass the assessment?")
+    
+    # Feedback System
+    instructor_feedback = models.TextField(
+        blank=True,
+        help_text="Teacher's feedback on the submission"
+    )
+    feedback_checked = models.BooleanField(
+        default=False,
+        help_text="Has student seen the feedback?"
+    )
+    feedback_checked_at = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="When student last checked feedback"
+    )
+    feedback_response = models.TextField(
+        blank=True,
+        help_text="Student's response to teacher feedback"
+    )
+    
+    # Question-level grading (same structure as AssignmentSubmission)
+    graded_questions = models.JSONField(
+        default=list,
+        help_text="Individual question grades and feedback - list of {question_id, points_earned, points_possible, teacher_feedback/feedback, correct_answer (optional), is_correct (optional)}"
+    )
+    
+    # Grading History
+    grading_history = models.JSONField(
+        default=list,
+        help_text="Audit trail of grading changes"
+    )
+    
+    class Meta:
+        unique_together = ['student', 'assessment', 'attempt_number']
+        ordering = ['-submitted_at', '-started_at']
+        indexes = [
+            models.Index(fields=['student', 'assessment']),
+            models.Index(fields=['enrollment', 'submitted_at']),
+            models.Index(fields=['is_graded']),
+            models.Index(fields=['feedback_checked']),
+            models.Index(fields=['status']),
+        ]
+    
+    def __str__(self):
+        return f"{self.student.get_full_name()} - {self.assessment.title} (Attempt {self.attempt_number})"
+    
+    def save(self, *args, **kwargs):
+        # Auto-calculate percentage if points are provided
+        if self.points_earned is not None and self.points_possible is not None and self.points_possible > 0:
+            self.percentage = (self.points_earned / self.points_possible) * 100
+            
+            # Check if passed based on assessment passing score
+            if self.assessment and self.percentage >= self.assessment.passing_score:
+                self.passed = True
+            else:
+                self.passed = False
+        
+        # Auto-set status based on is_graded
+        if self.is_graded and self.status not in ['graded']:
+            self.status = 'graded'
+        elif not self.is_graded and self.status in ['submitted', 'auto_submitted']:
+            # Keep submitted status if already submitted
+            pass
+        elif not self.is_graded and self.status == 'in_progress':
+            # Keep in_progress status
+            pass
+        
+        super().save(*args, **kwargs)
