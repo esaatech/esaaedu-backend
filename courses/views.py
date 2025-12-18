@@ -3295,6 +3295,142 @@ def student_course_lessons(request, course_id):
         )
 
 
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def student_course_projects(request, course_id):
+    """
+    Get all projects for a course that the student is enrolled in
+    """
+    try:
+        course = get_object_or_404(Course, id=course_id)
+        
+        # Check if student is enrolled
+        if not request.user.is_authenticated:
+            return Response(
+                {'error': 'Authentication required'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            student_profile = request.user.student_profile
+        except AttributeError:
+            return Response(
+                {'error': 'Student profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        enrollment = EnrolledCourse.objects.filter(
+            student_profile=student_profile,
+            course=course,
+            status__in=['active', 'completed']
+        ).first()
+        
+        if not enrollment:
+            return Response(
+                {'error': 'You are not enrolled in this course'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get all projects for this course
+        projects = Project.objects.filter(course=course).order_by('created_at')
+        
+        # Serialize projects
+        from .serializers import ProjectListSerializer
+        serializer = ProjectListSerializer(projects, many=True)
+        
+        return Response({
+            'course_id': str(course.id),
+            'course_title': course.title,
+            'projects': serializer.data
+        }, status=status.HTTP_200_OK)
+        
+    except Course.DoesNotExist:
+        return Response(
+            {'error': 'Course not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        print(f"Error in student_course_projects: {e}")
+        return Response(
+            {'error': 'Failed to fetch course projects', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def student_course_assessments(request, course_id, assessment_type):
+    """
+    Get all tests or exams for a course that the student is enrolled in
+    assessment_type should be 'test' or 'exam'
+    """
+    try:
+        course = get_object_or_404(Course, id=course_id)
+        
+        # Validate assessment type
+        if assessment_type not in ['test', 'exam']:
+            return Response(
+                {'error': 'Invalid assessment type. Must be "test" or "exam"'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if student is enrolled
+        if not request.user.is_authenticated:
+            return Response(
+                {'error': 'Authentication required'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            student_profile = request.user.student_profile
+        except AttributeError:
+            return Response(
+                {'error': 'Student profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        enrollment = EnrolledCourse.objects.filter(
+            student_profile=student_profile,
+            course=course,
+            status__in=['active', 'completed']
+        ).first()
+        
+        if not enrollment:
+            return Response(
+                {'error': 'You are not enrolled in this course'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get all assessments of the specified type for this course
+        assessments = CourseAssessment.objects.filter(
+            course=course,
+            assessment_type=assessment_type
+        ).order_by('order', 'created_at')
+        
+        # Serialize assessments
+        from .serializers import CourseAssessmentListSerializer
+        serializer = CourseAssessmentListSerializer(assessments, many=True)
+        
+        return Response({
+            'course_id': str(course.id),
+            'course_title': course.title,
+            'assessment_type': assessment_type,
+            'assessments': serializer.data
+        }, status=status.HTTP_200_OK)
+        
+    except Course.DoesNotExist:
+        return Response(
+            {'error': 'Course not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        print(f"Error in student_course_assessments: {e}")
+        return Response(
+            {'error': 'Failed to fetch course assessments', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
     
 class StudentLessonDetailView(APIView):
     """
