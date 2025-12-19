@@ -24,6 +24,13 @@ urlpatterns = [
     path('assignments/<uuid:assignment_id>/grading/<uuid:submission_id>/', views.AssignmentGradingView.as_view(), name='assignment_submission_grading'),
     path('assignments/<uuid:assignment_id>/grading/<uuid:submission_id>/ai-grade/', views.AssignmentAIGradingView.as_view(), name='assignment_ai_grading'),
     
+    # Course Assessment (Test/Exam) Grading URLs
+    path('assessments/<uuid:assessment_id>/grading/', views.CourseAssessmentGradingView.as_view(), name='assessment_grading'),
+    path('assessments/<uuid:assessment_id>/grading/<uuid:submission_id>/', views.CourseAssessmentGradingView.as_view(), name='assessment_submission_grading'),
+    
+    # Student Assessment Submissions (Get all tests/exams for a student in one call)
+    path('students/<int:student_id>/assessments/', views.StudentAssessmentSubmissionsView.as_view(), name='student_assessment_submissions'),
+    
     # Code Snippet URLs (for teacher Tools page)
     path('code-snippets/', student_views.TeacherCodeSnippetListView.as_view(), name='teacher_code_snippet_list'),
     path('code-snippets/create/', student_views.CodeSnippetCreateView.as_view(), name='teacher_code_snippet_create'),

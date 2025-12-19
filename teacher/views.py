@@ -18,7 +18,7 @@ from .serializers import (
     AssignmentQuestionSerializer, AssignmentSubmissionSerializer, AssignmentGradingSerializer,
     AssignmentFeedbackSerializer
 )
-from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, LessonMaterial, VideoMaterial, BookPage, Lesson, DocumentMaterial, AudioVideoMaterial
+from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, LessonMaterial, VideoMaterial, BookPage, Lesson, DocumentMaterial, AudioVideoMaterial, CourseAssessment, CourseAssessmentSubmission
 from student.models import EnrolledCourse, Conversation, Message
 from student.serializers import (
     ConversationListSerializer, ConversationSerializer,
@@ -35,7 +35,7 @@ from ai.gemini_course_lessons_service import GeminiCourseLessonsService
 from ai.video_transcription_service import VideoTranscriptionService
 from ai.gemini_quiz_service import GeminiQuizService
 from ai.gemini_assignment_service import GeminiAssignmentService
-from courses.serializers import VideoMaterialSerializer, VideoMaterialCreateSerializer, VideoMaterialTranscribeSerializer
+from courses.serializers import VideoMaterialSerializer, VideoMaterialCreateSerializer, VideoMaterialTranscribeSerializer, CourseAssessmentGradingSerializer, CourseAssessmentSubmissionResponseSerializer
 
 
 class TeacherProfileAPIView(APIView):
@@ -2227,6 +2227,354 @@ class AssignmentAIGradingView(APIView):
             logger.error(f"Error in AI grading: {e}\n{traceback.format_exc()}")
             return Response(
                 {'error': f'Error during AI grading: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CourseAssessmentGradingView(APIView):
+    """
+    Course Assessment (Test/Exam) grading and submission management
+    GET: List submissions for assessment OR get specific submission
+    PUT: Grade submission
+    Similar to AssignmentGradingView for consistency
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, assessment_id, submission_id=None):
+        """
+        GET: List all submissions for a specific assessment OR get specific submission
+        If submission_id is provided, return single submission detail
+        Query parameters (for list view):
+        - status: Filter by grading status (graded, pending)
+        - search: Search by student name or email
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can access assessment grading'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get assessment and check ownership
+            try:
+                assessment = CourseAssessment.objects.select_related('course').get(id=assessment_id)
+                # Check if user is the course teacher
+                if assessment.course.teacher != request.user:
+                    return Response(
+                        {'error': 'Assessment not found or you do not have permission to access it'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except CourseAssessment.DoesNotExist:
+                return Response(
+                    {'error': 'Assessment not found or you do not have permission to access it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # If submission_id is provided, return single submission detail
+            if submission_id:
+                try:
+                    submission = CourseAssessmentSubmission.objects.select_related(
+                        'student', 'graded_by', 'enrollment'
+                    ).get(
+                        id=submission_id,
+                        assessment=assessment
+                    )
+                    
+                    serializer = CourseAssessmentSubmissionResponseSerializer(submission)
+                    return Response({
+                        'submission': serializer.data
+                    }, status=status.HTTP_200_OK)
+                    
+                except CourseAssessmentSubmission.DoesNotExist:
+                    return Response(
+                        {'error': 'Submission not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            
+            # Get submissions - CRITICAL: Only get latest submission per student
+            # Group by student and get the most recent attempt
+            from django.db.models import Max
+            latest_submissions = CourseAssessmentSubmission.objects.filter(
+                assessment=assessment
+            ).values('student').annotate(
+                latest_attempt=Max('attempt_number')
+            )
+            
+            # Get the actual submission objects for latest attempts
+            submissions = []
+            for item in latest_submissions:
+                try:
+                    submission = CourseAssessmentSubmission.objects.select_related(
+                        'student', 'graded_by', 'enrollment'
+                    ).get(
+                        assessment=assessment,
+                        student_id=item['student'],
+                        attempt_number=item['latest_attempt']
+                    )
+                    submissions.append(submission)
+                except CourseAssessmentSubmission.DoesNotExist:
+                    continue
+            
+            # Sort by submitted_at descending
+            submissions = sorted(submissions, key=lambda x: x.submitted_at or x.started_at, reverse=True)
+            
+            # Apply filters
+            status_filter = request.query_params.get('status')
+            if status_filter == 'graded':
+                submissions = [s for s in submissions if s.is_graded and not s.is_teacher_draft]
+            elif status_filter == 'pending':
+                submissions = [s for s in submissions if not s.is_graded or s.is_teacher_draft]
+            
+            # Filter by student_id if provided (for teacher viewing specific student)
+            student_id = request.query_params.get('student_id')
+            if student_id:
+                submissions = [s for s in submissions if str(s.student.id) == str(student_id)]
+            
+            search = request.query_params.get('search')
+            if search:
+                submissions = [
+                    s for s in submissions
+                    if search.lower() in s.student.first_name.lower() or
+                       search.lower() in s.student.last_name.lower() or
+                       search.lower() in s.student.email.lower()
+                ]
+            
+            # Serialize and return
+            serializer = CourseAssessmentSubmissionResponseSerializer(submissions, many=True)
+            
+            # Calculate grading stats
+            total_submissions = len(submissions)
+            graded_count = len([s for s in submissions if s.is_graded and not s.is_teacher_draft])
+            pending_count = total_submissions - graded_count
+            
+            return Response({
+                'assessment_id': str(assessment.id),
+                'assessment_title': assessment.title,
+                'assessment_type': assessment.assessment_type,
+                'submissions': serializer.data,
+                'grading_stats': {
+                    'total_submissions': total_submissions,
+                    'graded_count': graded_count,
+                    'pending_count': pending_count,
+                    'grading_progress': (graded_count / total_submissions * 100) if total_submissions > 0 else 0
+                }
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error retrieving assessment submissions: {e}", exc_info=True)
+            return Response(
+                {'error': f'Error retrieving assessment submissions: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, assessment_id, submission_id):
+        """
+        PUT: Grade an assessment submission
+        CRITICAL: Supports draft logic - is_teacher_draft flag distinguishes teacher drafts from student drafts
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can grade assessments'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get assessment and check ownership
+            try:
+                assessment = CourseAssessment.objects.select_related('course').get(id=assessment_id)
+                # Check if user is the course teacher
+                if assessment.course.teacher != request.user:
+                    return Response(
+                        {'error': 'Assessment not found or you do not have permission to grade it'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except CourseAssessment.DoesNotExist:
+                return Response(
+                    {'error': 'Assessment not found or you do not have permission to grade it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get submission and check it belongs to assessment
+            try:
+                submission = CourseAssessmentSubmission.objects.select_related(
+                    'student', 'enrollment'
+                ).get(
+                    id=submission_id, 
+                    assessment=assessment
+                )
+            except CourseAssessmentSubmission.DoesNotExist:
+                return Response(
+                    {'error': 'Submission not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Use grading serializer for validation and updating
+            serializer = CourseAssessmentGradingSerializer(
+                submission, 
+                data=request.data, 
+                partial=True
+            )
+            
+            if serializer.is_valid():
+                # Only set grader and grading timestamp if it's actually graded (not draft)
+                save_kwargs = {}
+                is_graded = serializer.validated_data.get('is_graded', False)
+                is_teacher_draft = serializer.validated_data.get('is_teacher_draft', False)
+                
+                # CRITICAL: Draft logic - same as assignments
+                # If is_teacher_draft is True, don't set graded_by/graded_at
+                # If is_graded is True and is_teacher_draft is False, set graded_by/graded_at
+                if is_graded and not is_teacher_draft:
+                    save_kwargs['graded_by'] = request.user
+                    save_kwargs['graded_at'] = timezone.now()
+                    # Update status to 'graded'
+                    save_kwargs['status'] = 'graded'
+                elif is_teacher_draft:
+                    # Keep status as is (submitted/auto_submitted) when saving as draft
+                    pass
+                
+                updated_submission = serializer.save(**save_kwargs)
+                
+                # Update enrollment performance metrics
+                try:
+                    enrollment = submission.enrollment
+                    
+                    # Calculate assessment score percentage
+                    if updated_submission.points_possible and updated_submission.points_possible > 0:
+                        assessment_score = float(updated_submission.points_earned or 0) / float(updated_submission.points_possible) * 100
+                    else:
+                        assessment_score = 0
+                    
+                    # Update performance metrics based on assessment type
+                    if assessment.assessment_type == 'test':
+                        # Update test performance (if method exists)
+                        if hasattr(enrollment, 'update_test_performance'):
+                            enrollment.update_test_performance(assessment_score, is_graded)
+                    elif assessment.assessment_type == 'exam':
+                        # Update exam performance (if method exists)
+                        if hasattr(enrollment, 'update_exam_performance'):
+                            enrollment.update_exam_performance(assessment_score, is_graded)
+                    
+                except Exception as e:
+                    logger.error(f"Error updating assessment performance metrics: {e}")
+                    # Don't fail the request if metrics update fails
+                
+                response_serializer = CourseAssessmentSubmissionResponseSerializer(updated_submission)
+                return Response({
+                    'submission': response_serializer.data,
+                    'message': 'Submission graded successfully'
+                }, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            logger.error(f"Error grading assessment submission: {e}", exc_info=True)
+            return Response(
+                {'error': f'Error grading assessment submission: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class StudentAssessmentSubmissionsView(APIView):
+    """
+    Get all assessment (test/exam) submissions for a specific student
+    Returns all assessments with their latest submission for the student
+    Single API call instead of looping through courses
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, student_id):
+        """
+        GET: Get all assessment submissions for a student
+        Query parameters:
+        - assessment_type: Filter by 'test' or 'exam' (optional)
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can access student assessment submissions'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get assessment_type from query params
+            assessment_type = request.query_params.get('assessment_type')
+            
+            # Get student
+            try:
+                from users.models import User
+                student = User.objects.get(id=student_id)
+            except User.DoesNotExist:
+                return Response(
+                    {'error': 'Student not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get all courses taught by this teacher
+            teacher_courses = Course.objects.filter(teacher=request.user)
+            
+            # Get all assessments for these courses
+            assessments = CourseAssessment.objects.filter(course__in=teacher_courses)
+            
+            # Filter by type if provided
+            if assessment_type:
+                if assessment_type not in ['test', 'exam']:
+                    return Response(
+                        {'error': "assessment_type must be 'test' or 'exam'"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                assessments = assessments.filter(assessment_type=assessment_type)
+            
+            # Get latest submission for each assessment for this student
+            # Use prefetch_related to optimize queries
+            results = []
+            
+            # Prefetch all submissions for this student in one query
+            student_submissions = CourseAssessmentSubmission.objects.filter(
+                student=student,
+                assessment__in=assessments
+            ).select_related('assessment', 'assessment__course').order_by('assessment', '-attempt_number')
+            
+            # Group by assessment and get latest for each
+            submissions_by_assessment = {}
+            for submission in student_submissions:
+                assessment_id = str(submission.assessment.id)
+                if assessment_id not in submissions_by_assessment:
+                    submissions_by_assessment[assessment_id] = submission
+            
+            # Build results
+            for assessment in assessments.select_related('course').prefetch_related('questions'):
+                assessment_id = str(assessment.id)
+                latest_submission = submissions_by_assessment.get(assessment_id)
+                
+                # Only include if student has a submission
+                if latest_submission:
+                    # Get full assessment details with questions (already prefetched)
+                    from courses.serializers import CourseAssessmentDetailSerializer, CourseAssessmentSubmissionResponseSerializer
+                    
+                    assessment_serializer = CourseAssessmentDetailSerializer(assessment)
+                    submission_serializer = CourseAssessmentSubmissionResponseSerializer(latest_submission)
+                    
+                    results.append({
+                        'assessment': assessment_serializer.data,
+                        'submission': submission_serializer.data,
+                        'course_title': assessment.course.title,
+                        'course_id': str(assessment.course.id)
+                    })
+            
+            return Response({
+                'student_id': str(student_id),
+                'student_name': student.get_full_name(),
+                'assessments': results,
+                'total': len(results)
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error retrieving student assessment submissions: {e}", exc_info=True)
+            return Response(
+                {'error': f'Error retrieving student assessment submissions: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
