@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib import messages
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, Note, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, Note, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
 from .views import delete_course_with_cleanup
 
 
@@ -995,3 +995,141 @@ class BoardPageAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related('board', 'board__classroom', 'created_by', 'last_updated_by')
+
+
+@admin.register(CourseAssessment)
+class CourseAssessmentAdmin(admin.ModelAdmin):
+    list_display = ['title', 'course', 'assessment_type', 'time_limit_minutes', 'passing_score', 'max_attempts', 'question_count', 'total_points', 'created_by', 'created_at']
+    list_filter = ['assessment_type', 'passing_score', 'max_attempts', 'created_at', 'course__category']
+    search_fields = ['title', 'description', 'instructions', 'course__title', 'created_by__email']
+    readonly_fields = ['id', 'created_at', 'updated_at', 'question_count', 'total_points']
+    date_hierarchy = 'created_at'
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('course', 'assessment_type', 'title', 'description', 'instructions')
+        }),
+        ('Assessment Configuration', {
+            'fields': ('time_limit_minutes', 'passing_score', 'max_attempts', 'order')
+        }),
+        ('Statistics', {
+            'fields': ('question_count', 'total_points'),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_by', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('course', 'created_by').prefetch_related('questions')
+
+
+@admin.register(CourseAssessmentQuestion)
+class CourseAssessmentQuestionAdmin(admin.ModelAdmin):
+    list_display = ['question_text_short', 'assessment', 'type', 'points', 'order', 'created_at']
+    list_filter = ['type', 'points', 'assessment__assessment_type', 'created_at']
+    search_fields = ['question_text', 'assessment__title', 'assessment__course__title']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    date_hierarchy = 'created_at'
+    
+    fieldsets = (
+        ('Question Information', {
+            'fields': ('assessment', 'question_text', 'type', 'content', 'points', 'order', 'explanation')
+        }),
+        ('Metadata', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def question_text_short(self, obj):
+        return obj.question_text[:50] + '...' if len(obj.question_text) > 50 else obj.question_text
+    question_text_short.short_description = 'Question Text'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('assessment', 'assessment__course')
+
+
+@admin.register(CourseAssessmentSubmission)
+class CourseAssessmentSubmissionAdmin(admin.ModelAdmin):
+    list_display = ['student_name', 'assessment_title', 'attempt_number', 'status', 'points_earned', 'points_possible', 'percentage', 'passed', 'is_graded', 'submitted_at', 'graded_at']
+    list_filter = ['status', 'is_graded', 'passed', 'attempt_number', 'assessment__assessment_type', 'submitted_at', 'graded_at']
+    search_fields = ['student__email', 'student__first_name', 'student__last_name', 'assessment__title', 'assessment__course__title']
+    readonly_fields = ['id', 'started_at', 'submitted_at', 'graded_at', 'percentage', 'passed']
+    date_hierarchy = 'submitted_at'
+    actions = ['mark_as_submitted', 'mark_as_graded', 'reset_to_in_progress']
+    
+    fieldsets = (
+        ('Submission Information', {
+            'fields': ('student', 'assessment', 'enrollment', 'attempt_number', 'status', 'started_at', 'submitted_at')
+        }),
+        ('Timer Information', {
+            'fields': ('time_limit_minutes', 'time_remaining_seconds'),
+            'classes': ('collapse',)
+        }),
+        ('Student Answers', {
+            'fields': ('answers',),
+            'classes': ('collapse',)
+        }),
+        ('Grading', {
+            'fields': ('is_graded', 'is_teacher_draft', 'points_earned', 'points_possible', 'percentage', 'passed', 'graded_by', 'graded_at', 'graded_questions')
+        }),
+        ('Feedback', {
+            'fields': ('instructor_feedback', 'feedback_checked', 'feedback_checked_at', 'feedback_response'),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('id',),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def student_name(self, obj):
+        return obj.student.get_full_name() or obj.student.email
+    student_name.short_description = 'Student'
+    
+    def assessment_title(self, obj):
+        return obj.assessment.title
+    assessment_title.short_description = 'Assessment'
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related(
+            'student', 'assessment', 'assessment__course', 'graded_by', 'enrollment'
+        )
+    
+    def mark_as_submitted(self, request, queryset):
+        """Action to mark submissions as submitted"""
+        from django.utils import timezone
+        updated = queryset.filter(status='in_progress').update(
+            status='submitted',
+            submitted_at=timezone.now()
+        )
+        self.message_user(request, f'{updated} submissions were marked as submitted.')
+    mark_as_submitted.short_description = "Mark selected submissions as submitted"
+    
+    def mark_as_graded(self, request, queryset):
+        """Action to mark submissions as graded"""
+        from django.utils import timezone
+        updated = queryset.filter(status__in=['submitted', 'auto_submitted']).update(
+            status='graded',
+            is_graded=True,
+            graded_at=timezone.now(),
+            graded_by=request.user
+        )
+        self.message_user(request, f'{updated} submissions were marked as graded.')
+    mark_as_graded.short_description = "Mark selected submissions as graded"
+    
+    def reset_to_in_progress(self, request, queryset):
+        """Action to reset submissions to in_progress status"""
+        updated = queryset.update(
+            status='in_progress',
+            submitted_at=None,
+            is_graded=False,
+            is_teacher_draft=False,
+            graded_at=None,
+            graded_by=None
+        )
+        self.message_user(request, f'{updated} submissions were reset to in_progress status.')
+    reset_to_in_progress.short_description = "Reset selected submissions to in_progress"
