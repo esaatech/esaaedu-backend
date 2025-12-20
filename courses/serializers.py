@@ -1897,11 +1897,67 @@ class ProjectPlatformSerializer(serializers.ModelSerializer):
 
 class ProjectListSerializer(serializers.ModelSerializer):
     """Serializer for listing projects"""
+    allowed_file_types = serializers.JSONField(read_only=True)
+    project_platform = serializers.SerializerMethodField()
+    submission_type = serializers.SerializerMethodField()
+    due_at = serializers.SerializerMethodField()
+    
+    def get_project_platform(self, obj):
+        """Get project platform from associated ClassEvent if available"""
+        # Get the most recent ClassEvent for this project that has a platform
+        from .models import ClassEvent
+        event = ClassEvent.objects.filter(
+            project=obj,
+            project_platform__isnull=False
+        ).select_related('project_platform').order_by('-created_at').first()
+        
+        if event and event.project_platform:
+            return {
+                'id': str(event.project_platform.id),
+                'name': event.project_platform.name,
+                'display_name': event.project_platform.display_name,
+                'base_url': event.project_platform.base_url,
+            }
+        return None
+    
+    def get_submission_type(self, obj):
+        """Get submission_type from associated ClassEvent if available, otherwise from Project"""
+        # Get the most recent ClassEvent for this project that has a submission_type
+        from .models import ClassEvent
+        event = ClassEvent.objects.filter(
+            project=obj,
+            submission_type__isnull=False
+        ).order_by('-created_at').first()
+        
+        # Prefer submission_type from ClassEvent if available, otherwise use Project's
+        if event and event.submission_type:
+            print(f"🔍 ProjectListSerializer: Using submission_type '{event.submission_type}' from ClassEvent {event.id} for project {obj.id}")
+            return event.submission_type
+        
+        print(f"🔍 ProjectListSerializer: Using submission_type '{obj.submission_type}' from Project {obj.id} (no ClassEvent found)")
+        return obj.submission_type
+    
+    def get_due_at(self, obj):
+        """Get due_at from associated ClassEvent if available, otherwise from Project"""
+        # Get the most recent ClassEvent for this project that has a due_date
+        from .models import ClassEvent
+        event = ClassEvent.objects.filter(
+            project=obj,
+            due_date__isnull=False
+        ).order_by('-created_at').first()
+        
+        # Prefer due_date from ClassEvent if available, otherwise use Project's
+        if event and event.due_date:
+            return event.due_date.isoformat()
+        if obj.due_at:
+            return obj.due_at.isoformat()
+        return None
     
     class Meta:
         model = Project
         fields = [
-            'id', 'title', 'instructions', 'submission_type', 'points', 'due_at', 'order', 'created_at'
+            'id', 'title', 'instructions', 'submission_type', 'points', 'due_at', 
+            'order', 'created_at', 'allowed_file_types', 'project_platform'
         ]
 
 
