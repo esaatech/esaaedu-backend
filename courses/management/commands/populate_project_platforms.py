@@ -143,6 +143,37 @@ class Command(BaseCommand):
                 'is_free': True
             },
             {
+                'name': 'trinket',
+                'display_name': 'Trinket',
+                'description': 'A simple, browser-based Python IDE perfect for education. Write, run, and share Python code instantly without any setup.',
+                'platform_type': 'Online IDE',
+                'base_url': 'https://trinket.io',
+                'api_endpoint': 'https://trinket.io/api',
+                'supported_languages': ['Python', 'HTML', 'CSS', 'JavaScript'],
+                'requires_authentication': True,
+                'supports_collaboration': True,
+                'supports_file_upload': True,
+                'supports_live_preview': True,
+                'supports_version_control': False,
+                'platform_config': {
+                    'python_versions': ['Python 3'],
+                    'turtle_graphics': True,
+                    'sharing_enabled': True,
+                    'embedding_enabled': True,
+                    'classroom_features': True,
+                    'templates_available': True,
+                    'library_support': True
+                },
+                'icon': 'trinket',
+                'color': '#00A8E8',
+                'min_age': 10,
+                'max_age': 18,
+                'skill_levels': ['beginner', 'intermediate'],
+                'is_active': True,
+                'is_featured': True,
+                'is_free': True
+            },
+            {
                 'name': 'codepen',
                 'display_name': 'CodePen',
                 'description': 'A social development environment for front-end designers and developers. Build and deploy a website, show off your work, build test cases to learn and debug.',
