@@ -13,7 +13,7 @@ from django.conf import settings
 import jwt
 from jwt.exceptions import InvalidKeyError
 import logging
-from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission, DocumentMaterial, DocumentMaterial, Project
+from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission, DocumentMaterial, DocumentMaterial, Project, ProjectSubmission
 
 logger = logging.getLogger(__name__)
 from student.models import EnrolledCourse
@@ -3353,6 +3353,146 @@ def student_course_projects(request, course_id):
         print(f"Error in student_course_projects: {e}")
         return Response(
             {'error': 'Failed to fetch course projects', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def student_project_submit(request, project_id):
+    """
+    Submit or update a project submission for a student
+    Similar to assignment submission pattern
+    """
+    try:
+        from .serializers import StudentProjectSubmissionSerializer
+        
+        project = get_object_or_404(Project, id=project_id)
+        
+        # Check if student is authenticated
+        if not request.user.is_authenticated:
+            return Response(
+                {'error': 'Authentication required'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            student_profile = request.user.student_profile
+        except AttributeError:
+            return Response(
+                {'error': 'Student profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if student is enrolled in the course
+        enrollment = EnrolledCourse.objects.filter(
+            student_profile=student_profile,
+            course=project.course,
+            status__in=['active', 'completed']
+        ).first()
+        
+        if not enrollment:
+            return Response(
+                {'error': 'You are not enrolled in this course'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get or create submission
+        submission, created = ProjectSubmission.objects.get_or_create(
+            project=project,
+            student=request.user,
+            defaults={'status': 'ASSIGNED'}
+        )
+        
+        # Update submission data
+        submission.status = 'SUBMITTED'
+        submission.submitted_at = timezone.now()
+        
+        # Handle content based on submission type
+        if 'content' in request.data:
+            submission.content = request.data['content']
+        
+        if 'file_url' in request.data:
+            submission.file_url = request.data['file_url']
+        
+        if 'reflection' in request.data:
+            submission.reflection = request.data['reflection']
+        
+        submission.save()
+        
+        # Serialize and return
+        serializer = StudentProjectSubmissionSerializer(submission)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+        
+    except Project.DoesNotExist:
+        return Response(
+            {'error': 'Project not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        print(f"Error in student_project_submit: {e}")
+        import traceback
+        traceback.print_exc()
+        return Response(
+            {'error': 'Failed to submit project', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def student_project_submission_detail(request, project_id):
+    """
+    Get project submission for a student
+    """
+    print(f"🔍 student_project_submission_detail called with project_id: {project_id}, type: {type(project_id)}")
+    try:
+        from .serializers import StudentProjectSubmissionSerializer
+        
+        project = get_object_or_404(Project, id=project_id)
+        print(f"✅ Project found: {project.id} - {project.title}")
+        
+        # Check if student is authenticated
+        if not request.user.is_authenticated:
+            return Response(
+                {'error': 'Authentication required'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            student_profile = request.user.student_profile
+        except AttributeError:
+            return Response(
+                {'error': 'Student profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get submission if it exists
+        try:
+            submission = ProjectSubmission.objects.get(
+                project=project,
+                student=request.user
+            )
+            print(f"✅ Submission found: {submission.id}")
+            serializer = StudentProjectSubmissionSerializer(submission)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except ProjectSubmission.DoesNotExist:
+            # Return 200 with null data if no submission exists yet (not an error)
+            print(f"ℹ️ No submission found for project {project_id}, student {request.user.id}")
+            return Response(
+                {'message': 'No submission found for this project', 'submission': None},
+                status=status.HTTP_200_OK
+            )
+        
+    except Project.DoesNotExist:
+        return Response(
+            {'error': 'Project not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        print(f"Error in student_project_submission_detail: {e}")
+        return Response(
+            {'error': 'Failed to fetch project submission', 'details': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 

@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, BookPage, VideoMaterial, DocumentMaterial, AudioVideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, ProjectSubmission, BookPage, VideoMaterial, DocumentMaterial, AudioVideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
 
 User = get_user_model()
 
@@ -1958,6 +1958,62 @@ class ProjectListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'instructions', 'submission_type', 'points', 'due_at', 
             'order', 'created_at', 'allowed_file_types', 'project_platform'
+        ]
+
+
+class StudentProjectSubmissionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for ProjectSubmission model - Student view
+    Similar to AssignmentSubmission structure
+    """
+    project_title = serializers.CharField(source='project.title', read_only=True)
+    project_points = serializers.IntegerField(source='project.points', read_only=True)
+    points_possible = serializers.SerializerMethodField()
+    percentage = serializers.SerializerMethodField()
+    passed = serializers.SerializerMethodField()
+    is_graded = serializers.SerializerMethodField()
+    grader_name = serializers.SerializerMethodField()
+    
+    def get_points_possible(self, obj):
+        """Get total points possible from project"""
+        return obj.project.points
+    
+    def get_percentage(self, obj):
+        """Calculate percentage score"""
+        if obj.points_earned is not None and obj.project.points > 0:
+            return float((obj.points_earned / obj.project.points) * 100)
+        return None
+    
+    def get_passed(self, obj):
+        """Check if student passed (assuming 70% passing score like assignments)"""
+        percentage = self.get_percentage(obj)
+        if percentage is not None:
+            return percentage >= 70.0
+        return False
+    
+    def get_is_graded(self, obj):
+        """Check if submission is graded"""
+        return obj.status == 'GRADED'
+    
+    def get_grader_name(self, obj):
+        """Get grader name"""
+        if obj.grader:
+            return obj.grader.get_full_name() or obj.grader.email
+        return None
+    
+    class Meta:
+        model = ProjectSubmission
+        fields = [
+            'id', 'project', 'project_title', 'project_points', 'status',
+            'content', 'file_url', 'reflection', 'submitted_at', 'graded_at',
+            'points_earned', 'points_possible', 'percentage', 'passed', 'is_graded',
+            'feedback', 'feedback_response', 'feedback_checked', 'feedback_checked_at',
+            'grader_name', 'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'project', 'submitted_at', 'graded_at', 'points_earned',
+            'feedback', 'feedback_response', 'feedback_checked', 'feedback_checked_at',
+            'grader', 'created_at', 'updated_at'
         ]
 
 
