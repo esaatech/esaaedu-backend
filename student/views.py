@@ -1358,6 +1358,7 @@ class DashboardOverview(APIView):
             return {
                 'live_lessons_limit': 3,
                 'continue_learning_limit': 25,
+                'upcoming_projects_limit': 5,
                 'show_today_only': False,
                 'theme_preference': 'auto',
                 'notifications_enabled': True,
@@ -1395,6 +1396,7 @@ class DashboardOverview(APIView):
                 'statistics': self._get_statistics_from_data(dashboard_data),
                 'continue_learning_lessons': self._get_continue_learning_lessons_from_data(dashboard_data, user_settings),
                 'live_lessons': self._get_live_lessons_from_data(dashboard_data, user_settings),
+                'upcoming_projects': self._get_upcoming_projects_from_data(dashboard_data, user_settings),
                 'recent_achievements': self._get_recent_achievements_from_data(dashboard_data)
             }
             
@@ -1426,7 +1428,7 @@ class DashboardOverview(APIView):
             course_ids = [enrollment.course.id for enrollment in enrollments]
             class_events = ClassEvent.objects.filter(
                 class_instance__course_id__in=course_ids
-            ).select_related('class_instance', 'lesson')
+            ).select_related('class_instance', 'lesson', 'project', 'project_platform')
             
             return {
                 'enrollments': enrollments,
@@ -1676,7 +1678,106 @@ class DashboardOverview(APIView):
         
         return live_lessons[:user_settings['live_lessons_limit']]  # Return user's configured limit
     
-
+    def _get_upcoming_projects_from_data(self, dashboard_data, user_settings):
+        """Get upcoming projects from cached dashboard data - sorted by due date"""
+        enrollments = dashboard_data['enrollments']
+        class_events = dashboard_data['class_events']
+        current_time = dashboard_data['current_time']
+        
+        print(f"🔍 DEBUG: Getting upcoming projects from ClassEvent model")
+        print(f"🔍 DEBUG: Current time: {current_time}")
+        
+        upcoming_projects = []
+        
+        for enrollment in enrollments:
+            print(f"🔍 DEBUG: Processing course for projects: {enrollment.course.title}")
+            
+            # Filter to only show upcoming/not overdue projects
+            # Use due_date__gt to include projects that haven't passed their due date
+            base_filter = {
+                'class_instance__course': enrollment.course,
+                'event_type': 'project',
+                'due_date__isnull': False  # Only include projects with due dates
+            }
+            
+            # Always filter by due_date > current_time to exclude overdue projects
+            # This ensures only upcoming or due soon projects are shown
+            time_filter = {
+                'due_date__gt': current_time  # Only include projects that haven't passed due date
+            }
+            
+            if user_settings.get('show_today_only', False):
+                # Additionally filter to show only today's projects
+                today_start = current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+                today_end = current_time.replace(hour=23, minute=59, second=59, microsecond=999999)
+                time_filter['due_date__gte'] = today_start
+                time_filter['due_date__lte'] = today_end
+                print(f"🔍 DEBUG: Projects - Filtering for TODAY ONLY (due_date > now): {today_start} to {today_end}")
+            else:
+                print(f"🔍 DEBUG: Projects - Filtering for ALL UPCOMING projects (due_date > now)")
+            
+            # Filter class events for this course
+            course_events = class_events.filter(
+                **base_filter,
+                **time_filter
+            ).order_by('due_date')[:5]  # Get more events per course for better selection
+            
+            print(f"🔍 DEBUG: Found {course_events.count()} project events for course {enrollment.course.title}")
+            
+            for event in course_events:
+                print(f"🔍 DEBUG: Processing project event: {event.title} (Due: {event.due_date})")
+                
+                # Get project title - prefer event title, fallback to project title
+                project_title = event.title
+                if not project_title and event.project:
+                    project_title = event.project.title
+                
+                # Get submission type - prefer event submission_type, fallback to project
+                submission_type = event.submission_type
+                if not submission_type and event.project:
+                    submission_type = event.project.submission_type
+                
+                # Get points from project
+                points = 0
+                if event.project:
+                    points = event.project.points
+                
+                project_data = {
+                    'id': str(event.id),
+                    'title': project_title or 'Untitled Project',
+                    'course_title': enrollment.course.title,
+                    'course_id': str(enrollment.course.id),
+                    'class_name': event.class_instance.name,
+                    'due_date': event.due_date.isoformat(),
+                    'project_id': event.project.id if event.project else None,
+                    'project_platform': None,
+                    'submission_type': submission_type,
+                    'points': points,
+                    'description': event.description
+                }
+                
+                # Add project platform if available
+                if event.project_platform:
+                    project_data['project_platform'] = {
+                        'id': str(event.project_platform.id),
+                        'name': event.project_platform.name,
+                        'display_name': event.project_platform.display_name,
+                        'base_url': event.project_platform.base_url
+                    }
+                
+                upcoming_projects.append(project_data)
+                print(f"🔍 DEBUG: Project added: {project_title}")
+        
+        # Sort all projects by due_date (earliest first)
+        upcoming_projects.sort(key=lambda x: x['due_date'])
+        
+        # Get limit from settings (default to 5 if not set)
+        projects_limit = user_settings.get('upcoming_projects_limit', 5)
+        
+        print(f"🔍 DEBUG: Final upcoming projects count: {len(upcoming_projects)}")
+        print(f"🔍 DEBUG: Projects sorted by due_date, returning top {min(projects_limit, len(upcoming_projects))} projects")
+        
+        return upcoming_projects[:projects_limit]  # Return user's configured limit
     
     def _get_recent_achievements_from_data(self, dashboard_data):
         """Get recent achievements from cached dashboard data"""
