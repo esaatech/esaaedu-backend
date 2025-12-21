@@ -355,7 +355,7 @@ class TeacherScheduleAPIView(APIView):
                 'assessment_title': event.assessment.title if event.assessment else None,
                 'assessment_type': event.assessment.assessment_type if event.assessment else None,
                 'due_date': event.due_date.isoformat() if event.due_date else None,
-                'submission_type': event.submission_type,
+                'submission_type': event.submission_type.name if event.submission_type else None,
                 'duration_minutes': event.duration_minutes,
                 'created_at': event.created_at.isoformat(),
             }
@@ -405,7 +405,7 @@ class TeacherScheduleAPIView(APIView):
                 'assessment_title': event.assessment.title if event.assessment else None,
                 'assessment_type': event.assessment.assessment_type if event.assessment else None,
                 'due_date': event.due_date.isoformat() if event.due_date else None,
-                'submission_type': event.submission_type,
+                'submission_type': event.submission_type.name if event.submission_type else None,
             }
             for event in events
         ]
@@ -448,7 +448,7 @@ class TeacherScheduleAPIView(APIView):
                 'assessment_title': event.assessment.title if event.assessment else None,
                 'assessment_type': event.assessment.assessment_type if event.assessment else None,
                 'due_date': event.due_date.isoformat() if event.due_date else None,
-                'submission_type': event.submission_type,
+                'submission_type': event.submission_type.name if event.submission_type else None,
             }
             # Safely append to events_by_type, creating key if it doesn't exist
             event_type = event.event_type
@@ -500,7 +500,7 @@ class TeacherScheduleAPIView(APIView):
                 'assessment_title': event.assessment.title if event.assessment else None,
                 'assessment_type': event.assessment.assessment_type if event.assessment else None,
                 'due_date': event.due_date.isoformat() if event.due_date else None,
-                'submission_type': event.submission_type,
+                'submission_type': event.submission_type.name if event.submission_type else None,
             }
             events_by_course[course_id]['events'].append(event_data)
         

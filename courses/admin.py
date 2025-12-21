@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib import messages
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, Note, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, SubmissionType, Note, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
 from .views import delete_course_with_cleanup
 
 
@@ -747,6 +747,43 @@ class ProjectPlatformAdmin(admin.ModelAdmin):
         updated = queryset.update(is_featured=False)
         self.message_user(request, f'{updated} platforms were unfeatured.')
     unfeature_platforms.short_description = "Remove featured status from selected platforms"
+
+
+@admin.register(SubmissionType)
+class SubmissionTypeAdmin(admin.ModelAdmin):
+    list_display = ['display_name', 'name', 'requires_file_upload', 'requires_text_input', 'requires_url_input', 'is_active', 'order', 'created_at']
+    list_filter = ['is_active', 'requires_file_upload', 'requires_text_input', 'requires_url_input', 'created_at']
+    search_fields = ['name', 'display_name', 'description']
+    readonly_fields = ['created_at', 'updated_at']
+    ordering = ['order', 'display_name']
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('name', 'display_name', 'description', 'icon', 'order')
+        }),
+        ('Submission Requirements', {
+            'fields': ('requires_file_upload', 'requires_text_input', 'requires_url_input')
+        }),
+        ('Status', {
+            'fields': ('is_active',)
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    actions = ['activate_types', 'deactivate_types']
+    
+    def activate_types(self, request, queryset):
+        updated = queryset.update(is_active=True)
+        self.message_user(request, f'{updated} submission types were activated.')
+    activate_types.short_description = "Activate selected submission types"
+    
+    def deactivate_types(self, request, queryset):
+        updated = queryset.update(is_active=False)
+        self.message_user(request, f'{updated} submission types were deactivated.')
+    deactivate_types.short_description = "Deactivate selected submission types"
 
 
 @admin.register(Note)

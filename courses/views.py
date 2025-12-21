@@ -13,7 +13,7 @@ from django.conf import settings
 import jwt
 from jwt.exceptions import InvalidKeyError
 import logging
-from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission, DocumentMaterial, DocumentMaterial, Project, ProjectSubmission
+from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission, DocumentMaterial, DocumentMaterial, Project, ProjectSubmission, SubmissionType
 
 logger = logging.getLogger(__name__)
 from student.models import EnrolledCourse
@@ -2302,7 +2302,7 @@ def class_events(request, class_id):
         )
     
     try:
-        from .models import ClassEvent, Project, ProjectPlatform, Lesson
+        from .models import ClassEvent, Project, ProjectPlatform, Lesson, SubmissionType
         from .serializers import ClassEventListSerializer, ClassEventCreateUpdateSerializer, ClassEventDetailSerializer, ProjectListSerializer, ProjectPlatformSerializer, LessonListSerializer
         
         # Verify the class belongs to the teacher

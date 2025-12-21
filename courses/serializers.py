@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, ProjectSubmission, BookPage, VideoMaterial, DocumentMaterial, AudioVideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, ProjectSubmission, SubmissionType, BookPage, VideoMaterial, DocumentMaterial, AudioVideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
 
 User = get_user_model()
 
@@ -1931,11 +1931,15 @@ class ProjectListSerializer(serializers.ModelSerializer):
         
         # Prefer submission_type from ClassEvent if available, otherwise use Project's
         if event and event.submission_type:
-            print(f"🔍 ProjectListSerializer: Using submission_type '{event.submission_type}' from ClassEvent {event.id} for project {obj.id}")
-            return event.submission_type
+            # Return the name (internal identifier) of the submission type
+            submission_type_name = event.submission_type.name if hasattr(event.submission_type, 'name') else str(event.submission_type)
+            print(f"🔍 ProjectListSerializer: Using submission_type '{submission_type_name}' from ClassEvent {event.id} for project {obj.id}")
+            return submission_type_name
         
-        print(f"🔍 ProjectListSerializer: Using submission_type '{obj.submission_type}' from Project {obj.id} (no ClassEvent found)")
-        return obj.submission_type
+        # Return the name (internal identifier) of the submission type
+        submission_type_name = obj.submission_type.name if obj.submission_type and hasattr(obj.submission_type, 'name') else str(obj.submission_type) if obj.submission_type else None
+        print(f"🔍 ProjectListSerializer: Using submission_type '{submission_type_name}' from Project {obj.id} (no ClassEvent found)")
+        return submission_type_name
     
     def get_due_at(self, obj):
         """Get due_at from associated ClassEvent if available, otherwise from Project"""
@@ -2024,9 +2028,16 @@ class ClassEventListSerializer(serializers.ModelSerializer):
     lesson_title = serializers.CharField(source='lesson.title', read_only=True)
     project_title = serializers.CharField(source='project.title', read_only=True)
     project_platform_name = serializers.CharField(source='project_platform.display_name', read_only=True)
+    submission_type_name = serializers.SerializerMethodField()
     assessment_title = serializers.CharField(source='assessment.title', read_only=True)
     assessment_type = serializers.CharField(source='assessment.assessment_type', read_only=True)
     duration_minutes = serializers.IntegerField(read_only=True)
+    
+    def get_submission_type_name(self, obj):
+        """Get submission type name (internal identifier)"""
+        if obj.submission_type:
+            return obj.submission_type.name if hasattr(obj.submission_type, 'name') else str(obj.submission_type)
+        return None
     
     class Meta:
         model = ClassEvent
@@ -2035,7 +2046,7 @@ class ClassEventListSerializer(serializers.ModelSerializer):
             'lesson_title', 'project_title', 'project_platform_name', 
             'assessment_title', 'assessment_type', 'lesson_type', 
             'duration_minutes', 'meeting_platform', 'meeting_link',
-            'meeting_id', 'meeting_password', 'due_date', 'submission_type', 'created_at'
+            'meeting_id', 'meeting_password', 'due_date', 'submission_type_name', 'created_at'
         ]
 
 
@@ -2047,9 +2058,23 @@ class ClassEventDetailSerializer(serializers.ModelSerializer):
     project_id = serializers.CharField(source='project.id', read_only=True)
     project_platform_name = serializers.CharField(source='project_platform.display_name', read_only=True)
     project_platform_id = serializers.CharField(source='project_platform.id', read_only=True)
+    submission_type_name = serializers.SerializerMethodField()
+    submission_type_display = serializers.SerializerMethodField()
     assessment_id = serializers.CharField(source='assessment.id', read_only=True)
     assessment_title = serializers.CharField(source='assessment.title', read_only=True)
     assessment_type = serializers.CharField(source='assessment.assessment_type', read_only=True)
+    
+    def get_submission_type_name(self, obj):
+        """Get submission type name (internal identifier)"""
+        if obj.submission_type:
+            return obj.submission_type.name if hasattr(obj.submission_type, 'name') else str(obj.submission_type)
+        return None
+    
+    def get_submission_type_display(self, obj):
+        """Get submission type display name"""
+        if obj.submission_type:
+            return obj.submission_type.display_name if hasattr(obj.submission_type, 'display_name') else str(obj.submission_type)
+        return None
     class_name = serializers.CharField(source='class_instance.name', read_only=True)
     duration_minutes = serializers.IntegerField(read_only=True)
     
@@ -2059,6 +2084,7 @@ class ClassEventDetailSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'event_type', 'start_time', 'end_time',
             'lesson', 'lesson_id', 'lesson_title', 'project', 'project_id', 'project_title',
             'project_platform', 'project_platform_id', 'project_platform_name',
+            'submission_type', 'submission_type_name', 'submission_type_display',
             'assessment', 'assessment_id', 'assessment_title', 'assessment_type',
             'lesson_type', 'class_name', 'duration_minutes',
             'meeting_platform', 'meeting_link', 'meeting_id', 'meeting_password',
@@ -2068,6 +2094,9 @@ class ClassEventDetailSerializer(serializers.ModelSerializer):
 
 class ClassEventCreateUpdateSerializer(serializers.ModelSerializer):
     """Serializer for creating and updating class events"""
+    
+    # Override submission_type to accept string name or object
+    submission_type = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     
     class Meta:
         model = ClassEvent
@@ -2108,11 +2137,49 @@ class ClassEventCreateUpdateSerializer(serializers.ModelSerializer):
             if not data.get('due_date'):
                 raise serializers.ValidationError("Due date is required for project events")
             
-            # Validate submission_type if provided
-            if data.get('submission_type'):
-                valid_submission_types = ['link', 'image', 'video', 'audio', 'file', 'note', 'code', 'presentation']
-                if data['submission_type'] not in valid_submission_types:
-                    raise serializers.ValidationError(f"Invalid submission type. Must be one of: {', '.join(valid_submission_types)}")
+            # Handle submission_type if passed as string (name) - convert to object
+            submission_type = data.get('submission_type')
+            if submission_type and isinstance(submission_type, str):
+                from .models import SubmissionType
+                try:
+                    submission_type_obj = SubmissionType.objects.get(name=submission_type, is_active=True)
+                    data['submission_type'] = submission_type_obj
+                except SubmissionType.DoesNotExist:
+                    raise serializers.ValidationError(f"Submission type '{submission_type}' not found or inactive")
+            
+            # Auto-set submission_type to 'code' if Ace Pyodide platform is selected
+            project_platform = data.get('project_platform')
+            if project_platform:
+                platform_name = None
+                
+                # Handle if platform is passed as string UUID
+                if isinstance(project_platform, str):
+                    from .models import ProjectPlatform
+                    try:
+                        platform_obj = ProjectPlatform.objects.get(id=project_platform)
+                        platform_name = platform_obj.name
+                    except (ProjectPlatform.DoesNotExist, ValueError):
+                        pass
+                # Handle if platform is already an object
+                elif hasattr(project_platform, 'name'):
+                    platform_name = project_platform.name
+                # Handle if platform is passed as ID (UUID object)
+                elif hasattr(project_platform, 'id'):
+                    from .models import ProjectPlatform
+                    try:
+                        platform_obj = ProjectPlatform.objects.get(id=project_platform.id)
+                        platform_name = platform_obj.name
+                    except ProjectPlatform.DoesNotExist:
+                        pass
+                
+                # If Ace Pyodide is selected and no submission_type is set, auto-set to 'code'
+                if platform_name == 'ace_pyodide' and not data.get('submission_type'):
+                    from .models import SubmissionType
+                    try:
+                        code_submission_type = SubmissionType.objects.get(name='code', is_active=True)
+                        data['submission_type'] = code_submission_type
+                    except SubmissionType.DoesNotExist:
+                        pass  # If code type doesn't exist, let validation handle it
         
         return data
     
@@ -2123,8 +2190,69 @@ class ClassEventCreateUpdateSerializer(serializers.ModelSerializer):
         if not class_instance:
             raise serializers.ValidationError("Class instance is required")
         
+        # Handle submission_type if passed as string (name) - convert to object
+        submission_type = validated_data.pop('submission_type', None)
+        if submission_type:
+            if isinstance(submission_type, str):
+                from .models import SubmissionType
+                try:
+                    submission_type_obj = SubmissionType.objects.get(name=submission_type, is_active=True)
+                    validated_data['submission_type'] = submission_type_obj
+                except SubmissionType.DoesNotExist:
+                    raise serializers.ValidationError(f"Submission type '{submission_type}' not found or inactive")
+            else:
+                # Already an object
+                validated_data['submission_type'] = submission_type
+        else:
+            # No submission_type provided, set to None
+            validated_data['submission_type'] = None
+        
         validated_data['class_instance'] = class_instance
         return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        """Update an existing class event"""
+        # Handle submission_type if passed as string (name) - convert to object
+        submission_type = validated_data.pop('submission_type', None)
+        if submission_type is not None:
+            if isinstance(submission_type, str):
+                from .models import SubmissionType
+                try:
+                    submission_type_obj = SubmissionType.objects.get(name=submission_type, is_active=True)
+                    validated_data['submission_type'] = submission_type_obj
+                except SubmissionType.DoesNotExist:
+                    raise serializers.ValidationError(f"Submission type '{submission_type}' not found or inactive")
+            else:
+                # Already an object
+                validated_data['submission_type'] = submission_type
+        # If submission_type is None, it will remain as is (nullable field)
+        
+        # Auto-set submission_type to 'code' if Ace Pyodide platform is selected
+        project_platform = validated_data.get('project_platform', instance.project_platform)
+        if project_platform:
+            platform_name = None
+            
+            # Handle if platform is passed as string UUID
+            if isinstance(project_platform, str):
+                from .models import ProjectPlatform
+                try:
+                    platform_obj = ProjectPlatform.objects.get(id=project_platform)
+                    platform_name = platform_obj.name
+                except (ProjectPlatform.DoesNotExist, ValueError):
+                    pass
+            # Handle if platform is already an object
+            elif hasattr(project_platform, 'name'):
+                platform_name = project_platform.name
+            
+            if platform_name == 'ace_pyodide' and not validated_data.get('submission_type') and not instance.submission_type:
+                from .models import SubmissionType
+                try:
+                    code_submission_type = SubmissionType.objects.get(name='code', is_active=True)
+                    validated_data['submission_type'] = code_submission_type
+                except SubmissionType.DoesNotExist:
+                    pass
+        
+        return super().update(instance, validated_data)
 
 
 # ===== LESSON MATERIAL SERIALIZERS =====

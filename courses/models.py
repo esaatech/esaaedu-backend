@@ -802,26 +802,71 @@ class AudioVideoMaterial(models.Model):
         super().delete(*args, **kwargs)
 
 
-class Project(models.Model):
-    SUBMISSION_TYPES = [
-        ('link', 'Link/URL'),
-        ('image', 'Image'),
-        ('video', 'Video'),
-        ('audio', 'Audio'),
-        ('file', 'File Upload'),
-        ('note', 'Text Note'),
-        ('code', 'Code'),
-        ('presentation', 'Presentation'),
-    ]
+class SubmissionType(models.Model):
+    """
+    Submission types that can be managed from admin
+    Defines the different ways students can submit their work
+    """
+    name = models.CharField(
+        max_length=50,
+        unique=True,
+        help_text="Internal name (e.g., 'link', 'code', 'image')"
+    )
+    display_name = models.CharField(
+        max_length=100,
+        help_text="User-friendly display name (e.g., 'Link/URL', 'Code Submission')"
+    )
+    description = models.TextField(
+        blank=True,
+        help_text="Description of this submission type"
+    )
+    requires_file_upload = models.BooleanField(
+        default=False,
+        help_text="Does this submission type require file upload?"
+    )
+    requires_text_input = models.BooleanField(
+        default=False,
+        help_text="Does this submission type require text input?"
+    )
+    requires_url_input = models.BooleanField(
+        default=False,
+        help_text="Does this submission type require URL input?"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Is this submission type currently available?"
+    )
+    icon = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Icon identifier for UI display"
+    )
+    order = models.PositiveIntegerField(
+        default=0,
+        help_text="Display order in admin and forms"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     
+    class Meta:
+        ordering = ['order', 'display_name']
+        verbose_name = "Submission Type"
+        verbose_name_plural = "Submission Types"
+    
+    def __str__(self):
+        return self.display_name
+
+
+class Project(models.Model):
     course = models.ForeignKey("courses.Course", on_delete=models.CASCADE, related_name="projects")
     title = models.CharField(max_length=200)
     instructions = models.TextField()
     
     # Submission type and requirements
-    submission_type = models.CharField(
-        max_length=20, 
-        choices=SUBMISSION_TYPES,
+    submission_type = models.ForeignKey(
+        SubmissionType,
+        on_delete=models.PROTECT,
+        related_name="projects",
         help_text="Type of submission expected from students"
     )
     
@@ -843,22 +888,22 @@ class Project(models.Model):
     @property
     def submission_type_display(self):
         """Get the display name for the submission type"""
-        return dict(self.SUBMISSION_TYPES).get(self.submission_type, "Unknown")
+        return self.submission_type.display_name if self.submission_type else "Unknown"
     
     @property
     def requires_file_upload(self):
         """Check if this project type requires file upload"""
-        return self.submission_type in ['image', 'video', 'audio', 'file', 'code', 'presentation']
+        return self.submission_type.requires_file_upload if self.submission_type else False
     
     @property
     def requires_text_input(self):
         """Check if this project type requires text input"""
-        return self.submission_type in ['note', 'code']
+        return self.submission_type.requires_text_input if self.submission_type else False
     
     @property
     def requires_url_input(self):
         """Check if this project type requires URL input"""
-        return self.submission_type in ['link', 'presentation']        
+        return self.submission_type.requires_url_input if self.submission_type else False        
 
 
 
@@ -2324,20 +2369,12 @@ class ClassEvent(models.Model):
         blank=True,
         help_text="Project due date (for project events)"
     )
-    submission_type = models.CharField(
-        max_length=20,
-        choices=[
-            ('link', 'Link/URL'),
-            ('image', 'Image'),
-            ('video', 'Video'),
-            ('audio', 'Audio'),
-            ('file', 'File Upload'),
-            ('note', 'Text Note'),
-            ('code', 'Code'),
-            ('presentation', 'Presentation'),
-        ],
-        blank=True,
+    submission_type = models.ForeignKey(
+        SubmissionType,
+        on_delete=models.SET_NULL,
+        related_name="class_events",
         null=True,
+        blank=True,
         help_text="Expected submission type for project events"
     )
 

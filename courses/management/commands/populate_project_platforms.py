@@ -580,6 +580,43 @@ class Command(BaseCommand):
             )
         )
 
+        # Add internal Ace Pyodide platform
+        ace_pyodide_platform, created = ProjectPlatform.objects.update_or_create(
+            name='ace_pyodide',
+            defaults={
+                'display_name': 'Ace Pyodide',
+                'description': 'Internal code editor with Python execution using Pyodide. Students write and run code directly in the browser without external platforms.',
+                'platform_type': 'Online IDE',
+                'base_url': '/student/ide',  # Internal route
+                'api_endpoint': '',
+                'supported_languages': ['python', 'javascript'],
+                'requires_authentication': True,
+                'supports_collaboration': False,
+                'supports_file_upload': False,
+                'supports_live_preview': True,
+                'supports_version_control': False,
+                'platform_config': {
+                    'is_internal': True,
+                    'editor': 'ace',
+                    'runtime': 'pyodide',
+                    'submission_type': 'code'
+                },
+                'icon': 'code',
+                'color': '#6366f1',
+                'logo_url': '',
+                'min_age': 8,
+                'max_age': 18,
+                'skill_levels': ['beginner', 'intermediate', 'advanced'],
+                'is_active': True,
+                'is_featured': True,
+                'is_free': True,
+            }
+        )
+        if created:
+            self.stdout.write(self.style.SUCCESS(f'✓ Created Ace Pyodide platform'))
+        else:
+            self.stdout.write(self.style.SUCCESS(f'✓ Updated Ace Pyodide platform'))
+
         # Display summary by platform type
         self.stdout.write('\nPlatform Summary by Type:')
         platform_types = ProjectPlatform.objects.values_list('platform_type', flat=True).distinct()
