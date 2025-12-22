@@ -1733,9 +1733,12 @@ class DashboardOverview(APIView):
                     project_title = event.project.title
                 
                 # Get submission type - prefer event submission_type, fallback to project
-                submission_type = event.submission_type
-                if not submission_type and event.project:
-                    submission_type = event.project.submission_type
+                submission_type_obj = event.submission_type
+                if not submission_type_obj and event.project:
+                    submission_type_obj = event.project.submission_type
+                
+                # Convert SubmissionType object to string (name field)
+                submission_type = submission_type_obj.name if submission_type_obj else None
                 
                 # Get points from project
                 points = 0

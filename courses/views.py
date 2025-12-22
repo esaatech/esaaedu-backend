@@ -3404,9 +3404,20 @@ def student_project_submit(request, project_id):
             defaults={'status': 'ASSIGNED'}
         )
         
-        # Update submission data
-        submission.status = 'SUBMITTED'
-        submission.submitted_at = timezone.now()
+        # Determine status: use provided status, or default to SUBMITTED for final submission
+        # If status is provided in request, use it (for draft saving with ASSIGNED)
+        # Otherwise, default to SUBMITTED (final submission)
+        requested_status = request.data.get('status', 'SUBMITTED')
+        
+        # Only allow ASSIGNED or SUBMITTED status from student
+        if requested_status not in ['ASSIGNED', 'SUBMITTED']:
+            requested_status = 'SUBMITTED'
+        
+        submission.status = requested_status
+        
+        # Only set submitted_at when actually submitting (not for drafts)
+        if requested_status == 'SUBMITTED':
+            submission.submitted_at = timezone.now()
         
         # Handle content based on submission type
         if 'content' in request.data:
