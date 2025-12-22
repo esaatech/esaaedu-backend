@@ -1901,6 +1901,7 @@ class ProjectListSerializer(serializers.ModelSerializer):
     project_platform = serializers.SerializerMethodField()
     submission_type = serializers.SerializerMethodField()
     due_at = serializers.SerializerMethodField()
+    meeting_link = serializers.SerializerMethodField()
     
     def get_project_platform(self, obj):
         """Get project platform from associated ClassEvent if available"""
@@ -1957,11 +1958,24 @@ class ProjectListSerializer(serializers.ModelSerializer):
             return obj.due_at.isoformat()
         return None
     
+    def get_meeting_link(self, obj):
+        """Get meeting_link from associated ClassEvent if available"""
+        # Get the most recent ClassEvent for this project that has a meeting_link
+        from .models import ClassEvent
+        event = ClassEvent.objects.filter(
+            project=obj,
+            meeting_link__isnull=False
+        ).exclude(meeting_link='').order_by('-created_at').first()
+        
+        if event and event.meeting_link:
+            return event.meeting_link
+        return None
+    
     class Meta:
         model = Project
         fields = [
             'id', 'title', 'instructions', 'submission_type', 'points', 'due_at', 
-            'order', 'created_at', 'allowed_file_types', 'project_platform'
+            'order', 'created_at', 'allowed_file_types', 'project_platform', 'meeting_link'
         ]
 
 
