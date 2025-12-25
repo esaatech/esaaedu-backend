@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 import uuid
 
 from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback, Conversation, Message, CodeSnippet
-from courses.models import Class, ClassEvent, Course, Lesson, Quiz, QuizAttempt, Question, Assignment, AssignmentSubmission, Classroom
+from courses.models import Class, ClassEvent, Course, Lesson, Quiz, QuizAttempt, Question, Assignment, AssignmentSubmission, Classroom, ProjectSubmission, CourseAssessmentSubmission, CourseAssessment
 from settings.models import UserDashboardSettings
 from .serializers import (
     EnrolledCourseListSerializer, 
@@ -2693,6 +2693,213 @@ class DashboardAssessmentView(APIView):
             
             teacher_assessment_groups = list(grouped_assessments.values())
             
+            # Project assessments stats - wrapped in try/except to prevent breaking existing functionality
+            try:
+                project_submissions_qs = ProjectSubmission.objects.filter(
+                    student=request.user,
+                    status__in=['SUBMITTED', 'GRADED']  # Only show submitted and graded projects
+                ).select_related('project')
+                
+                total_projects = project_submissions_qs.count()
+                # For projects, check if they have points_earned and project.points to determine passed
+                # If project has points and points_earned >= 70% of points, consider passed
+                passed_projects = 0
+                for sub in project_submissions_qs.filter(status='GRADED'):
+                    if sub.project.points and sub.points_earned:
+                        percentage = (sub.points_earned / sub.project.points) * 100
+                        if percentage >= 70:  # 70% passing threshold
+                            passed_projects += 1
+                
+                # Calculate average score for graded projects
+                project_scores = []
+                for sub in project_submissions_qs.filter(status='GRADED'):
+                    if sub.project.points and sub.points_earned:
+                        percentage = (sub.points_earned / sub.project.points) * 100
+                        project_scores.append(float(percentage))
+                avg_project_score = sum(project_scores) / len(project_scores) if project_scores else 0
+                recent_projects = project_submissions_qs.filter(submitted_at__gte=week_ago).count()
+            except Exception as e:
+                # If there's an error, default to 0s to prevent breaking existing functionality
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error calculating project assessments: {str(e)}")
+                total_projects = 0
+                passed_projects = 0
+                avg_project_score = 0
+                recent_projects = 0
+            
+            # Test assessments stats (CourseAssessment with type='test') - wrapped in try/except
+            test_assessments = []
+            try:
+                test_submissions_qs = CourseAssessmentSubmission.objects.filter(
+                    student=request.user,
+                    assessment__assessment_type='test',
+                    status__in=['submitted', 'auto_submitted', 'graded']
+                ).select_related('assessment').order_by('assessment_id', '-submitted_at', '-attempt_number')
+                
+                # Group by assessment_id and get latest attempt for each
+                from collections import defaultdict
+                test_groups = defaultdict(list)
+                for submission in test_submissions_qs:
+                    test_groups[str(submission.assessment_id)].append(submission)
+                
+                # Get latest attempt for each unique test
+                latest_test_attempts = []
+                for assessment_id, submissions in test_groups.items():
+                    # Latest is first in list (ordered by -submitted_at, -attempt_number)
+                    latest_test_attempts.append(submissions[0])
+                
+                # Calculate stats based on latest attempts only
+                total_tests = len(latest_test_attempts)  # Count unique tests
+                passed_tests = sum(1 for attempt in latest_test_attempts if attempt.passed and attempt.is_graded)
+                failed_tests = sum(1 for attempt in latest_test_attempts if attempt.is_graded and not attempt.passed)
+                
+                # Average score from graded latest attempts only
+                graded_latest_attempts = [a for a in latest_test_attempts if a.is_graded and a.percentage is not None]
+                avg_test_score = sum(float(a.percentage) for a in graded_latest_attempts) / len(graded_latest_attempts) if graded_latest_attempts else 0
+                
+                # Recent tests (latest attempts submitted in last week)
+                recent_tests = sum(1 for attempt in latest_test_attempts if attempt.submitted_at and attempt.submitted_at >= week_ago)
+                
+                # Build test assessments list with latest attempts and previous attempts
+                test_assessments = []
+                for assessment_id, submissions in test_groups.items():
+                    latest = submissions[0]  # Latest attempt
+                    previous = submissions[1:] if len(submissions) > 1 else []  # Previous attempts
+                    
+                    # Get assessment details
+                    assessment = latest.assessment
+                    enrollment = latest.enrollment
+                    
+                    is_graded = latest.is_graded and latest.status == 'graded'
+                    
+                    test_assessments.append({
+                        'assessment_id': str(assessment.id),
+                        'test_attempt_id': str(latest.id),  # Latest attempt ID
+                        'test_title': assessment.title,
+                        'course_title': enrollment.course.title if enrollment else 'N/A',
+                        'student_name': f"{student_profile.child_first_name} {student_profile.child_last_name}",
+                        'score_percentage': float(latest.percentage) if latest.percentage is not None and is_graded else None,
+                        'passed': bool(latest.passed) if is_graded else None,
+                        'is_graded': is_graded,
+                        'status': latest.status,
+                        'attempt_number': latest.attempt_number,
+                        'submitted_at': latest.submitted_at.isoformat() if latest.submitted_at else None,
+                        'graded_at': latest.graded_at.isoformat() if latest.graded_at else None,
+                        'has_teacher_feedback': bool(latest.instructor_feedback),
+                        'is_latest': True,  # Mark as latest
+                        'has_previous_attempts': len(previous) > 0,
+                        'previous_attempts': [
+                            {
+                                'test_attempt_id': str(prev.id),
+                                'attempt_number': prev.attempt_number,
+                                'submitted_at': prev.submitted_at.isoformat() if prev.submitted_at else None,
+                                'status': prev.status,
+                                'is_graded': False  # Previous attempts are not graded
+                            }
+                            for prev in previous
+                        ] if previous else []
+                    })
+                
+                # Sort by submitted_at descending (most recent first)
+                test_assessments.sort(key=lambda x: x['submitted_at'] or '', reverse=True)
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error calculating test assessments: {str(e)}")
+                total_tests = 0
+                passed_tests = 0
+                failed_tests = 0
+                avg_test_score = 0
+                recent_tests = 0
+                test_assessments = []
+            
+            # Exam assessments stats (CourseAssessment with type='exam') - wrapped in try/except
+            exam_assessments = []
+            try:
+                exam_submissions_qs = CourseAssessmentSubmission.objects.filter(
+                    student=request.user,
+                    assessment__assessment_type='exam',
+                    status__in=['submitted', 'auto_submitted', 'graded']
+                ).select_related('assessment').order_by('assessment_id', '-submitted_at', '-attempt_number')
+                
+                # Group by assessment_id and get latest attempt for each
+                from collections import defaultdict
+                exam_groups = defaultdict(list)
+                for submission in exam_submissions_qs:
+                    exam_groups[str(submission.assessment_id)].append(submission)
+                
+                # Get latest attempt for each unique exam
+                latest_exam_attempts = []
+                for assessment_id, submissions in exam_groups.items():
+                    # Latest is first in list (ordered by -submitted_at, -attempt_number)
+                    latest_exam_attempts.append(submissions[0])
+                
+                # Calculate stats based on latest attempts only
+                total_exams = len(latest_exam_attempts)  # Count unique exams
+                passed_exams = sum(1 for attempt in latest_exam_attempts if attempt.passed and attempt.is_graded)
+                failed_exams = sum(1 for attempt in latest_exam_attempts if attempt.is_graded and not attempt.passed)
+                
+                # Average score from graded latest attempts only
+                graded_latest_attempts = [a for a in latest_exam_attempts if a.is_graded and a.percentage is not None]
+                avg_exam_score = sum(float(a.percentage) for a in graded_latest_attempts) / len(graded_latest_attempts) if graded_latest_attempts else 0
+                
+                # Recent exams (latest attempts submitted in last week)
+                recent_exams = sum(1 for attempt in latest_exam_attempts if attempt.submitted_at and attempt.submitted_at >= week_ago)
+                
+                # Build exam assessments list with latest attempts and previous attempts
+                exam_assessments = []
+                for assessment_id, submissions in exam_groups.items():
+                    latest = submissions[0]  # Latest attempt
+                    previous = submissions[1:] if len(submissions) > 1 else []  # Previous attempts
+                    
+                    # Get assessment details
+                    assessment = latest.assessment
+                    enrollment = latest.enrollment
+                    
+                    is_graded = latest.is_graded and latest.status == 'graded'
+                    
+                    exam_assessments.append({
+                        'assessment_id': str(assessment.id),
+                        'exam_attempt_id': str(latest.id),  # Latest attempt ID
+                        'exam_title': assessment.title,
+                        'course_title': enrollment.course.title if enrollment else 'N/A',
+                        'student_name': f"{student_profile.child_first_name} {student_profile.child_last_name}",
+                        'score_percentage': float(latest.percentage) if latest.percentage is not None and is_graded else None,
+                        'passed': bool(latest.passed) if is_graded else None,
+                        'is_graded': is_graded,
+                        'status': latest.status,
+                        'attempt_number': latest.attempt_number,
+                        'submitted_at': latest.submitted_at.isoformat() if latest.submitted_at else None,
+                        'graded_at': latest.graded_at.isoformat() if latest.graded_at else None,
+                        'has_teacher_feedback': bool(latest.instructor_feedback),
+                        'is_latest': True,  # Mark as latest
+                        'has_previous_attempts': len(previous) > 0,
+                        'previous_attempts': [
+                            {
+                                'exam_attempt_id': str(prev.id),
+                                'attempt_number': prev.attempt_number,
+                                'submitted_at': prev.submitted_at.isoformat() if prev.submitted_at else None,
+                                'status': prev.status,
+                                'is_graded': False  # Previous attempts are not graded
+                            }
+                            for prev in previous
+                        ] if previous else []
+                    })
+                
+                # Sort by submitted_at descending (most recent first)
+                exam_assessments.sort(key=lambda x: x['submitted_at'] or '', reverse=True)
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error calculating exam assessments: {str(e)}")
+                total_exams = 0
+                passed_exams = 0
+                failed_exams = 0
+                avg_exam_score = 0
+                recent_exams = 0
+                exam_assessments = []
+            
             # Instructor assessments (using teacher assessments data)
             instructor_assessments = []
             
@@ -2716,20 +2923,45 @@ class DashboardAssessmentView(APIView):
                         'new': new_teacher_assessments,
                         'recent_week': recent_teacher_assessments
                     },
+                    'project_assessments': {
+                        'total': total_projects,
+                        'passed': passed_projects,
+                        'average_score': round(avg_project_score, 1),
+                        'recent_week': recent_projects
+                    },
+                    'test_assessments': {
+                        'total': total_tests,
+                        'passed': passed_tests,
+                        'failed': failed_tests,
+                        'average_score': round(float(avg_test_score), 1) if avg_test_score else 0,
+                        'recent_week': recent_tests
+                    },
+                    'exam_assessments': {
+                        'total': total_exams,
+                        'passed': passed_exams,
+                        'failed': failed_exams,
+                        'average_score': round(float(avg_exam_score), 1) if avg_exam_score else 0,
+                        'recent_week': recent_exams
+                    },
                     'overview': {
-                        'total_assessments': total_quizzes + total_assignments,
+                        'total_assessments': total_quizzes + total_assignments + total_projects + total_tests + total_exams,
                         'total_courses': 0,
-                        'recent_activity': recent_quizzes + recent_assignments
+                        'recent_activity': recent_quizzes + recent_assignments + recent_projects + recent_tests + recent_exams
                     }
                 },
                 'quiz_assessments': quiz_assessments,
                 'assignment_assessments': assignment_assessments,
+                'test_assessments': test_assessments,
+                'exam_assessments': exam_assessments,
                 'instructor_assessments': instructor_assessments,
                 'teacher_assessment_groups': teacher_assessment_groups,
                 'summary': {
-                    'total_assessments': total_quizzes + total_assignments,
+                    'total_assessments': total_quizzes + total_assignments + total_projects + total_tests + total_exams,
                     'quiz_count': total_quizzes,
                     'assignment_count': total_assignments,
+                    'project_count': total_projects,
+                    'test_count': total_tests,
+                    'exam_count': total_exams,
                     'instructor_count': 0
                 }
             }
