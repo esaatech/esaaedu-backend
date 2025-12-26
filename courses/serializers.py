@@ -2026,13 +2026,65 @@ class StudentProjectSubmissionSerializer(serializers.ModelSerializer):
             'content', 'file_url', 'reflection', 'submitted_at', 'graded_at',
             'points_earned', 'points_possible', 'percentage', 'passed', 'is_graded',
             'feedback', 'feedback_response', 'feedback_checked', 'feedback_checked_at',
-            'grader_name', 'created_at', 'updated_at'
+            'grader_name', 'share_token', 'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'project', 'submitted_at', 'graded_at', 'points_earned',
             'feedback', 'feedback_response', 'feedback_checked', 'feedback_checked_at',
             'grader', 'created_at', 'updated_at'
         ]
+
+
+class PublicProjectSubmissionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for public shared project submission (portfolio view)
+    Excludes sensitive information like grades and feedback
+    """
+    project = serializers.SerializerMethodField()
+    student = serializers.SerializerMethodField()
+    course_title = serializers.SerializerMethodField()
+    
+    def get_project(self, obj):
+        """Get project details"""
+        project_data = {
+            'id': str(obj.project.id),
+            'title': obj.project.title,
+            'instructions': obj.project.instructions,
+            'submission_type': obj.project.submission_type.name if obj.project.submission_type else None,
+        }
+        
+        # Add project_platform if it exists
+        if obj.project.project_platform:
+            project_data['project_platform'] = {
+                'id': str(obj.project.project_platform.id),
+                'name': obj.project.project_platform.name,
+                'display_name': obj.project.project_platform.display_name,
+                'base_url': obj.project.project_platform.base_url,
+            }
+        
+        return project_data
+    
+    def get_student(self, obj):
+        """Get student details"""
+        return {
+            'id': str(obj.student.id),
+            'name': obj.student.get_full_name() or obj.student.email,
+            'first_name': obj.student.first_name,
+            'last_name': obj.student.last_name,
+            'email': obj.student.email,
+        }
+    
+    def get_course_title(self, obj):
+        """Get course title"""
+        return obj.project.course.title if obj.project.course else None
+    
+    class Meta:
+        model = ProjectSubmission
+        fields = [
+            'id', 'project', 'student', 'course_title',
+            'content', 'file_url', 'submitted_at', 'created_at'
+        ]
+        read_only_fields = fields
 
 
 # ===== CLASS SERIALIZERS =====

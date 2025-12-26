@@ -2694,11 +2694,12 @@ class DashboardAssessmentView(APIView):
             teacher_assessment_groups = list(grouped_assessments.values())
             
             # Project assessments stats - wrapped in try/except to prevent breaking existing functionality
+            project_assessments = []
             try:
                 project_submissions_qs = ProjectSubmission.objects.filter(
                     student=request.user,
                     status__in=['SUBMITTED', 'GRADED']  # Only show submitted and graded projects
-                ).select_related('project')
+                ).select_related('project', 'project__course', 'grader').order_by('-submitted_at')
                 
                 total_projects = project_submissions_qs.count()
                 # For projects, check if they have points_earned and project.points to determine passed
@@ -2718,6 +2719,35 @@ class DashboardAssessmentView(APIView):
                         project_scores.append(float(percentage))
                 avg_project_score = sum(project_scores) / len(project_scores) if project_scores else 0
                 recent_projects = project_submissions_qs.filter(submitted_at__gte=week_ago).count()
+                
+                # Build project assessments list
+                for submission in project_submissions_qs:
+                    is_graded = submission.status == 'GRADED'
+                    percentage = None
+                    passed = None
+                    
+                    if is_graded and submission.project.points and submission.points_earned:
+                        percentage = float((submission.points_earned / submission.project.points) * 100)
+                        passed = percentage >= 70
+                    
+                    project_assessments.append({
+                        'project_id': str(submission.project.id),
+                        'submission_id': str(submission.id),
+                        'project_title': submission.project.title,
+                        'course_title': submission.project.course.title if submission.project.course else 'N/A',
+                        'course_id': str(submission.project.course.id) if submission.project.course else None,
+                        'student_name': f"{student_profile.child_first_name} {student_profile.child_last_name}",
+                        'score_percentage': percentage,
+                        'passed': passed,
+                        'is_graded': is_graded,
+                        'status': submission.status,
+                        'submitted_at': submission.submitted_at.isoformat() if submission.submitted_at else None,
+                        'graded_at': submission.graded_at.isoformat() if submission.graded_at else None,
+                        'has_teacher_feedback': bool(submission.feedback),
+                    })
+                
+                # Sort by submitted_at descending (most recent first)
+                project_assessments.sort(key=lambda x: x['submitted_at'] or '', reverse=True)
             except Exception as e:
                 # If there's an error, default to 0s to prevent breaking existing functionality
                 import logging
@@ -2727,6 +2757,7 @@ class DashboardAssessmentView(APIView):
                 passed_projects = 0
                 avg_project_score = 0
                 recent_projects = 0
+                project_assessments = []
             
             # Test assessments stats (CourseAssessment with type='test') - wrapped in try/except
             test_assessments = []
@@ -2951,6 +2982,7 @@ class DashboardAssessmentView(APIView):
                 },
                 'quiz_assessments': quiz_assessments,
                 'assignment_assessments': assignment_assessments,
+                'project_assessments': project_assessments,
                 'test_assessments': test_assessments,
                 'exam_assessments': exam_assessments,
                 'instructor_assessments': instructor_assessments,

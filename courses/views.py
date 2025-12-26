@@ -3508,6 +3508,94 @@ def student_project_submission_detail(request, project_id):
         )
 
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def generate_project_share_token(request, submission_id):
+    """
+    Generate or get share token for a project submission
+    POST /api/courses/student/projects/submissions/{submission_id}/share/
+    """
+    try:
+        submission = get_object_or_404(ProjectSubmission, id=submission_id)
+        
+        # Check if user owns this submission
+        if submission.student != request.user:
+            return Response(
+                {'error': 'You do not have permission to share this submission'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Only allow sharing for graded submissions
+        if submission.status != 'GRADED':
+            return Response(
+                {'error': 'Only graded submissions can be shared'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Generate or get existing share token
+        share_token = submission.generate_share_token()
+        
+        # Get full share URL
+        base_url = request.build_absolute_uri('/').rstrip('/')
+        share_url = f"{base_url}/project/{share_token}"
+        
+        return Response({
+            'share_token': share_token,
+            'share_url': share_url
+        }, status=status.HTTP_200_OK)
+        
+    except ProjectSubmission.DoesNotExist:
+        return Response(
+            {'error': 'Project submission not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        print(f"Error in generate_project_share_token: {e}")
+        import traceback
+        traceback.print_exc()
+        return Response(
+            {'error': 'Failed to generate share token', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([])  # Public access for shared submissions
+def get_shared_project_submission(request, share_token):
+    """
+    Get a shared project submission by token (public access)
+    GET /api/courses/student/projects/submissions/share/{share_token}/
+    """
+    try:
+        from .serializers import PublicProjectSubmissionSerializer
+        
+        submission = get_object_or_404(ProjectSubmission, share_token=share_token)
+        
+        # Only allow access to graded submissions
+        if submission.status != 'GRADED':
+            return Response(
+                {'error': 'This project submission is not available for sharing'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = PublicProjectSubmissionSerializer(submission, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+        
+    except ProjectSubmission.DoesNotExist:
+        return Response(
+            {'error': 'Project submission not found or invalid share token'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        print(f"Error in get_shared_project_submission: {e}")
+        import traceback
+        traceback.print_exc()
+        return Response(
+            {'error': 'Failed to fetch shared project submission', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def student_course_assessments(request, course_id, assessment_type):

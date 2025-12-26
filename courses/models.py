@@ -2615,6 +2615,15 @@ class ProjectSubmission(models.Model):
     feedback_response = models.TextField(blank=True, help_text="Student's response to teacher feedback")
     feedback_checked = models.BooleanField(default=False, help_text="Whether student has seen the feedback")
     feedback_checked_at = models.DateTimeField(null=True, blank=True, help_text="When student last checked feedback")
+    
+    # Sharing for portfolio
+    share_token = models.CharField(
+        max_length=64,
+        unique=True,
+        null=True,
+        blank=True,
+        help_text="Unique token for sharing project submission publicly"
+    )
 
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
@@ -2625,6 +2634,20 @@ class ProjectSubmission(models.Model):
     
     def __str__(self):
         return f"{self.student} - {self.project.title} ({self.status})"
+    
+    def generate_share_token(self):
+        """Generate a unique share token for this submission"""
+        if not self.share_token:
+            self.share_token = secrets.token_urlsafe(32)
+            self.save(update_fields=['share_token'])
+        return self.share_token
+    
+    @property
+    def share_url(self):
+        """Get the shareable URL for this project submission"""
+        if self.share_token:
+            return f"/project/{self.share_token}"
+        return None
 
 
 class CourseAssessment(models.Model):
