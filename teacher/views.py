@@ -993,6 +993,50 @@ class ProjectSubmissionDetailView(APIView):
                 {'error': 'Failed to provide feedback', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def put(self, request, submission_id):
+        """
+        PUT: Grade a project submission
+        """
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can grade submissions'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get submission and verify it belongs to teacher's project
+            submission = get_object_or_404(
+                ProjectSubmission, 
+                id=submission_id,
+                project__course__teacher=teacher
+            )
+            
+            serializer = ProjectSubmissionGradingSerializer(data=request.data)
+            
+            if serializer.is_valid():
+                # Update submission with grading data
+                submission.status = serializer.validated_data['status']
+                submission.points_earned = serializer.validated_data.get('points_earned')
+                submission.feedback = serializer.validated_data.get('feedback', '')
+                submission.grader = teacher
+                submission.graded_at = timezone.now()
+                submission.save()
+                
+                response_serializer = ProjectSubmissionSerializer(submission)
+                return Response({
+                    'submission': response_serializer.data,
+                    'message': 'Submission graded successfully'
+                }, status=status.HTTP_200_OK)
+            
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to grade submission', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class ProjectDashboardView(APIView):
@@ -2575,6 +2619,89 @@ class StudentAssessmentSubmissionsView(APIView):
             logger.error(f"Error retrieving student assessment submissions: {e}", exc_info=True)
             return Response(
                 {'error': f'Error retrieving student assessment submissions: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class StudentProjectSubmissionsView(APIView):
+    """
+    Get all project submissions for a specific student
+    Returns all projects with their submissions for the student
+    Single API call instead of looping through courses
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, student_id):
+        """
+        GET: Get all project submissions for a student
+        Query parameters:
+        - course_id: Filter by course ID (optional)
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can access student project submissions'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get course_id from query params
+            course_id = request.query_params.get('course_id')
+            
+            # Get student
+            try:
+                from users.models import User
+                student = User.objects.get(id=student_id)
+            except User.DoesNotExist:
+                return Response(
+                    {'error': 'Student not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get all courses taught by this teacher
+            teacher_courses = Course.objects.filter(teacher=request.user)
+            
+            # Filter by course if provided
+            if course_id:
+                teacher_courses = teacher_courses.filter(id=course_id)
+            
+            # Get all projects for these courses
+            # Note: project_platform is on ClassEvent, not Project, so we don't select_related it here
+            projects = Project.objects.filter(course__in=teacher_courses).select_related('course', 'submission_type')
+            
+            # Get all submissions for this student for these projects
+            submissions = ProjectSubmission.objects.filter(
+                student=student,
+                project__in=projects
+            ).select_related('project', 'project__course', 'grader').order_by('-submitted_at', '-created_at')
+            
+            # Build results
+            results = []
+            for submission in submissions:
+                project = submission.project
+                
+                # Serialize project and submission (using serializers already imported at top)
+                project_serializer = ProjectSerializer(project, context={'request': request})
+                submission_serializer = ProjectSubmissionSerializer(submission)
+                
+                results.append({
+                    'project': project_serializer.data,
+                    'submission': submission_serializer.data,
+                    'course_title': project.course.title if project.course else 'N/A',
+                    'course_id': str(project.course.id) if project.course else None
+                })
+            
+            return Response({
+                'student_id': str(student_id),
+                'student_name': student.get_full_name(),
+                'projects': results,
+                'total': len(results)
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error retrieving student project submissions: {e}", exc_info=True)
+            return Response(
+                {'error': f'Error retrieving student project submissions: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

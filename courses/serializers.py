@@ -1986,6 +1986,9 @@ class StudentProjectSubmissionSerializer(serializers.ModelSerializer):
     """
     project_title = serializers.CharField(source='project.title', read_only=True)
     project_points = serializers.IntegerField(source='project.points', read_only=True)
+    project_instructions = serializers.CharField(source='project.instructions', read_only=True)
+    submission_type = serializers.SerializerMethodField()
+    project_platform = serializers.SerializerMethodField()
     points_possible = serializers.SerializerMethodField()
     percentage = serializers.SerializerMethodField()
     passed = serializers.SerializerMethodField()
@@ -2019,10 +2022,48 @@ class StudentProjectSubmissionSerializer(serializers.ModelSerializer):
             return obj.grader.get_full_name() or obj.grader.email
         return None
     
+    def get_project_platform(self, obj):
+        """Get project platform from associated ClassEvent if available"""
+        # Get the most recent ClassEvent for this project that has a platform
+        from .models import ClassEvent
+        event = ClassEvent.objects.filter(
+            project=obj.project,
+            project_platform__isnull=False
+        ).select_related('project_platform').order_by('-created_at').first()
+        
+        if event and event.project_platform:
+            return {
+                'id': str(event.project_platform.id),
+                'name': event.project_platform.name,
+                'display_name': event.project_platform.display_name,
+                'base_url': event.project_platform.base_url,
+            }
+        return None
+    
+    def get_submission_type(self, obj):
+        """Get submission_type from associated ClassEvent if available, otherwise from Project"""
+        # Get the most recent ClassEvent for this project that has a submission_type
+        from .models import ClassEvent
+        event = ClassEvent.objects.filter(
+            project=obj.project,
+            submission_type__isnull=False
+        ).order_by('-created_at').first()
+        
+        # Prefer submission_type from ClassEvent if available, otherwise use Project's
+        if event and event.submission_type:
+            # Return the name (internal identifier) of the submission type
+            submission_type_name = event.submission_type.name if hasattr(event.submission_type, 'name') else str(event.submission_type)
+            return submission_type_name
+        
+        # Return the name (internal identifier) of the submission type
+        submission_type_name = obj.project.submission_type.name if obj.project.submission_type and hasattr(obj.project.submission_type, 'name') else str(obj.project.submission_type) if obj.project.submission_type else None
+        return submission_type_name
+    
     class Meta:
         model = ProjectSubmission
         fields = [
-            'id', 'project', 'project_title', 'project_points', 'status',
+            'id', 'project', 'project_title', 'project_points', 'project_instructions',
+            'submission_type', 'project_platform', 'status',
             'content', 'file_url', 'reflection', 'submitted_at', 'graded_at',
             'points_earned', 'points_possible', 'percentage', 'passed', 'is_graded',
             'feedback', 'feedback_response', 'feedback_checked', 'feedback_checked_at',

@@ -74,6 +74,7 @@ class ProjectSerializer(serializers.ModelSerializer):
     requires_file_upload = serializers.BooleanField(read_only=True)
     requires_text_input = serializers.BooleanField(read_only=True)
     requires_url_input = serializers.BooleanField(read_only=True)
+    project_platform = serializers.SerializerMethodField()
     
     class Meta:
         model = Project
@@ -81,9 +82,29 @@ class ProjectSerializer(serializers.ModelSerializer):
             'id', 'course', 'course_id', 'course_title', 'title', 'instructions',
             'submission_type', 'submission_type_display', 'allowed_file_types',
             'points', 'due_at', 'order', 'created_at', 'submission_count', 'graded_count',
-            'pending_count', 'requires_file_upload', 'requires_text_input', 'requires_url_input'
+            'pending_count', 'requires_file_upload', 'requires_text_input', 'requires_url_input',
+            'project_platform'
         ]
         read_only_fields = ['id', 'created_at', 'submission_count', 'graded_count', 'pending_count']
+    
+    def get_project_platform(self, obj):
+        """Serialize project_platform from ClassEvent (project_platform is on ClassEvent, not Project)"""
+        # Get project_platform from ClassEvent if it exists
+        # A project can have multiple ClassEvents, so get the first one with a platform
+        from courses.models import ClassEvent
+        class_event = ClassEvent.objects.filter(
+            project=obj,
+            project_platform__isnull=False
+        ).select_related('project_platform').first()
+        
+        if class_event and class_event.project_platform:
+            return {
+                'id': str(class_event.project_platform.id),
+                'name': class_event.project_platform.name,
+                'display_name': class_event.project_platform.display_name,
+                'base_url': class_event.project_platform.base_url,
+            }
+        return None
     
     def get_submission_count(self, obj):
         return obj.submissions.count()

@@ -30,6 +30,8 @@ urlpatterns = [
     
     # Student Assessment Submissions (Get all tests/exams for a student in one call)
     path('students/<int:student_id>/assessments/', views.StudentAssessmentSubmissionsView.as_view(), name='student_assessment_submissions'),
+    # Student Project Submissions (Get all projects for a student in one call)
+    path('students/<int:student_id>/projects/', views.StudentProjectSubmissionsView.as_view(), name='student_project_submissions'),
     
     # Code Snippet URLs (for teacher Tools page)
     path('code-snippets/', student_views.TeacherCodeSnippetListView.as_view(), name='teacher_code_snippet_list'),
