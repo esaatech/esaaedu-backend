@@ -2087,20 +2087,38 @@ class PublicProjectSubmissionSerializer(serializers.ModelSerializer):
     
     def get_project(self, obj):
         """Get project details"""
+        # Get submission_type from ClassEvent or Project
+        from .models import ClassEvent
+        event = ClassEvent.objects.filter(
+            project=obj.project,
+            submission_type__isnull=False
+        ).order_by('-created_at').first()
+        
+        submission_type_name = None
+        if event and event.submission_type:
+            submission_type_name = event.submission_type.name if hasattr(event.submission_type, 'name') else str(event.submission_type)
+        elif obj.project.submission_type:
+            submission_type_name = obj.project.submission_type.name if hasattr(obj.project.submission_type, 'name') else str(obj.project.submission_type)
+        
         project_data = {
             'id': str(obj.project.id),
             'title': obj.project.title,
             'instructions': obj.project.instructions,
-            'submission_type': obj.project.submission_type.name if obj.project.submission_type else None,
+            'submission_type': submission_type_name,
         }
         
-        # Add project_platform if it exists
-        if obj.project.project_platform:
+        # Get project_platform from ClassEvent (not directly on Project)
+        platform_event = ClassEvent.objects.filter(
+            project=obj.project,
+            project_platform__isnull=False
+        ).select_related('project_platform').order_by('-created_at').first()
+        
+        if platform_event and platform_event.project_platform:
             project_data['project_platform'] = {
-                'id': str(obj.project.project_platform.id),
-                'name': obj.project.project_platform.name,
-                'display_name': obj.project.project_platform.display_name,
-                'base_url': obj.project.project_platform.base_url,
+                'id': str(platform_event.project_platform.id),
+                'name': platform_event.project_platform.name,
+                'display_name': platform_event.project_platform.display_name,
+                'base_url': platform_event.project_platform.base_url,
             }
         
         return project_data
