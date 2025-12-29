@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     "billings",
     "settings",
     "ai",
+    "portfolio",
     
 ]
 

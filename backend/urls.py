@@ -35,6 +35,7 @@ urlpatterns = [
     path("api/ai/", include('ai.urls')),
     path("api/settings/", include('settings.urls')),
     path("api/home/", include('home.urls')),
+    path("api/portfolio/", include('portfolio.urls')),
     path("api/", include(router.urls)),
     
     # API Documentation
