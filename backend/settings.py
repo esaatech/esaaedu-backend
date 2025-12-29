@@ -75,6 +75,7 @@ INSTALLED_APPS = [
     "settings",
     "ai",
     "portfolio",
+    "tutorx",
     
 ]
 
