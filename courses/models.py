@@ -257,6 +257,7 @@ class Lesson(models.Model):
         ('live_class', 'Live Class'),
         ('video_audio', 'Video/Audio Lesson'),
         ('text_lesson', 'Text Lesson'),
+        ('tutorx', 'TutorX Lesson'),
     ]
     
     # Basic Information
