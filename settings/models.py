@@ -351,3 +351,133 @@ class ClassroomToolDefaults(models.Model):
             ide_url='https://trinket.io',
             virtual_lab_url='https://phet.colorado.edu',
         )
+
+
+class UserTutorXInstruction(models.Model):
+    """
+    User-specific TutorX instructions for block actions.
+    
+    Each user can customize their instructions for each action type (explain_more, 
+    give_examples, etc.). When a user instruction doesn't exist, it defaults to 
+    TutorXUserInstructionsDefaults from the tutorx app.
+    
+    Users can:
+    - View their current instruction (or default if not customized)
+    - Update their instruction (when editing is enabled)
+    - Reset to default
+    """
+    ACTION_TYPES = [
+        ('explain_more', 'Explain More'),
+        ('give_examples', 'Give Examples'),
+        ('simplify', 'Simplify'),
+        ('summarize', 'Summarize'),
+        ('generate_questions', 'Generate Questions'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='tutorx_instructions',
+        help_text="User who owns this instruction"
+    )
+    action_type = models.CharField(
+        max_length=50,
+        choices=ACTION_TYPES,
+        help_text="Type of block action this instruction is for"
+    )
+    
+    # User's custom instruction
+    user_instruction = models.TextField(
+        help_text="User's custom instruction. Use placeholders: {block_content}, {context}, etc."
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "User TutorX Instruction"
+        verbose_name_plural = "User TutorX Instructions"
+        unique_together = [['user', 'action_type']]
+        ordering = ['user', 'action_type']
+        indexes = [
+            models.Index(fields=['user', 'action_type']),
+        ]
+    
+    def __str__(self):
+        return f"{self.user.email} - {self.get_action_type_display()}"
+    
+    @classmethod
+    def get_or_create_settings(cls, user, action_type):
+        """
+        Get or create user instruction for a specific action type.
+        
+        If the instruction doesn't exist, it will be created with the default
+        instruction from TutorXUserInstructionsDefaults.
+        
+        Args:
+            user: User instance
+            action_type: One of the ACTION_TYPES choices
+            
+        Returns:
+            UserTutorXInstruction instance
+        """
+        # Try to get existing instruction
+        try:
+            return cls.objects.get(user=user, action_type=action_type)
+        except cls.DoesNotExist:
+            # Load default from TutorXUserInstructionsDefaults
+            try:
+                from tutorx.models import TutorXUserInstructionsDefaults
+                default_config = TutorXUserInstructionsDefaults.objects.get(
+                    action_type=action_type,
+                    is_active=True
+                )
+                default_instruction = default_config.default_user_instruction
+            except Exception:
+                # Fallback if default doesn't exist
+                default_instruction = f"Please provide additional information for: {action_type}"
+            
+            # Create new instruction with default
+            return cls.objects.create(
+                user=user,
+                action_type=action_type,
+                user_instruction=default_instruction
+            )
+    
+    def reset_to_default(self):
+        """
+        Reset this instruction to the default from TutorXUserInstructionsDefaults.
+        
+        Returns:
+            bool: True if reset was successful, False otherwise
+        """
+        try:
+            from tutorx.models import TutorXUserInstructionsDefaults
+            default_config = TutorXUserInstructionsDefaults.objects.get(
+                action_type=self.action_type,
+                is_active=True
+            )
+            self.user_instruction = default_config.default_user_instruction
+            self.save()
+            return True
+        except Exception:
+            return False
+    
+    def is_customized(self):
+        """
+        Check if this instruction has been customized (differs from default).
+        
+        Returns:
+            bool: True if customized, False if still using default
+        """
+        try:
+            from tutorx.models import TutorXUserInstructionsDefaults
+            default_config = TutorXUserInstructionsDefaults.objects.get(
+                action_type=self.action_type,
+                is_active=True
+            )
+            return self.user_instruction != default_config.default_user_instruction
+        except Exception:
+            return True  # If we can't find default, assume it's customized

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import UserDashboardSettings, CourseSettings, ClassroomToolDefaults
+from .models import UserDashboardSettings, CourseSettings, ClassroomToolDefaults, UserTutorXInstruction
 
 
 @admin.register(CourseSettings)
@@ -154,3 +154,43 @@ class ClassroomToolDefaultsAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         # Prevent deletion of defaults
         return False
+
+
+@admin.register(UserTutorXInstruction)
+class UserTutorXInstructionAdmin(admin.ModelAdmin):
+    """Admin interface for UserTutorXInstruction"""
+    list_display = (
+        'user',
+        'action_type',
+        'is_customized',
+        'created_at',
+        'updated_at'
+    )
+    list_filter = ('action_type', 'created_at', 'updated_at')
+    search_fields = ('user__email', 'user__first_name', 'user__last_name', 'user_instruction')
+    readonly_fields = ('id', 'created_at', 'updated_at', 'is_customized')
+    
+    fieldsets = (
+        ('User Information', {
+            'fields': ('user', 'action_type'),
+            'description': 'User and action type for this instruction'
+        }),
+        ('Instruction', {
+            'fields': ('user_instruction',),
+            'description': 'User\'s custom instruction. Use placeholders: {block_content}, {context}, etc.'
+        }),
+        ('Status', {
+            'fields': ('is_customized',),
+            'description': 'Whether this instruction has been customized from the default'
+        }),
+        ('Timestamps', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        })
+    )
+    
+    def is_customized(self, obj):
+        """Display whether instruction is customized"""
+        return obj.is_customized()
+    is_customized.boolean = True
+    is_customized.short_description = 'Customized'

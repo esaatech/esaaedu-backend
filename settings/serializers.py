@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import UserDashboardSettings
+from .models import UserDashboardSettings, UserTutorXInstruction
 
 
 class UserDashboardSettingsSerializer(serializers.ModelSerializer):
@@ -96,3 +96,36 @@ class DashboardConfigSerializer(serializers.Serializer):
     whiteboard_url = serializers.URLField(required=False, allow_blank=True)
     ide_url = serializers.URLField(required=False, allow_blank=True)
     virtual_lab_url = serializers.URLField(required=False, allow_blank=True)
+
+
+class UserTutorXInstructionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for User TutorX Instructions
+    """
+    is_customized = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = UserTutorXInstruction
+        fields = [
+            'id',
+            'action_type',
+            'user_instruction',
+            'is_customized',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'action_type', 'is_customized', 'created_at', 'updated_at']
+    
+    def get_is_customized(self, obj):
+        """Return whether the instruction has been customized from default"""
+        return obj.is_customized()
+    
+    def validate_user_instruction(self, value):
+        """Validate user instruction"""
+        if not value or not value.strip():
+            raise serializers.ValidationError("User instruction cannot be empty")
+        
+        if len(value) > 5000:
+            raise serializers.ValidationError("User instruction cannot exceed 5000 characters")
+        
+        return value.strip()

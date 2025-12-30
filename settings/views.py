@@ -4,8 +4,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 
-from .models import UserDashboardSettings, ClassroomToolDefaults
-from .serializers import UserDashboardSettingsSerializer, DashboardConfigSerializer
+from .models import UserDashboardSettings, ClassroomToolDefaults, UserTutorXInstruction
+from .serializers import UserDashboardSettingsSerializer, DashboardConfigSerializer, UserTutorXInstructionSerializer
 
 
 class UserDashboardSettingsView(APIView):
@@ -200,3 +200,111 @@ def get_teacher_config(request):
             {'error': 'Failed to get teacher configuration', 'details': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+class UserTutorXInstructionView(APIView):
+    """
+    API View for managing user instructions for TutorX actions.
+    
+    Handles getting and updating user instructions per action type.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, action_type):
+        """
+        GET: Retrieve user instruction for a specific action type.
+        
+        If instruction doesn't exist, creates it with default from TutorXUserInstructionsDefaults.
+        """
+        action_type = action_type.lower()
+        valid_actions = ['explain_more', 'give_examples', 'simplify', 'summarize', 'generate_questions']
+        
+        if action_type not in valid_actions:
+            return Response(
+                {'error': f'Invalid action type. Must be one of: {", ".join(valid_actions)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user_instruction = UserTutorXInstruction.get_or_create_settings(
+                user=request.user,
+                action_type=action_type
+            )
+            serializer = UserTutorXInstructionSerializer(user_instruction)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to get user instruction', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def put(self, request, action_type):
+        """
+        PUT: Update user instruction for a specific action type.
+        """
+        action_type = action_type.lower()
+        valid_actions = ['explain_more', 'give_examples', 'simplify', 'summarize', 'generate_questions']
+        
+        if action_type not in valid_actions:
+            return Response(
+                {'error': f'Invalid action type. Must be one of: {", ".join(valid_actions)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user_instruction = UserTutorXInstruction.get_or_create_settings(
+                user=request.user,
+                action_type=action_type
+            )
+            serializer = UserTutorXInstructionSerializer(
+                user_instruction,
+                data=request.data,
+                partial=True
+            )
+            
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data, status=status.HTTP_200_OK)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to update user instruction', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, action_type):
+        """
+        POST: Reset user instruction to default.
+        """
+        action_type = action_type.lower()
+        valid_actions = ['explain_more', 'give_examples', 'simplify', 'summarize', 'generate_questions']
+        
+        if action_type not in valid_actions:
+            return Response(
+                {'error': f'Invalid action type. Must be one of: {", ".join(valid_actions)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            user_instruction = UserTutorXInstruction.get_or_create_settings(
+                user=request.user,
+                action_type=action_type
+            )
+            
+            if user_instruction.reset_to_default():
+                serializer = UserTutorXInstructionSerializer(user_instruction)
+                return Response({
+                    **serializer.data,
+                    'message': 'Instruction reset to default',
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response(
+                    {'error': 'Failed to reset instruction to default'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to reset user instruction', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

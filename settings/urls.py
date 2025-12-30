@@ -12,4 +12,7 @@ urlpatterns = [
     # Teacher-specific settings management
     path('teacher-dashboard-settings/', views.TeacherDashboardSettingsView.as_view(), name='teacher-dashboard-settings'),
     path('teacher-config/', views.get_teacher_config, name='teacher-config'),
+    
+    # TutorX user instruction management
+    path('tutorx-instructions/<str:action_type>/', views.UserTutorXInstructionView.as_view(), name='tutorx-instruction'),
 ]
