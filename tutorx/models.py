@@ -243,6 +243,7 @@ class TutorXBlock(models.Model):
         ('code', 'Code Block'),
         ('image', 'Image Block'),
         ('diagram', 'Diagram Block'),
+        ('table', 'Table Block'),
     ]
     
     # Basic Information
