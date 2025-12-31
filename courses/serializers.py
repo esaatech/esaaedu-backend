@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, ProjectSubmission, SubmissionType, BookPage, VideoMaterial, DocumentMaterial, AudioVideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
+from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, ProjectSubmission, BookPage, VideoMaterial, DocumentMaterial, AudioVideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
 
 User = get_user_model()
 
@@ -286,6 +286,22 @@ class LessonDetailSerializer(serializers.ModelSerializer):
     def get_is_material_available(self, obj):
         """Get material availability flag from context"""
         return self.context.get('is_material_available', False)
+    
+    def to_representation(self, instance):
+        """
+        Override to handle tutorx lessons - blocks are lazy loaded via separate API
+        """
+        data = super().to_representation(instance)
+        
+        # For tutorx lessons, don't load blocks here (lazy loading)
+        # Blocks will be loaded via /api/tutorx/lessons/{lesson_id}/blocks/ when needed
+        if instance.type == 'tutorx':
+            # Ensure content is a dict but don't include blocks
+            if not isinstance(data.get('content'), dict):
+                data['content'] = {}
+            # Don't include blocks - they're loaded separately via TutorX API
+        
+        return data
 
 
 # ===== COURSE WITH LESSONS SERIALIZER (FIRST API CALL) =====
@@ -967,6 +983,7 @@ class LessonListSerializer(serializers.ModelSerializer):
 class LessonCreateUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating and updating lessons
+    Handles TutorX blocks when lesson type is 'tutorx'
     """
     class Meta:
         model = Lesson
@@ -990,6 +1007,157 @@ class LessonCreateUpdateSerializer(serializers.ModelSerializer):
         if value < 1:
             raise serializers.ValidationError("Lesson order must be positive")
         return value
+    
+    def save(self, **kwargs):
+        """
+        Override save to handle TutorX blocks when lesson type is 'tutorx'
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Check if content with blocks is being provided before saving
+        content_data = None
+        blocks_data = None
+        content_backup = None
+        
+        if 'content' in self.validated_data:
+            content_data = self.validated_data.get('content')
+            # Handle both dict and JSONField formats
+            if isinstance(content_data, dict):
+                blocks_data = content_data.get('blocks')
+        
+        # For tutorx lessons, we don't want to save content to Lesson.content JSONField
+        # Blocks are stored in TutorXBlock model instead
+        # Remove content from validated_data before saving to prevent it from being saved to Lesson.content
+        lesson_type = self.validated_data.get('type', getattr(self.instance, 'type', None) if self.instance else None)
+        if lesson_type == 'tutorx' and 'content' in self.validated_data:
+            # Temporarily remove content from validated_data
+            content_backup = self.validated_data.pop('content')
+            logger.info(f"💾 LessonCreateUpdateSerializer - Removed content from validated_data for tutorx lesson. Blocks count: {len(blocks_data) if blocks_data else 0}")
+        
+        # Log before saving
+        logger.info(f"💾 LessonCreateUpdateSerializer - Saving lesson. Type: {lesson_type}, Has blocks_data: {blocks_data is not None}, Blocks count: {len(blocks_data) if blocks_data else 0}")
+        
+        lesson = super().save(**kwargs)
+        
+        # Restore content to validated_data if we removed it (for potential future use)
+        if content_backup:
+            self.validated_data['content'] = content_backup
+        
+        # Log after saving
+        logger.info(f"💾 LessonCreateUpdateSerializer - Lesson saved. ID: {lesson.id}, Type: {lesson.type}, Blocks data provided: {blocks_data is not None}")
+        
+        # Handle TutorX blocks if lesson type is 'tutorx' and blocks are provided
+        if lesson.type == 'tutorx' and blocks_data is not None:
+            logger.info(f"💾 LessonCreateUpdateSerializer - Processing TutorX blocks. Count: {len(blocks_data)}")
+            # Import here to avoid circular imports
+            from tutorx.models import TutorXBlock
+            import uuid
+            
+            # Get all existing blocks for this lesson - index by ID for quick lookup
+            existing_blocks = {str(block.id): block for block in TutorXBlock.objects.filter(lesson=lesson)}
+            incoming_block_ids = set()
+            
+            # Process each block from the request
+            for block_data in blocks_data:
+                block_id = block_data.get('id')
+                block_type = block_data.get('block_type')
+                content_text = block_data.get('content', '')
+                order = block_data.get('order')
+                metadata = block_data.get('metadata', {})
+                
+                if not block_type or not order:
+                    continue  # Skip invalid blocks
+                
+                # Simple design: If block has ID, update it. If no ID, create new.
+                if block_id:
+                    try:
+                        block_uuid = uuid.UUID(block_id) if isinstance(block_id, str) else block_id
+                        block_id_str = str(block_uuid)
+                        
+                        if block_id_str in existing_blocks:
+                            # Update existing block
+                            block_to_update = existing_blocks[block_id_str]
+                            block_to_update.block_type = block_type
+                            block_to_update.content = content_text
+                            block_to_update.order = order
+                            block_to_update.metadata = metadata
+                            block_to_update.save()
+                            incoming_block_ids.add(block_id_str)
+                            logger.info(f"💾 LessonCreateUpdateSerializer - Updated block. ID: {block_id_str}, Type: {block_type}, Order: {order}")
+                        else:
+                            # ID provided but doesn't exist - check if there's a block at this order
+                            # If so, update it (might be a BlockNote ID mismatch)
+                            existing_at_order = TutorXBlock.objects.filter(lesson=lesson, order=order).first()
+                            if existing_at_order:
+                                logger.warning(f"⚠️ LessonCreateUpdateSerializer - Block ID {block_id_str} not found, but block exists at order {order}. Updating existing block {existing_at_order.id}")
+                                existing_at_order.block_type = block_type
+                                existing_at_order.content = content_text
+                                existing_at_order.metadata = metadata
+                                existing_at_order.save()
+                                incoming_block_ids.add(str(existing_at_order.id))
+                            else:
+                                # No block at this order - create new
+                                logger.warning(f"⚠️ LessonCreateUpdateSerializer - Block ID {block_id_str} not found, creating new block at order {order}")
+                                new_block = TutorXBlock.objects.create(
+                                    lesson=lesson,
+                                    block_type=block_type,
+                                    content=content_text,
+                                    order=order,
+                                    metadata=metadata
+                                )
+                                incoming_block_ids.add(str(new_block.id))
+                                logger.info(f"💾 LessonCreateUpdateSerializer - Created block. ID: {new_block.id}")
+                    except (ValueError, TypeError) as e:
+                        # Invalid UUID format - create new block
+                        logger.warning(f"⚠️ LessonCreateUpdateSerializer - Invalid block ID format: {block_id}, creating new block. Error: {e}")
+                        new_block = TutorXBlock.objects.create(
+                            lesson=lesson,
+                            block_type=block_type,
+                            content=content_text,
+                            order=order,
+                            metadata=metadata
+                        )
+                        incoming_block_ids.add(str(new_block.id))
+                        logger.info(f"💾 LessonCreateUpdateSerializer - Created block. ID: {new_block.id}")
+                else:
+                    # No ID provided - check if block exists at this order
+                    existing_at_order = TutorXBlock.objects.filter(lesson=lesson, order=order).first()
+                    if existing_at_order:
+                        # Update existing block at this order
+                        logger.info(f"💾 LessonCreateUpdateSerializer - No ID provided, updating existing block at order {order}. ID: {existing_at_order.id}")
+                        existing_at_order.block_type = block_type
+                        existing_at_order.content = content_text
+                        existing_at_order.metadata = metadata
+                        existing_at_order.save()
+                        incoming_block_ids.add(str(existing_at_order.id))
+                    else:
+                        # Create new block
+                        logger.info(f"💾 LessonCreateUpdateSerializer - Creating new block. Type: {block_type}, Order: {order}")
+                        new_block = TutorXBlock.objects.create(
+                            lesson=lesson,
+                            block_type=block_type,
+                            content=content_text,
+                            order=order,
+                            metadata=metadata
+                        )
+                        incoming_block_ids.add(str(new_block.id))
+                        logger.info(f"💾 LessonCreateUpdateSerializer - Created block. ID: {new_block.id}")
+            
+            # Delete blocks that are no longer in the request (not in incoming_block_ids)
+            blocks_to_delete = set(existing_blocks.keys()) - incoming_block_ids
+            if blocks_to_delete:
+                logger.info(f"💾 LessonCreateUpdateSerializer - Deleting {len(blocks_to_delete)} blocks: {blocks_to_delete}")
+                TutorXBlock.objects.filter(
+                    lesson=lesson,
+                    id__in=blocks_to_delete
+                ).delete()
+            
+            logger.info(f"✅ LessonCreateUpdateSerializer - TutorX blocks processed. Total blocks: {TutorXBlock.objects.filter(lesson=lesson).count()}")
+        else:
+            logger.warning(f"⚠️ LessonCreateUpdateSerializer - Skipping TutorX blocks. Type: {lesson.type}, Has blocks: {blocks_data is not None}")
+        
+        return lesson
 
 
 class LessonReorderSerializer(serializers.Serializer):
@@ -1897,253 +2065,12 @@ class ProjectPlatformSerializer(serializers.ModelSerializer):
 
 class ProjectListSerializer(serializers.ModelSerializer):
     """Serializer for listing projects"""
-    allowed_file_types = serializers.JSONField(read_only=True)
-    project_platform = serializers.SerializerMethodField()
-    submission_type = serializers.SerializerMethodField()
-    due_at = serializers.SerializerMethodField()
-    meeting_link = serializers.SerializerMethodField()
-    
-    def get_project_platform(self, obj):
-        """Get project platform from associated ClassEvent if available"""
-        # Get the most recent ClassEvent for this project that has a platform
-        from .models import ClassEvent
-        event = ClassEvent.objects.filter(
-            project=obj,
-            project_platform__isnull=False
-        ).select_related('project_platform').order_by('-created_at').first()
-        
-        if event and event.project_platform:
-            return {
-                'id': str(event.project_platform.id),
-                'name': event.project_platform.name,
-                'display_name': event.project_platform.display_name,
-                'base_url': event.project_platform.base_url,
-            }
-        return None
-    
-    def get_submission_type(self, obj):
-        """Get submission_type from associated ClassEvent if available, otherwise from Project"""
-        # Get the most recent ClassEvent for this project that has a submission_type
-        from .models import ClassEvent
-        event = ClassEvent.objects.filter(
-            project=obj,
-            submission_type__isnull=False
-        ).order_by('-created_at').first()
-        
-        # Prefer submission_type from ClassEvent if available, otherwise use Project's
-        if event and event.submission_type:
-            # Return the name (internal identifier) of the submission type
-            submission_type_name = event.submission_type.name if hasattr(event.submission_type, 'name') else str(event.submission_type)
-            print(f"🔍 ProjectListSerializer: Using submission_type '{submission_type_name}' from ClassEvent {event.id} for project {obj.id}")
-            return submission_type_name
-        
-        # Return the name (internal identifier) of the submission type
-        submission_type_name = obj.submission_type.name if obj.submission_type and hasattr(obj.submission_type, 'name') else str(obj.submission_type) if obj.submission_type else None
-        print(f"🔍 ProjectListSerializer: Using submission_type '{submission_type_name}' from Project {obj.id} (no ClassEvent found)")
-        return submission_type_name
-    
-    def get_due_at(self, obj):
-        """Get due_at from associated ClassEvent if available, otherwise from Project"""
-        # Get the most recent ClassEvent for this project that has a due_date
-        from .models import ClassEvent
-        event = ClassEvent.objects.filter(
-            project=obj,
-            due_date__isnull=False
-        ).order_by('-created_at').first()
-        
-        # Prefer due_date from ClassEvent if available, otherwise use Project's
-        if event and event.due_date:
-            return event.due_date.isoformat()
-        if obj.due_at:
-            return obj.due_at.isoformat()
-        return None
-    
-    def get_meeting_link(self, obj):
-        """Get meeting_link from associated ClassEvent if available"""
-        # Get the most recent ClassEvent for this project that has a meeting_link
-        from .models import ClassEvent
-        event = ClassEvent.objects.filter(
-            project=obj,
-            meeting_link__isnull=False
-        ).exclude(meeting_link='').order_by('-created_at').first()
-        
-        if event and event.meeting_link:
-            return event.meeting_link
-        return None
     
     class Meta:
         model = Project
         fields = [
-            'id', 'title', 'instructions', 'submission_type', 'points', 'due_at', 
-            'order', 'created_at', 'allowed_file_types', 'project_platform', 'meeting_link'
+            'id', 'title', 'instructions', 'submission_type', 'points', 'due_at', 'order', 'created_at'
         ]
-
-
-class StudentProjectSubmissionSerializer(serializers.ModelSerializer):
-    """
-    Serializer for ProjectSubmission model - Student view
-    Similar to AssignmentSubmission structure
-    """
-    project_title = serializers.CharField(source='project.title', read_only=True)
-    project_points = serializers.IntegerField(source='project.points', read_only=True)
-    project_instructions = serializers.CharField(source='project.instructions', read_only=True)
-    submission_type = serializers.SerializerMethodField()
-    project_platform = serializers.SerializerMethodField()
-    points_possible = serializers.SerializerMethodField()
-    percentage = serializers.SerializerMethodField()
-    passed = serializers.SerializerMethodField()
-    is_graded = serializers.SerializerMethodField()
-    grader_name = serializers.SerializerMethodField()
-    
-    def get_points_possible(self, obj):
-        """Get total points possible from project"""
-        return obj.project.points
-    
-    def get_percentage(self, obj):
-        """Calculate percentage score"""
-        if obj.points_earned is not None and obj.project.points > 0:
-            return float((obj.points_earned / obj.project.points) * 100)
-        return None
-    
-    def get_passed(self, obj):
-        """Check if student passed (assuming 70% passing score like assignments)"""
-        percentage = self.get_percentage(obj)
-        if percentage is not None:
-            return percentage >= 70.0
-        return False
-    
-    def get_is_graded(self, obj):
-        """Check if submission is graded"""
-        return obj.status == 'GRADED'
-    
-    def get_grader_name(self, obj):
-        """Get grader name"""
-        if obj.grader:
-            return obj.grader.get_full_name() or obj.grader.email
-        return None
-    
-    def get_project_platform(self, obj):
-        """Get project platform from associated ClassEvent if available"""
-        # Get the most recent ClassEvent for this project that has a platform
-        from .models import ClassEvent
-        event = ClassEvent.objects.filter(
-            project=obj.project,
-            project_platform__isnull=False
-        ).select_related('project_platform').order_by('-created_at').first()
-        
-        if event and event.project_platform:
-            return {
-                'id': str(event.project_platform.id),
-                'name': event.project_platform.name,
-                'display_name': event.project_platform.display_name,
-                'base_url': event.project_platform.base_url,
-            }
-        return None
-    
-    def get_submission_type(self, obj):
-        """Get submission_type from associated ClassEvent if available, otherwise from Project"""
-        # Get the most recent ClassEvent for this project that has a submission_type
-        from .models import ClassEvent
-        event = ClassEvent.objects.filter(
-            project=obj.project,
-            submission_type__isnull=False
-        ).order_by('-created_at').first()
-        
-        # Prefer submission_type from ClassEvent if available, otherwise use Project's
-        if event and event.submission_type:
-            # Return the name (internal identifier) of the submission type
-            submission_type_name = event.submission_type.name if hasattr(event.submission_type, 'name') else str(event.submission_type)
-            return submission_type_name
-        
-        # Return the name (internal identifier) of the submission type
-        submission_type_name = obj.project.submission_type.name if obj.project.submission_type and hasattr(obj.project.submission_type, 'name') else str(obj.project.submission_type) if obj.project.submission_type else None
-        return submission_type_name
-    
-    class Meta:
-        model = ProjectSubmission
-        fields = [
-            'id', 'project', 'project_title', 'project_points', 'project_instructions',
-            'submission_type', 'project_platform', 'status',
-            'content', 'file_url', 'reflection', 'submitted_at', 'graded_at',
-            'points_earned', 'points_possible', 'percentage', 'passed', 'is_graded',
-            'feedback', 'feedback_response', 'feedback_checked', 'feedback_checked_at',
-            'grader_name', 'share_token', 'created_at', 'updated_at'
-        ]
-        read_only_fields = [
-            'id', 'project', 'submitted_at', 'graded_at', 'points_earned',
-            'feedback', 'feedback_response', 'feedback_checked', 'feedback_checked_at',
-            'grader', 'created_at', 'updated_at'
-        ]
-
-
-class PublicProjectSubmissionSerializer(serializers.ModelSerializer):
-    """
-    Serializer for public shared project submission (portfolio view)
-    Excludes sensitive information like grades and feedback
-    """
-    project = serializers.SerializerMethodField()
-    student = serializers.SerializerMethodField()
-    course_title = serializers.SerializerMethodField()
-    
-    def get_project(self, obj):
-        """Get project details"""
-        # Get submission_type from ClassEvent or Project
-        from .models import ClassEvent
-        event = ClassEvent.objects.filter(
-            project=obj.project,
-            submission_type__isnull=False
-        ).order_by('-created_at').first()
-        
-        submission_type_name = None
-        if event and event.submission_type:
-            submission_type_name = event.submission_type.name if hasattr(event.submission_type, 'name') else str(event.submission_type)
-        elif obj.project.submission_type:
-            submission_type_name = obj.project.submission_type.name if hasattr(obj.project.submission_type, 'name') else str(obj.project.submission_type)
-        
-        project_data = {
-            'id': str(obj.project.id),
-            'title': obj.project.title,
-            'instructions': obj.project.instructions,
-            'submission_type': submission_type_name,
-        }
-        
-        # Get project_platform from ClassEvent (not directly on Project)
-        platform_event = ClassEvent.objects.filter(
-            project=obj.project,
-            project_platform__isnull=False
-        ).select_related('project_platform').order_by('-created_at').first()
-        
-        if platform_event and platform_event.project_platform:
-            project_data['project_platform'] = {
-                'id': str(platform_event.project_platform.id),
-                'name': platform_event.project_platform.name,
-                'display_name': platform_event.project_platform.display_name,
-                'base_url': platform_event.project_platform.base_url,
-            }
-        
-        return project_data
-    
-    def get_student(self, obj):
-        """Get student details"""
-        return {
-            'id': str(obj.student.id),
-            'name': obj.student.get_full_name() or obj.student.email,
-            'first_name': obj.student.first_name,
-            'last_name': obj.student.last_name,
-            'email': obj.student.email,
-        }
-    
-    def get_course_title(self, obj):
-        """Get course title"""
-        return obj.project.course.title if obj.project.course else None
-    
-    class Meta:
-        model = ProjectSubmission
-        fields = [
-            'id', 'project', 'student', 'course_title',
-            'content', 'file_url', 'submitted_at', 'created_at'
-        ]
-        read_only_fields = fields
 
 
 # ===== CLASS SERIALIZERS =====
@@ -2153,16 +2080,9 @@ class ClassEventListSerializer(serializers.ModelSerializer):
     lesson_title = serializers.CharField(source='lesson.title', read_only=True)
     project_title = serializers.CharField(source='project.title', read_only=True)
     project_platform_name = serializers.CharField(source='project_platform.display_name', read_only=True)
-    submission_type_name = serializers.SerializerMethodField()
     assessment_title = serializers.CharField(source='assessment.title', read_only=True)
     assessment_type = serializers.CharField(source='assessment.assessment_type', read_only=True)
     duration_minutes = serializers.IntegerField(read_only=True)
-    
-    def get_submission_type_name(self, obj):
-        """Get submission type name (internal identifier)"""
-        if obj.submission_type:
-            return obj.submission_type.name if hasattr(obj.submission_type, 'name') else str(obj.submission_type)
-        return None
     
     class Meta:
         model = ClassEvent
@@ -2171,7 +2091,7 @@ class ClassEventListSerializer(serializers.ModelSerializer):
             'lesson_title', 'project_title', 'project_platform_name', 
             'assessment_title', 'assessment_type', 'lesson_type', 
             'duration_minutes', 'meeting_platform', 'meeting_link',
-            'meeting_id', 'meeting_password', 'due_date', 'submission_type_name', 'created_at'
+            'meeting_id', 'meeting_password', 'due_date', 'submission_type', 'created_at'
         ]
 
 
@@ -2183,23 +2103,9 @@ class ClassEventDetailSerializer(serializers.ModelSerializer):
     project_id = serializers.CharField(source='project.id', read_only=True)
     project_platform_name = serializers.CharField(source='project_platform.display_name', read_only=True)
     project_platform_id = serializers.CharField(source='project_platform.id', read_only=True)
-    submission_type_name = serializers.SerializerMethodField()
-    submission_type_display = serializers.SerializerMethodField()
     assessment_id = serializers.CharField(source='assessment.id', read_only=True)
     assessment_title = serializers.CharField(source='assessment.title', read_only=True)
     assessment_type = serializers.CharField(source='assessment.assessment_type', read_only=True)
-    
-    def get_submission_type_name(self, obj):
-        """Get submission type name (internal identifier)"""
-        if obj.submission_type:
-            return obj.submission_type.name if hasattr(obj.submission_type, 'name') else str(obj.submission_type)
-        return None
-    
-    def get_submission_type_display(self, obj):
-        """Get submission type display name"""
-        if obj.submission_type:
-            return obj.submission_type.display_name if hasattr(obj.submission_type, 'display_name') else str(obj.submission_type)
-        return None
     class_name = serializers.CharField(source='class_instance.name', read_only=True)
     duration_minutes = serializers.IntegerField(read_only=True)
     
@@ -2209,7 +2115,6 @@ class ClassEventDetailSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'event_type', 'start_time', 'end_time',
             'lesson', 'lesson_id', 'lesson_title', 'project', 'project_id', 'project_title',
             'project_platform', 'project_platform_id', 'project_platform_name',
-            'submission_type', 'submission_type_name', 'submission_type_display',
             'assessment', 'assessment_id', 'assessment_title', 'assessment_type',
             'lesson_type', 'class_name', 'duration_minutes',
             'meeting_platform', 'meeting_link', 'meeting_id', 'meeting_password',
@@ -2219,9 +2124,6 @@ class ClassEventDetailSerializer(serializers.ModelSerializer):
 
 class ClassEventCreateUpdateSerializer(serializers.ModelSerializer):
     """Serializer for creating and updating class events"""
-    
-    # Override submission_type to accept string name or object
-    submission_type = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     
     class Meta:
         model = ClassEvent
@@ -2262,49 +2164,11 @@ class ClassEventCreateUpdateSerializer(serializers.ModelSerializer):
             if not data.get('due_date'):
                 raise serializers.ValidationError("Due date is required for project events")
             
-            # Handle submission_type if passed as string (name) - convert to object
-            submission_type = data.get('submission_type')
-            if submission_type and isinstance(submission_type, str):
-                from .models import SubmissionType
-                try:
-                    submission_type_obj = SubmissionType.objects.get(name=submission_type, is_active=True)
-                    data['submission_type'] = submission_type_obj
-                except SubmissionType.DoesNotExist:
-                    raise serializers.ValidationError(f"Submission type '{submission_type}' not found or inactive")
-            
-            # Auto-set submission_type to 'code' if Ace Pyodide platform is selected
-            project_platform = data.get('project_platform')
-            if project_platform:
-                platform_name = None
-                
-                # Handle if platform is passed as string UUID
-                if isinstance(project_platform, str):
-                    from .models import ProjectPlatform
-                    try:
-                        platform_obj = ProjectPlatform.objects.get(id=project_platform)
-                        platform_name = platform_obj.name
-                    except (ProjectPlatform.DoesNotExist, ValueError):
-                        pass
-                # Handle if platform is already an object
-                elif hasattr(project_platform, 'name'):
-                    platform_name = project_platform.name
-                # Handle if platform is passed as ID (UUID object)
-                elif hasattr(project_platform, 'id'):
-                    from .models import ProjectPlatform
-                    try:
-                        platform_obj = ProjectPlatform.objects.get(id=project_platform.id)
-                        platform_name = platform_obj.name
-                    except ProjectPlatform.DoesNotExist:
-                        pass
-                
-                # If Ace Pyodide is selected and no submission_type is set, auto-set to 'code'
-                if platform_name == 'ace_pyodide' and not data.get('submission_type'):
-                    from .models import SubmissionType
-                    try:
-                        code_submission_type = SubmissionType.objects.get(name='code', is_active=True)
-                        data['submission_type'] = code_submission_type
-                    except SubmissionType.DoesNotExist:
-                        pass  # If code type doesn't exist, let validation handle it
+            # Validate submission_type if provided
+            if data.get('submission_type'):
+                valid_submission_types = ['link', 'image', 'video', 'audio', 'file', 'note', 'code', 'presentation']
+                if data['submission_type'] not in valid_submission_types:
+                    raise serializers.ValidationError(f"Invalid submission type. Must be one of: {', '.join(valid_submission_types)}")
         
         return data
     
@@ -2315,69 +2179,8 @@ class ClassEventCreateUpdateSerializer(serializers.ModelSerializer):
         if not class_instance:
             raise serializers.ValidationError("Class instance is required")
         
-        # Handle submission_type if passed as string (name) - convert to object
-        submission_type = validated_data.pop('submission_type', None)
-        if submission_type:
-            if isinstance(submission_type, str):
-                from .models import SubmissionType
-                try:
-                    submission_type_obj = SubmissionType.objects.get(name=submission_type, is_active=True)
-                    validated_data['submission_type'] = submission_type_obj
-                except SubmissionType.DoesNotExist:
-                    raise serializers.ValidationError(f"Submission type '{submission_type}' not found or inactive")
-            else:
-                # Already an object
-                validated_data['submission_type'] = submission_type
-        else:
-            # No submission_type provided, set to None
-            validated_data['submission_type'] = None
-        
         validated_data['class_instance'] = class_instance
         return super().create(validated_data)
-    
-    def update(self, instance, validated_data):
-        """Update an existing class event"""
-        # Handle submission_type if passed as string (name) - convert to object
-        submission_type = validated_data.pop('submission_type', None)
-        if submission_type is not None:
-            if isinstance(submission_type, str):
-                from .models import SubmissionType
-                try:
-                    submission_type_obj = SubmissionType.objects.get(name=submission_type, is_active=True)
-                    validated_data['submission_type'] = submission_type_obj
-                except SubmissionType.DoesNotExist:
-                    raise serializers.ValidationError(f"Submission type '{submission_type}' not found or inactive")
-            else:
-                # Already an object
-                validated_data['submission_type'] = submission_type
-        # If submission_type is None, it will remain as is (nullable field)
-        
-        # Auto-set submission_type to 'code' if Ace Pyodide platform is selected
-        project_platform = validated_data.get('project_platform', instance.project_platform)
-        if project_platform:
-            platform_name = None
-            
-            # Handle if platform is passed as string UUID
-            if isinstance(project_platform, str):
-                from .models import ProjectPlatform
-                try:
-                    platform_obj = ProjectPlatform.objects.get(id=project_platform)
-                    platform_name = platform_obj.name
-                except (ProjectPlatform.DoesNotExist, ValueError):
-                    pass
-            # Handle if platform is already an object
-            elif hasattr(project_platform, 'name'):
-                platform_name = project_platform.name
-            
-            if platform_name == 'ace_pyodide' and not validated_data.get('submission_type') and not instance.submission_type:
-                from .models import SubmissionType
-                try:
-                    code_submission_type = SubmissionType.objects.get(name='code', is_active=True)
-                    validated_data['submission_type'] = code_submission_type
-                except SubmissionType.DoesNotExist:
-                    pass
-        
-        return super().update(instance, validated_data)
 
 
 # ===== LESSON MATERIAL SERIALIZERS =====
@@ -2821,7 +2624,7 @@ class CourseAssessmentListSerializer(serializers.ModelSerializer):
     class Meta:
         model = CourseAssessment
         fields = [
-            'id', 'course', 'assessment_type', 'title', 'description', 'instructions',
+            'id', 'course', 'assessment_type', 'title', 'description',
             'time_limit_minutes', 'passing_score', 'max_attempts',
             'order', 'question_count', 'total_points', 'created_at', 'updated_at'
         ]
@@ -2875,30 +2678,21 @@ class CourseAssessmentCreateUpdateSerializer(serializers.ModelSerializer):
         return value
 
 
-# ===== COURSE ASSESSMENT SUBMISSION SERIALIZERS =====
-
 class CourseAssessmentSubmissionSerializer(serializers.Serializer):
-    """Serializer for assessment submission requests"""
-    answers = serializers.JSONField(help_text="Student answers for each question")
-    time_remaining_seconds = serializers.IntegerField(
-        required=False, 
-        allow_null=True,
-        help_text="Remaining time in seconds (for auto-save)"
-    )
-    is_auto_submit = serializers.BooleanField(
-        default=False,
-        help_text="Whether this was auto-submitted (timeout or page close)"
-    )
+    """
+    Serializer for course assessment submission requests
+    """
+    answers = serializers.DictField(required=True)
     
     def validate_answers(self, value):
-        """Validate that answers is a dictionary"""
+        """Validate answers is a dictionary"""
         if not isinstance(value, dict):
             raise serializers.ValidationError("Answers must be a dictionary")
         return value
 
 
 class CourseAssessmentSubmissionResponseSerializer(serializers.ModelSerializer):
-    """Serializer for assessment submission responses"""
+    """Serializer for course assessment submission responses"""
     
     class Meta:
         model = CourseAssessmentSubmission
@@ -2913,42 +2707,111 @@ class CourseAssessmentSubmissionResponseSerializer(serializers.ModelSerializer):
 
 class CourseAssessmentGradingSerializer(serializers.ModelSerializer):
     """
-    Serializer specifically for grading course assessments (tests/exams)
-    Similar to AssignmentGradingSerializer for consistency
+    Serializer for grading course assessment submissions
+    Allows teachers to update grading fields
     """
+    
     class Meta:
         model = CourseAssessmentSubmission
         fields = [
-            'status', 'is_graded', 'is_teacher_draft', 'points_earned', 'points_possible', 
-            'instructor_feedback', 'graded_questions'
+            'is_graded',
+            'is_teacher_draft',
+            'points_earned',
+            'points_possible',
+            'percentage',
+            'passed',
+            'instructor_feedback',
+            'graded_questions',
+            'status'
         ]
+        read_only_fields = ['id']
+    
+    def validate_points_earned(self, value):
+        """Validate points earned"""
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Points earned cannot be negative")
+        return value
+    
+    def validate_points_possible(self, value):
+        """Validate points possible"""
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Points possible cannot be negative")
+        return value
+    
+    def validate_percentage(self, value):
+        """Validate percentage"""
+        if value is not None and (value < 0 or value > 100):
+            raise serializers.ValidationError("Percentage must be between 0 and 100")
+        return value
     
     def validate(self, data):
         """Validate grading data"""
-        if data.get('is_graded'):
-            if data.get('points_earned') is None:
-                raise serializers.ValidationError("Points earned is required for graded submissions")
-            if data.get('points_possible') is None:
-                raise serializers.ValidationError("Points possible is required for graded submissions")
+        points_earned = data.get('points_earned')
+        points_possible = data.get('points_possible')
+        percentage = data.get('percentage')
         
-        # Normalize graded_questions to ensure consistent structure
-        if 'graded_questions' in data and isinstance(data['graded_questions'], list):
-            normalized_questions = []
-            for q in data['graded_questions']:
-                normalized_q = {
-                    'question_id': q.get('question_id'),
-                    'points_earned': q.get('points_earned', 0),
-                    'points_possible': q.get('points_possible'),
-                    # Accept both 'feedback' and 'teacher_feedback' for backward compatibility
-                    'teacher_feedback': q.get('teacher_feedback') or q.get('feedback', ''),
-                    # Include correct_answer if provided
-                    'correct_answer': q.get('correct_answer'),
-                    # Include is_correct if provided (for backward compatibility)
-                    'is_correct': q.get('is_correct'),
-                }
-                # Remove None values to keep JSON clean
-                normalized_q = {k: v for k, v in normalized_q.items() if v is not None}
-                normalized_questions.append(normalized_q)
-            data['graded_questions'] = normalized_questions
+        # If both points are provided, validate consistency
+        if points_earned is not None and points_possible is not None:
+            if points_possible > 0:
+                calculated_percentage = (float(points_earned) / float(points_possible)) * 100
+                if percentage is not None and abs(float(percentage) - calculated_percentage) > 0.01:
+                    raise serializers.ValidationError(
+                        f"Percentage ({percentage}%) does not match calculated percentage ({calculated_percentage:.2f}%)"
+                    )
         
         return data
+
+
+class PublicProjectSubmissionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for project submission data for public access.
+    Excludes sensitive information like points, feedback, grader info.
+    Used for sharing project submissions publicly (e.g., in portfolios).
+    """
+    project = serializers.SerializerMethodField()
+    student = serializers.SerializerMethodField()
+    course_title = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ProjectSubmission
+        fields = [
+            'id',
+            'project',
+            'student',
+            'course_title',
+            'content',
+            'file_url',
+            'reflection',
+            'submitted_at',
+            'created_at'
+        ]
+        read_only_fields = fields
+    
+    def get_project(self, obj):
+        """Get project details"""
+        return {
+            'id': str(obj.project.id),
+            'title': obj.project.title,
+            'instructions': obj.project.instructions,
+            'submission_type': obj.project.submission_type,
+            'project_platform': {
+                'id': str(obj.project.project_platform.id),
+                'name': obj.project.project_platform.name,
+                'display_name': obj.project.project_platform.display_name,
+                'base_url': obj.project.project_platform.base_url
+            } if obj.project.project_platform else None
+        }
+    
+    def get_student(self, obj):
+        """Get student information"""
+        return {
+            'id': str(obj.student.id),
+            'name': obj.student.get_full_name(),
+            'first_name': obj.student.first_name,
+            'last_name': obj.student.last_name,
+            'email': obj.student.email
+        }
+    
+    def get_course_title(self, obj):
+        """Get course title"""
+        return obj.project.lesson.course.title if obj.project.lesson else None

@@ -1,13 +1,15 @@
 """
-TutorX views for block actions
+TutorX views for block actions and CRUD operations
 """
 from rest_framework import status, permissions
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 import logging
 
+from .models import TutorXBlock
 from .services.ai import TutorXAIService
 from .serializers import (
     BlockActionRequestSerializer,
@@ -18,6 +20,7 @@ from .serializers import (
     GenerateQuestionsResponseSerializer,
 )
 from settings.models import UserTutorXInstruction
+from courses.models import Lesson
 
 logger = logging.getLogger(__name__)
 
@@ -149,5 +152,258 @@ class BlockActionView(APIView):
             logger.error(f"Error in {action_type}: {e}", exc_info=True)
             return Response(
                 {'error': f'Failed to process {action_type} action', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class TutorXBlockListView(APIView):
+    """
+    GET: List all blocks for a lesson
+    PUT: Bulk update blocks (create/update/delete)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, lesson_id):
+        """Get all blocks for a lesson"""
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+        
+        # Check permission - only course teacher can access
+        if lesson.course.teacher != request.user:
+            return Response(
+                {'error': 'Only the course teacher can access this lesson'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Verify lesson type is tutorx
+        if lesson.type != 'tutorx':
+            return Response(
+                {'error': 'This lesson is not a TutorX lesson'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        blocks = TutorXBlock.objects.filter(lesson=lesson).order_by('order')
+        blocks_data = []
+        for block in blocks:
+            blocks_data.append({
+                'id': str(block.id),
+                'block_type': block.block_type,
+                'content': block.content,
+                'order': block.order,
+                'metadata': block.metadata,
+            })
+        
+        return Response({'blocks': blocks_data}, status=status.HTTP_200_OK)
+    
+    @transaction.atomic
+    def put(self, request, lesson_id):
+        """Bulk update blocks - handles create, update, and delete"""
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+        
+        # Check permission
+        if lesson.course.teacher != request.user:
+            return Response(
+                {'error': 'Only the course teacher can update blocks'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        if lesson.type != 'tutorx':
+            return Response(
+                {'error': 'This lesson is not a TutorX lesson'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        blocks_data = request.data.get('blocks', [])
+        if not isinstance(blocks_data, list):
+            return Response(
+                {'error': 'blocks must be a list'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get existing blocks - index by both ID and order
+        existing_blocks_by_id = {str(block.id): block for block in TutorXBlock.objects.filter(lesson=lesson)}
+        existing_blocks_by_order = {block.order: block for block in TutorXBlock.objects.filter(lesson=lesson)}
+        incoming_block_ids = set()
+        
+        # First pass: Temporarily move blocks that will have order conflicts
+        # This prevents unique constraint violations when updating orders
+        max_order = max([b.get('order', 0) for b in blocks_data] + [0])
+        temp_order_start = max_order + 1000  # Use high numbers to avoid conflicts
+        
+        for block_data in blocks_data:
+            block_id = block_data.get('id')
+            new_order = block_data.get('order')
+            
+            if not block_id or not new_order:
+                continue
+                
+            # If this block exists and wants to move to an order occupied by a different block
+            if block_id in existing_blocks_by_id:
+                existing_block = existing_blocks_by_id[block_id]
+                if new_order in existing_blocks_by_order:
+                    conflicting_block = existing_blocks_by_order[new_order]
+                    # If the block at this order is different from the one we're updating
+                    if str(conflicting_block.id) != block_id:
+                        # Temporarily move the conflicting block to a high order
+                        temp_order = temp_order_start + len([b for b in existing_blocks_by_order.values() if b.order >= temp_order_start])
+                        conflicting_block.order = temp_order
+                        conflicting_block.save()
+                        # Update mappings
+                        del existing_blocks_by_order[new_order]
+                        existing_blocks_by_order[temp_order] = conflicting_block
+        
+        # Refresh order mapping after temporary moves
+        existing_blocks_by_order = {block.order: block for block in TutorXBlock.objects.filter(lesson=lesson)}
+        
+        # Second pass: Process all blocks (update by ID, create new, or update by order)
+        for block_data in blocks_data:
+            block_id = block_data.get('id')
+            block_type = block_data.get('block_type')
+            content = block_data.get('content', '')
+            order = block_data.get('order')
+            metadata = block_data.get('metadata', {})
+            
+            if not block_type or not order:
+                continue
+            
+            block_to_update = None
+            
+            # Try to match by ID first (this handles most cases including order changes)
+            if block_id and block_id in existing_blocks_by_id:
+                block_to_update = existing_blocks_by_id[block_id]
+            # If not matched by ID, try to match by order (for blocks without IDs)
+            elif order in existing_blocks_by_order:
+                block_to_update = existing_blocks_by_order[order]
+            
+            if block_to_update:
+                # Update existing block
+                block_to_update.block_type = block_type
+                block_to_update.content = content
+                block_to_update.order = order
+                block_to_update.metadata = metadata
+                block_to_update.save()
+                incoming_block_ids.add(str(block_to_update.id))
+            else:
+                # Create new block (no existing block at this order)
+                new_block = TutorXBlock.objects.create(
+                    lesson=lesson,
+                    block_type=block_type,
+                    content=content,
+                    order=order,
+                    metadata=metadata
+                )
+                incoming_block_ids.add(str(new_block.id))
+        
+        # Delete blocks not in the request
+        blocks_to_delete = set(existing_blocks_by_id.keys()) - incoming_block_ids
+        if blocks_to_delete:
+            TutorXBlock.objects.filter(
+                lesson=lesson,
+                id__in=blocks_to_delete
+            ).delete()
+        
+        # Return updated blocks
+        blocks = TutorXBlock.objects.filter(lesson=lesson).order_by('order')
+        blocks_data = []
+        for block in blocks:
+            blocks_data.append({
+                'id': str(block.id),
+                'block_type': block.block_type,
+                'content': block.content,
+                'order': block.order,
+                'metadata': block.metadata,
+            })
+        
+        return Response({'blocks': blocks_data}, status=status.HTTP_200_OK)
+
+
+class TutorXBlockDetailView(APIView):
+    """
+    GET: Get a specific block
+    PUT: Update a block
+    DELETE: Delete a block
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, block_id):
+        """Get a specific block"""
+        block = get_object_or_404(TutorXBlock, id=block_id)
+        
+        # Check permission
+        if block.lesson.course.teacher != request.user:
+            return Response(
+                {'error': 'Only the course teacher can access this block'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        return Response({
+            'id': str(block.id),
+            'block_type': block.block_type,
+            'content': block.content,
+            'order': block.order,
+            'metadata': block.metadata,
+        }, status=status.HTTP_200_OK)
+    
+    def put(self, request, block_id):
+        """Update a block"""
+        block = get_object_or_404(TutorXBlock, id=block_id)
+        
+        # Check permission
+        if block.lesson.course.teacher != request.user:
+            return Response(
+                {'error': 'Only the course teacher can update blocks'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        block_type = request.data.get('block_type')
+        content = request.data.get('content')
+        order = request.data.get('order')
+        metadata = request.data.get('metadata')
+        
+        if block_type:
+            block.block_type = block_type
+        if content is not None:
+            block.content = content
+        if order is not None:
+            block.order = order
+        if metadata is not None:
+            block.metadata = metadata
+        
+        try:
+            block.save()
+            return Response({
+                'id': str(block.id),
+                'block_type': block.block_type,
+                'content': block.content,
+                'order': block.order,
+                'metadata': block.metadata,
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error updating block: {e}")
+            return Response(
+                {'error': 'Failed to update block', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def delete(self, request, block_id):
+        """Delete a block"""
+        block = get_object_or_404(TutorXBlock, id=block_id)
+        
+        # Check permission
+        if block.lesson.course.teacher != request.user:
+            return Response(
+                {'error': 'Only the course teacher can delete blocks'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            block.delete()
+            return Response(
+                {'message': 'Block deleted successfully'},
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error deleting block: {e}")
+            return Response(
+                {'error': 'Failed to delete block', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
