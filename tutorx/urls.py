@@ -15,6 +15,10 @@ urlpatterns = [
     # Block CRUD operations
     path('lessons/<uuid:lesson_id>/blocks/', views.TutorXBlockListView.as_view(), name='tutorx-block-list'),
     path('blocks/<uuid:block_id>/', views.TutorXBlockDetailView.as_view(), name='tutorx-block-detail'),
+    
+    # Image operations
+    path('images/upload/', views.TutorXImageUploadView.as_view(), name='tutorx-image-upload'),
+    path('images/delete/', views.TutorXImageDeleteView.as_view(), name='tutorx-image-delete'),
 ]
 
 # Include router URLs if using viewsets

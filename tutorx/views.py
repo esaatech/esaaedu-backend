@@ -21,6 +21,18 @@ from .serializers import (
 )
 from settings.models import UserTutorXInstruction
 from courses.models import Lesson
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
+from django.conf import settings
+from PIL import Image as PILImage
+from io import BytesIO
+import uuid
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
+from django.conf import settings
+from PIL import Image
+from io import BytesIO
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -293,13 +305,62 @@ class TutorXBlockListView(APIView):
                 )
                 incoming_block_ids.add(str(new_block.id))
         
-        # Delete blocks not in the request
+        # Delete blocks not in the request and cleanup their images from GCS
         blocks_to_delete = set(existing_blocks_by_id.keys()) - incoming_block_ids
         if blocks_to_delete:
-            TutorXBlock.objects.filter(
+            blocks_to_delete_objs = TutorXBlock.objects.filter(
                 lesson=lesson,
                 id__in=blocks_to_delete
-            ).delete()
+            )
+            
+            # Delete images from GCS before deleting blocks
+            for block in blocks_to_delete_objs:
+                if block.block_type == 'image' and block.content:
+                    try:
+                        # Extract file path from GCS URL
+                        from urllib.parse import urlparse, unquote
+                        parsed_url = urlparse(block.content)
+                        path_parts = parsed_url.path.strip('/').split('/', 1)
+                        if len(path_parts) > 1:
+                            file_path = unquote(path_parts[1])
+                        else:
+                            file_path = unquote(parsed_url.path.strip('/'))
+                        
+                        if default_storage.exists(file_path):
+                            default_storage.delete(file_path)
+                            logger.info(f"✅ Deleted image from GCS when deleting block: {file_path}")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to delete image from GCS when deleting block: {e}")
+            
+            # Now delete the blocks
+            blocks_to_delete_objs.delete()
+        
+        # Handle image replacement: if an image block's URL changed, delete old image
+        for block_data in blocks_data:
+            if block_data.get('block_type') == 'image':
+                block_id = block_data.get('id')
+                new_image_url = block_data.get('content', '') or block_data.get('metadata', {}).get('image_url', '')
+                
+                if block_id and block_id in existing_blocks_by_id:
+                    old_block = existing_blocks_by_id[block_id]
+                    old_image_url = old_block.content or old_block.metadata.get('image_url', '')
+                    
+                    # If image URL changed, delete old image from GCS
+                    if old_image_url and old_image_url != new_image_url:
+                        try:
+                            from urllib.parse import urlparse, unquote
+                            parsed_url = urlparse(old_image_url)
+                            path_parts = parsed_url.path.strip('/').split('/', 1)
+                            if len(path_parts) > 1:
+                                file_path = unquote(path_parts[1])
+                            else:
+                                file_path = unquote(parsed_url.path.strip('/'))
+                            
+                            if default_storage.exists(file_path):
+                                default_storage.delete(file_path)
+                                logger.info(f"✅ Deleted old image from GCS when replacing: {file_path}")
+                        except Exception as e:
+                            logger.error(f"❌ Failed to delete old image from GCS when replacing: {e}")
         
         # Return updated blocks
         blocks = TutorXBlock.objects.filter(lesson=lesson).order_by('order')
@@ -405,5 +466,238 @@ class TutorXBlockDetailView(APIView):
             logger.error(f"Error deleting block: {e}")
             return Response(
                 {'error': 'Failed to delete block', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class TutorXImageUploadView(APIView):
+    """
+    API view for uploading images for TutorX blocks.
+    Uploads image to GCS, compresses it, and returns the URL.
+    The URL is then saved directly in the TutorXBlock content field.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        """
+        Upload an image for TutorX blocks.
+        
+        Expected request:
+        - image: Image file (JPEG, PNG, WebP, GIF)
+        
+        Returns:
+        - image_url: GCS URL for the image
+        - file_size: Size in bytes (after compression)
+        - file_size_mb: Size in MB
+        - file_extension: File extension
+        - original_filename: Original filename
+        - message: Success message
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can upload TutorX images'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Get uploaded image
+            uploaded_image = request.FILES.get('image')
+            if not uploaded_image:
+                return Response(
+                    {'error': 'No image provided'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Validate file size (max 10MB)
+            max_size = 10 * 1024 * 1024  # 10MB in bytes
+            if uploaded_image.size > max_size:
+                return Response(
+                    {'error': f'Image size exceeds maximum allowed size of 10MB. File size: {round(uploaded_image.size / (1024 * 1024), 2)}MB'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Validate file extension
+            original_filename = uploaded_image.name
+            file_extension = original_filename.split('.')[-1].lower() if '.' in original_filename else ''
+            allowed_extensions = ['jpg', 'jpeg', 'png', 'webp', 'gif']
+            
+            if file_extension not in allowed_extensions:
+                return Response(
+                    {'error': f'Image extension "{file_extension}" not allowed. Allowed extensions: {", ".join(allowed_extensions)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Check if GCS is configured
+            if not hasattr(settings, 'GS_BUCKET_NAME') or not settings.GS_BUCKET_NAME:
+                return Response(
+                    {'error': 'Google Cloud Storage is not configured. Please set GCS_BUCKET_NAME and GCS_PROJECT_ID environment variables.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            try:
+                # Process image with Pillow
+                img = PILImage.open(uploaded_image)
+                
+                # Convert RGBA/LA/P to RGB if needed
+                if img.mode in ('RGBA', 'LA', 'P'):
+                    # Create white background for transparent images
+                    background = PILImage.new('RGB', img.size, (255, 255, 255))
+                    if img.mode == 'P':
+                        img = img.convert('RGBA')
+                    if img.mode == 'RGBA':
+                        background.paste(img, mask=img.split()[-1])
+                    else:
+                        background.paste(img)
+                    img = background
+                elif img.mode != 'RGB':
+                    img = img.convert('RGB')
+                
+                # Resize image to max 1920x1920 (maintains aspect ratio)
+                max_size_full = (1920, 1920)
+                img.thumbnail(max_size_full, PILImage.Resampling.LANCZOS)
+                
+                # Compress and save image
+                output = BytesIO()
+                img.save(
+                    output,
+                    format='JPEG',
+                    quality=85,
+                    optimize=True,
+                    progressive=True
+                )
+                output.seek(0)
+                
+                # Generate unique filename
+                unique_id = uuid.uuid4()
+                base_name = original_filename.rsplit('.', 1)[0] if '.' in original_filename else 'image'
+                # Sanitize base name
+                base_name = ''.join(c for c in base_name if c.isalnum() or c in (' ', '-', '_')).strip()[:50]
+                
+                filename = f"{unique_id}-{base_name}.jpg"
+                storage_path = f"tutorx-images/{filename}"
+                
+                # Upload to GCS
+                file_content = ContentFile(output.getvalue())
+                saved_path = default_storage.save(storage_path, file_content)
+                file_url = default_storage.url(saved_path)
+                if not file_url.startswith('http'):
+                    file_url = f"https://storage.googleapis.com/{settings.GS_BUCKET_NAME}/{saved_path}"
+                
+                # Get compressed file size
+                file_size = len(output.getvalue())
+                
+                logger.info(f"✅ TutorX image uploaded: {file_url} (saved_path: {saved_path})")
+                
+                return Response({
+                    'image_url': file_url,
+                    'file_size': file_size,
+                    'file_size_mb': round(file_size / (1024 * 1024), 2),
+                    'file_extension': 'jpg',
+                    'original_filename': original_filename,
+                    'message': 'Image uploaded successfully'
+                }, status=status.HTTP_200_OK)
+                
+            except Exception as e:
+                logger.error(f"Error processing TutorX image: {e}", exc_info=True)
+                return Response(
+                    {'error': f'Failed to process image: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+                
+        except Exception as e:
+            logger.error(f"Error in TutorX image upload: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to upload image', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class TutorXImageDeleteView(APIView):
+    """
+    API view for deleting images from GCS.
+    Extracts the file path from the GCS URL and deletes it.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request):
+        """
+        Delete an image from GCS by URL.
+        
+        Expected request body:
+        - image_url: GCS URL of the image to delete
+        
+        Returns:
+        - message: Success message
+        """
+        try:
+            # Check if user is a teacher
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can delete TutorX images'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            image_url = request.data.get('image_url')
+            if not image_url:
+                return Response(
+                    {'error': 'image_url is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Check if GCS is configured
+            if not hasattr(settings, 'GS_BUCKET_NAME') or not settings.GS_BUCKET_NAME:
+                return Response(
+                    {'error': 'Google Cloud Storage is not configured'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            # Extract file path from GCS URL
+            # URL format: https://storage.googleapis.com/BUCKET_NAME/path/to/file
+            # or: https://storage.googleapis.com/BUCKET_NAME/path/to/file?query=params
+            try:
+                from urllib.parse import urlparse, unquote
+                
+                parsed_url = urlparse(image_url)
+                # Remove leading slash and bucket name from path
+                # Path format: /BUCKET_NAME/path/to/file
+                path_parts = parsed_url.path.strip('/').split('/', 1)
+                if len(path_parts) > 1:
+                    file_path = path_parts[1]  # Get path after bucket name
+                    # URL-decode the path
+                    file_path = unquote(file_path)
+                else:
+                    # If no bucket name in path, assume it's already just the path
+                    file_path = parsed_url.path.strip('/')
+                    file_path = unquote(file_path)
+                
+                logger.info(f"🗑️ Deleting TutorX image from GCS: {file_path} (from URL: {image_url})")
+                
+                # Delete from GCS
+                if default_storage.exists(file_path):
+                    default_storage.delete(file_path)
+                    logger.info(f"✅ Successfully deleted TutorX image from GCS: {file_path}")
+                    return Response(
+                        {'message': 'Image deleted successfully'},
+                        status=status.HTTP_200_OK
+                    )
+                else:
+                    logger.warning(f"⚠️ TutorX image file not found in GCS: {file_path}")
+                    return Response(
+                        {'message': 'Image file not found (may have already been deleted)'},
+                        status=status.HTTP_200_OK
+                    )
+                    
+            except Exception as e:
+                logger.error(f"❌ Error deleting TutorX image from GCS: {e}", exc_info=True)
+                return Response(
+                    {'error': f'Failed to delete image: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+                
+        except Exception as e:
+            logger.error(f"Error in TutorX image delete: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to delete image', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
