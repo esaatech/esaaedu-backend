@@ -180,18 +180,30 @@ class TutorXBlockListView(APIView):
         """Get all blocks for a lesson"""
         lesson = get_object_or_404(Lesson, id=lesson_id)
         
-        # Check permission - only course teacher can access
-        if lesson.course.teacher != request.user:
-            return Response(
-                {'error': 'Only the course teacher can access this lesson'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
         # Verify lesson type is tutorx
         if lesson.type != 'tutorx':
             return Response(
                 {'error': 'This lesson is not a TutorX lesson'},
                 status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check permission - allow course teacher OR enrolled students
+        is_teacher = lesson.course.teacher == request.user
+        is_student = False
+        
+        # Check if user is an enrolled student
+        if not is_teacher and hasattr(request.user, 'student_profile'):
+            from student.models import EnrolledCourse
+            is_student = EnrolledCourse.objects.filter(
+                student_profile=request.user.student_profile,
+                course=lesson.course,
+                status__in=['active', 'completed']
+            ).exists()
+        
+        if not is_teacher and not is_student:
+            return Response(
+                {'error': 'Only the course teacher or enrolled students can access this lesson'},
+                status=status.HTTP_403_FORBIDDEN
             )
         
         blocks = TutorXBlock.objects.filter(lesson=lesson).order_by('order')
