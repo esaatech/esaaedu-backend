@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 from django.db import transaction
+from django.db.models import F
 import logging
 
 from .models import TutorXBlock
@@ -377,6 +378,108 @@ class TutorXBlockListView(APIView):
         return Response({'blocks': blocks_data}, status=status.HTTP_200_OK)
 
 
+class TutorXBlockCreateView(APIView):
+    """
+    POST: Create a new TutorX block
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    @transaction.atomic
+    def post(self, request):
+        """Create a new block"""
+        lesson_id = request.data.get('lesson')
+        block_type = request.data.get('block_type')
+        content = request.data.get('content', '')
+        order = request.data.get('order')
+        metadata = request.data.get('metadata', {})
+        
+        # Validate required fields
+        if not lesson_id:
+            return Response(
+                {'error': 'lesson is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not block_type:
+            return Response(
+                {'error': 'block_type is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if order is None:
+            return Response(
+                {'error': 'order is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get lesson
+        try:
+            lesson = Lesson.objects.get(id=lesson_id)
+        except Lesson.DoesNotExist:
+            return Response(
+                {'error': 'Lesson not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check permission
+        if lesson.course.teacher != request.user:
+            return Response(
+                {'error': 'Only the course teacher can create blocks'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Verify lesson type
+        if lesson.type != 'tutorx':
+            return Response(
+                {'error': 'This lesson is not a TutorX lesson'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Handle order conflicts - shift existing blocks if needed
+        existing_block_at_order = TutorXBlock.objects.filter(
+            lesson=lesson,
+            order=order
+        ).first()
+        
+        if existing_block_at_order:
+            # Shift all blocks with order >= new_order by 1
+            TutorXBlock.objects.filter(
+                lesson=lesson,
+                order__gte=order
+            ).update(order=F('order') + 1)
+            logger.info(f"Shifted blocks for lesson {lesson_id} starting from order {order}")
+        
+        # Create the new block
+        try:
+            new_block = TutorXBlock.objects.create(
+                lesson=lesson,
+                block_type=block_type,
+                content=content,
+                order=order,
+                metadata=metadata
+            )
+            
+            logger.info(f"✅ Created new TutorX block: {new_block.id} (type: {block_type}, order: {order})")
+            
+            return Response({
+                'id': str(new_block.id),
+                'lesson': str(new_block.lesson.id),
+                'block_type': new_block.block_type,
+                'content': new_block.content,
+                'order': new_block.order,
+                'metadata': new_block.metadata,
+                'created_at': new_block.created_at.isoformat(),
+                'updated_at': new_block.updated_at.isoformat(),
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            logger.error(f"Error creating block: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to create block', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 class TutorXBlockDetailView(APIView):
     """
     GET: Get a specific block
@@ -398,12 +501,16 @@ class TutorXBlockDetailView(APIView):
         
         return Response({
             'id': str(block.id),
+            'lesson': str(block.lesson.id),
             'block_type': block.block_type,
             'content': block.content,
             'order': block.order,
             'metadata': block.metadata,
+            'created_at': block.created_at.isoformat(),
+            'updated_at': block.updated_at.isoformat(),
         }, status=status.HTTP_200_OK)
     
+    @transaction.atomic
     def put(self, request, block_id):
         """Update a block"""
         block = get_object_or_404(TutorXBlock, id=block_id)
@@ -420,6 +527,33 @@ class TutorXBlockDetailView(APIView):
         order = request.data.get('order')
         metadata = request.data.get('metadata')
         
+        # Handle order conflicts if order is being changed
+        old_order = block.order
+        if order is not None and order != old_order:
+            # Check if new order is occupied by another block
+            existing_block_at_order = TutorXBlock.objects.filter(
+                lesson=block.lesson,
+                order=order
+            ).exclude(id=block.id).first()
+            
+            if existing_block_at_order:
+                # Shift blocks to make room
+                if order > old_order:
+                    # Moving down - shift blocks between old and new order up
+                    TutorXBlock.objects.filter(
+                        lesson=block.lesson,
+                        order__gt=old_order,
+                        order__lte=order
+                    ).exclude(id=block.id).update(order=F('order') - 1)
+                else:
+                    # Moving up - shift blocks between new and old order down
+                    TutorXBlock.objects.filter(
+                        lesson=block.lesson,
+                        order__gte=order,
+                        order__lt=old_order
+                    ).exclude(id=block.id).update(order=F('order') + 1)
+        
+        # Update block fields
         if block_type:
             block.block_type = block_type
         if content is not None:
@@ -431,20 +565,26 @@ class TutorXBlockDetailView(APIView):
         
         try:
             block.save()
+            logger.info(f"✅ Updated TutorX block: {block.id}")
+            
             return Response({
                 'id': str(block.id),
+                'lesson': str(block.lesson.id),
                 'block_type': block.block_type,
                 'content': block.content,
                 'order': block.order,
                 'metadata': block.metadata,
+                'created_at': block.created_at.isoformat(),
+                'updated_at': block.updated_at.isoformat(),
             }, status=status.HTTP_200_OK)
         except Exception as e:
-            logger.error(f"Error updating block: {e}")
+            logger.error(f"Error updating block: {e}", exc_info=True)
             return Response(
                 {'error': 'Failed to update block', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    @transaction.atomic
     def delete(self, request, block_id):
         """Delete a block"""
         block = get_object_or_404(TutorXBlock, id=block_id)
@@ -456,14 +596,41 @@ class TutorXBlockDetailView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
         
+        # Delete image from GCS if it's an image block
+        if block.block_type == 'image' and block.content:
+            try:
+                from urllib.parse import urlparse, unquote
+                parsed_url = urlparse(block.content)
+                path_parts = parsed_url.path.strip('/').split('/', 1)
+                if len(path_parts) > 1:
+                    file_path = unquote(path_parts[1])
+                else:
+                    file_path = unquote(parsed_url.path.strip('/'))
+                
+                if default_storage.exists(file_path):
+                    default_storage.delete(file_path)
+                    logger.info(f"✅ Deleted image from GCS when deleting block: {file_path}")
+            except Exception as e:
+                logger.error(f"❌ Failed to delete image from GCS when deleting block: {e}")
+        
         try:
+            block_id_str = str(block.id)
+            lesson = block.lesson
+            block_order = block.order
+            
             block.delete()
-            return Response(
-                {'message': 'Block deleted successfully'},
-                status=status.HTTP_200_OK
-            )
+            logger.info(f"✅ Deleted TutorX block: {block_id_str}")
+            
+            # Optionally: Reorder remaining blocks to fill the gap
+            # This is optional - frontend handles ordering, but we can clean up gaps
+            TutorXBlock.objects.filter(
+                lesson=lesson,
+                order__gt=block_order
+            ).update(order=F('order') - 1)
+            
+            return Response(status=status.HTTP_204_NO_CONTENT)
         except Exception as e:
-            logger.error(f"Error deleting block: {e}")
+            logger.error(f"Error deleting block: {e}", exc_info=True)
             return Response(
                 {'error': 'Failed to delete block', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

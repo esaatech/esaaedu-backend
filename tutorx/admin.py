@@ -87,14 +87,14 @@ class TutorXBlockAdmin(admin.ModelAdmin):
     Blocks are content units within TutorX lessons. Each block can be of type:
     text, code, image, or diagram.
     """
-    list_display = ['lesson', 'order', 'block_type', 'content_preview', 'created_at', 'updated_at']
+    list_display = ['id', 'lesson', 'order', 'block_type', 'content_preview', 'created_at', 'updated_at']
     list_filter = ['block_type', 'created_at', 'updated_at']
-    search_fields = ['lesson__title', 'content', 'lesson__course__title']
+    search_fields = ['lesson__title', 'content', 'lesson__course__title', 'id']
     readonly_fields = ['id', 'created_at', 'updated_at']
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('lesson', 'block_type', 'order')
+            'fields': ('id', 'lesson', 'block_type', 'order')
         }),
         ('Content', {
             'fields': ('content',),
@@ -105,7 +105,7 @@ class TutorXBlockAdmin(admin.ModelAdmin):
             'description': 'Block-specific metadata as JSON. For code blocks: {"language": "python"}. For images: {"url": "...", "caption": "..."}'
         }),
         ('Timestamps', {
-            'fields': ('id', 'created_at', 'updated_at'),
+            'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',)
         }),
     )

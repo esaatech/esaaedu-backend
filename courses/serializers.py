@@ -1054,8 +1054,18 @@ class LessonCreateUpdateSerializer(serializers.ModelSerializer):
             from tutorx.models import TutorXBlock
             import uuid
             
-            # Get all existing blocks for this lesson - index by ID for quick lookup
+            # Validate that all incoming blocks have unique order values
+            incoming_orders = [block_data.get('order') for block_data in blocks_data if block_data.get('order')]
+            if len(incoming_orders) != len(set(incoming_orders)):
+                duplicate_orders = [order for order in incoming_orders if incoming_orders.count(order) > 1]
+                logger.error(f"❌ LessonCreateUpdateSerializer - Duplicate order values found: {duplicate_orders}")
+                raise serializers.ValidationError({
+                    'content': f"Duplicate order values found in blocks: {duplicate_orders}. Each block must have a unique order."
+                })
+            
+            # Get all existing blocks for this lesson - index by ID and by order for quick lookup
             existing_blocks = {str(block.id): block for block in TutorXBlock.objects.filter(lesson=lesson)}
+            existing_blocks_by_order = {block.order: block for block in TutorXBlock.objects.filter(lesson=lesson)}
             incoming_block_ids = set()
             
             # Process each block from the request
@@ -1078,12 +1088,30 @@ class LessonCreateUpdateSerializer(serializers.ModelSerializer):
                         if block_id_str in existing_blocks:
                             # Update existing block
                             block_to_update = existing_blocks[block_id_str]
+                            
+                            # Check if order is changing and if target order is already taken by another block
+                            if block_to_update.order != order:
+                                if order in existing_blocks_by_order:
+                                    conflicting_block = existing_blocks_by_order[order]
+                                    # Only conflict if it's a different block
+                                    if str(conflicting_block.id) != block_id_str:
+                                        logger.warning(f"⚠️ LessonCreateUpdateSerializer - Order {order} already taken by block {conflicting_block.id}. Moving conflicting block to temporary order.")
+                                        # Move conflicting block to a temporary high order number to free up the slot
+                                        temp_order = max(existing_blocks_by_order.keys(), default=0) + 1000
+                                        conflicting_block.order = temp_order
+                                        conflicting_block.save()
+                                        # Update our tracking
+                                        del existing_blocks_by_order[order]
+                                        existing_blocks_by_order[temp_order] = conflicting_block
+                            
                             block_to_update.block_type = block_type
                             block_to_update.content = content_text
                             block_to_update.order = order
                             block_to_update.metadata = metadata
                             block_to_update.save()
                             incoming_block_ids.add(block_id_str)
+                            # Update tracking
+                            existing_blocks_by_order[order] = block_to_update
                             logger.info(f"💾 LessonCreateUpdateSerializer - Updated block. ID: {block_id_str}, Type: {block_type}, Order: {order}")
                         else:
                             # ID provided but doesn't exist - check if there's a block at this order
@@ -1096,8 +1124,22 @@ class LessonCreateUpdateSerializer(serializers.ModelSerializer):
                                 existing_at_order.metadata = metadata
                                 existing_at_order.save()
                                 incoming_block_ids.add(str(existing_at_order.id))
+                                # Update tracking
+                                existing_blocks_by_order[order] = existing_at_order
+                                existing_blocks[str(existing_at_order.id)] = existing_at_order
                             else:
-                                # No block at this order - create new
+                                # No block at this order - check if order is already taken by another existing block
+                                if order in existing_blocks_by_order:
+                                    conflicting_block = existing_blocks_by_order[order]
+                                    logger.warning(f"⚠️ LessonCreateUpdateSerializer - Order {order} already taken by block {conflicting_block.id}. Moving conflicting block to temporary order.")
+                                    # Move conflicting block to a temporary high order number
+                                    temp_order = max(existing_blocks_by_order.keys(), default=0) + 1000
+                                    conflicting_block.order = temp_order
+                                    conflicting_block.save()
+                                    del existing_blocks_by_order[order]
+                                    existing_blocks_by_order[temp_order] = conflicting_block
+                                
+                                # Create new block
                                 logger.warning(f"⚠️ LessonCreateUpdateSerializer - Block ID {block_id_str} not found, creating new block at order {order}")
                                 new_block = TutorXBlock.objects.create(
                                     lesson=lesson,
@@ -1107,9 +1149,21 @@ class LessonCreateUpdateSerializer(serializers.ModelSerializer):
                                     metadata=metadata
                                 )
                                 incoming_block_ids.add(str(new_block.id))
+                                existing_blocks_by_order[order] = new_block
                                 logger.info(f"💾 LessonCreateUpdateSerializer - Created block. ID: {new_block.id}")
                     except (ValueError, TypeError) as e:
-                        # Invalid UUID format - create new block
+                        # Invalid UUID format - check if order is already taken
+                        if order in existing_blocks_by_order:
+                            conflicting_block = existing_blocks_by_order[order]
+                            logger.warning(f"⚠️ LessonCreateUpdateSerializer - Order {order} already taken by block {conflicting_block.id}. Moving conflicting block to temporary order.")
+                            # Move conflicting block to a temporary high order number
+                            temp_order = max(existing_blocks_by_order.keys(), default=0) + 1000
+                            conflicting_block.order = temp_order
+                            conflicting_block.save()
+                            del existing_blocks_by_order[order]
+                            existing_blocks_by_order[temp_order] = conflicting_block
+                        
+                        # Create new block
                         logger.warning(f"⚠️ LessonCreateUpdateSerializer - Invalid block ID format: {block_id}, creating new block. Error: {e}")
                         new_block = TutorXBlock.objects.create(
                             lesson=lesson,
@@ -1119,6 +1173,7 @@ class LessonCreateUpdateSerializer(serializers.ModelSerializer):
                             metadata=metadata
                         )
                         incoming_block_ids.add(str(new_block.id))
+                        existing_blocks_by_order[order] = new_block
                         logger.info(f"💾 LessonCreateUpdateSerializer - Created block. ID: {new_block.id}")
                 else:
                     # No ID provided - check if block exists at this order
@@ -1131,7 +1186,21 @@ class LessonCreateUpdateSerializer(serializers.ModelSerializer):
                         existing_at_order.metadata = metadata
                         existing_at_order.save()
                         incoming_block_ids.add(str(existing_at_order.id))
+                        # Update tracking
+                        existing_blocks_by_order[order] = existing_at_order
+                        existing_blocks[str(existing_at_order.id)] = existing_at_order
                     else:
+                        # No block at this order - check if order is already taken by another existing block
+                        if order in existing_blocks_by_order:
+                            conflicting_block = existing_blocks_by_order[order]
+                            logger.warning(f"⚠️ LessonCreateUpdateSerializer - Order {order} already taken by block {conflicting_block.id}. Moving conflicting block to temporary order.")
+                            # Move conflicting block to a temporary high order number
+                            temp_order = max(existing_blocks_by_order.keys(), default=0) + 1000
+                            conflicting_block.order = temp_order
+                            conflicting_block.save()
+                            del existing_blocks_by_order[order]
+                            existing_blocks_by_order[temp_order] = conflicting_block
+                        
                         # Create new block
                         logger.info(f"💾 LessonCreateUpdateSerializer - Creating new block. Type: {block_type}, Order: {order}")
                         new_block = TutorXBlock.objects.create(
@@ -1142,6 +1211,7 @@ class LessonCreateUpdateSerializer(serializers.ModelSerializer):
                             metadata=metadata
                         )
                         incoming_block_ids.add(str(new_block.id))
+                        existing_blocks_by_order[order] = new_block
                         logger.info(f"💾 LessonCreateUpdateSerializer - Created block. ID: {new_block.id}")
             
             # Delete blocks that are no longer in the request (not in incoming_block_ids)
