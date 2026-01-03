@@ -9,6 +9,9 @@ from . import views
 router = DefaultRouter()
 
 urlpatterns = [
+    # Action configs - list available actions (must come before block actions to avoid conflicts)
+    path('action-configs/', views.TutorXActionConfigListView.as_view(), name='tutorx-action-config-list'),
+    
     # Block CRUD operations (must come before action routes to avoid conflicts)
     path('lessons/<uuid:lesson_id>/blocks/', views.TutorXBlockListView.as_view(), name='tutorx-block-list'),
     path('blocks/', views.TutorXBlockCreateView.as_view(), name='tutorx-block-create'),  # POST to create

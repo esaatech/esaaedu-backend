@@ -10,7 +10,7 @@ from django.db import transaction
 from django.db.models import F
 import logging
 
-from .models import TutorXBlock
+from .models import TutorXBlock, TutorXBlockActionConfig
 from .services.ai import TutorXAIService
 from .serializers import (
     BlockActionRequestSerializer,
@@ -878,5 +878,56 @@ class TutorXImageDeleteView(APIView):
             logger.error(f"Error in TutorX image delete: {e}", exc_info=True)
             return Response(
                 {'error': 'Failed to delete image', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class TutorXActionConfigListView(APIView):
+    """
+    GET: List all active TutorX block action configurations.
+    
+    Returns all active action configs with their display names and descriptions.
+    Used by frontend to dynamically display available actions in the popup menu.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """
+        Get all active action configs.
+        
+        Returns:
+        {
+            "actions": [
+                {
+                    "action_type": "explain_more",
+                    "display_name": "Explain More",
+                    "description": "Expand on block content with more detail"
+                },
+                ...
+            ]
+        }
+        """
+        try:
+            # Get all active action configs, ordered by action_type
+            configs = TutorXBlockActionConfig.objects.filter(
+                is_active=True
+            ).order_by('action_type')
+            
+            actions = []
+            for config in configs:
+                actions.append({
+                    'action_type': config.action_type,
+                    'display_name': config.display_name,
+                    'description': config.description or '',
+                })
+            
+            return Response({
+                'actions': actions
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error fetching action configs: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to fetch action configs', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
