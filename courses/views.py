@@ -242,6 +242,10 @@ def get_course_billing_data_helper(course):
         if not billing_product:
             return None
         
+        # Get course settings for trial period configuration
+        from settings.models import CourseSettings
+        course_settings = CourseSettings.get_settings()
+        
         # Calculate prices using existing logic
         from .price_calculator import calculate_course_prices
         prices = calculate_course_prices(float(course.price), getattr(course, 'duration_weeks', 8))
@@ -261,8 +265,8 @@ def get_course_billing_data_helper(course):
                 }
             },
             "trial": {
-                "duration_days": 14,
-                "available": True,
+                "duration_days": course_settings.trial_period_days,
+                "available": course_settings.enable_trial_period,
                 "requires_payment_method": True
             }
         }
