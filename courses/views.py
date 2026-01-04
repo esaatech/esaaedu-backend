@@ -394,6 +394,7 @@ def course_introduction_detail(request, course_id):
     """
     Get detailed course information for course details modal
     Now working directly with Course model (no separate CourseIntroduction)
+    Includes billing data for enrollment flow consistency
     """
     try:
         course = get_object_or_404(Course, id=course_id, status='published')
@@ -402,7 +403,12 @@ def course_introduction_detail(request, course_id):
         course = Course.objects.select_related('teacher').prefetch_related('reviews').get(id=course_id, status='published')
         
         serializer = CourseDetailSerializer(course)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        response_data = serializer.data
+        
+        # Add billing data for enrollment flow (same as dashboard endpoint)
+        response_data['billing'] = get_course_billing_data_helper(course)
+        
+        return Response(response_data, status=status.HTTP_200_OK)
         
     except Exception as e:
         return Response(
