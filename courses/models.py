@@ -153,6 +153,12 @@ class Course(models.Model):
         max_length=500,
         help_text="Course thumbnail image URL (optional, auto-generated)"
     )
+    landing_page_url = models.CharField(
+        max_length=500,
+        blank=True,
+        null=True,
+        help_text="Custom landing page URL for marketing. If empty, will auto-generate from course title and ID. Format: /courses/slug-uuid?landing=true"
+    )
     
     # Course Management
     max_students = models.IntegerField(
@@ -225,6 +231,57 @@ class Course(models.Model):
         if self.image and hasattr(self.image, 'url'):
             return self.image.url
         return '/static/images/course-placeholder.jpg'  # Fallback placeholder
+    
+    @property
+    def get_landing_page_url(self):
+        """
+        Get landing page URL for this course.
+        Returns custom URL if set, otherwise auto-generates from title and ID.
+        """
+        if self.landing_page_url:
+            return self.landing_page_url
+        
+        # Auto-generate URL using slug format
+        from django.utils.text import slugify
+        slug = slugify(self.title)
+        # Limit slug length to 100 chars for URLs
+        slug = slug[:100]
+        # Remove trailing hyphens
+        slug = slug.rstrip('-')
+        
+        # Format: /courses/slug-uuid?landing=true
+        return f"/courses/{slug}-{self.id}?landing=true"
+    
+    def get_full_landing_page_url(self, request=None):
+        """
+        Get full landing page URL with domain.
+        Returns full URL (e.g., https://www.sbtyacedemy.com/courses/...)
+        """
+        from django.conf import settings
+        from decouple import config
+        
+        # Get the path (custom or auto-generated)
+        path = self.get_landing_page_url
+        
+        # If path already contains a full URL (starts with http), return as is
+        if path.startswith('http://') or path.startswith('https://'):
+            return path
+        
+        # Determine domain
+        if request:
+            # Use request domain if available
+            scheme = 'https' if request.is_secure() else 'http'
+            domain = request.get_host()
+            return f"{scheme}://{domain}{path}"
+        else:
+            # Fallback to environment variable or default
+            frontend_url = config('FRONTEND_URL', default='https://www.sbtyacedemy.com')
+            # Remove trailing slash if present
+            frontend_url = frontend_url.rstrip('/')
+            # Ensure path starts with /
+            if not path.startswith('/'):
+                path = '/' + path
+            return f"{frontend_url}{path}"
     
     # Student Relationships (using through model)
     enrolled_students = models.ManyToManyField(

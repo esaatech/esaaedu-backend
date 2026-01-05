@@ -1,5 +1,7 @@
 from django.contrib import admin
 from django.contrib import messages
+from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, SubmissionType, Note, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
 from .views import delete_course_with_cleanup
 
@@ -9,7 +11,7 @@ class CourseAdmin(admin.ModelAdmin):
     list_display = ['title', 'teacher', 'category', 'level', 'status', 'featured', 'popular', 'enrolled_students_count', 'created_at']
     list_filter = ['status', 'level', 'category', 'featured', 'popular', 'created_at']
     search_fields = ['title', 'description', 'teacher__email', 'teacher__first_name', 'teacher__last_name']
-    readonly_fields = ['id', 'created_at', 'updated_at', 'total_lessons', 'enrolled_students_count']
+    readonly_fields = ['id', 'created_at', 'updated_at', 'total_lessons', 'enrolled_students_count', 'get_full_landing_page_url_display']
     actions = ['approve_courses', 'feature_courses', 'unfeature_courses']
     
     def approve_courses(self, request, queryset):
@@ -40,7 +42,7 @@ class CourseAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
         ('Display & Marketing', {
-            'fields': ('featured', 'popular', 'color', 'icon', 'image')
+            'fields': ('featured', 'popular', 'color', 'icon', 'image', 'landing_page_url', 'get_full_landing_page_url_display')
         }),
         ('Settings', {
             'fields': ('max_students', 'schedule', 'certificate', 'status')
@@ -50,6 +52,110 @@ class CourseAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+    
+    def get_full_landing_page_url_display(self, obj):
+        """
+        Display full landing page URL with copy button in Django Admin
+        """
+        if not obj:
+            return "-"
+        
+        # Get request from admin instance if available
+        request = getattr(self, '_request', None)
+        full_url = obj.get_full_landing_page_url(request=request)
+        
+        # Create unique IDs for this instance
+        input_id = f"landing-url-{obj.id}"
+        button_id = f"copy-btn-{obj.id}"
+        
+        # Create HTML with URL and copy button
+        html = format_html(
+            '''
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+                <input type="text" 
+                       id="{}" 
+                       value="{}" 
+                       readonly 
+                       style="flex: 1; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 13px; background-color: #f9f9f9;"
+                       onclick="this.select();">
+                <button type="button" 
+                        id="{}"
+                        style="padding: 8px 16px; background-color: #007cba; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; white-space: nowrap;">
+                    Copy
+                </button>
+            </div>
+            <script>
+                (function() {{
+                    var inputId = '{}';
+                    var buttonId = '{}';
+                    var button = document.getElementById(buttonId);
+                    
+                    if (button) {{
+                        button.addEventListener('click', function() {{
+                            var input = document.getElementById(inputId);
+                            var url = input.value;
+                            var originalText = button.textContent;
+                            
+                            // Try modern clipboard API first
+                            if (navigator.clipboard && window.isSecureContext) {{
+                                navigator.clipboard.writeText(url).then(function() {{
+                                    button.textContent = 'Copied!';
+                                    button.style.backgroundColor = '#28a745';
+                                    
+                                    setTimeout(function() {{
+                                        button.textContent = originalText;
+                                        button.style.backgroundColor = '#007cba';
+                                    }}, 2000);
+                                }}).catch(function(err) {{
+                                    console.error('Clipboard API failed:', err);
+                                    fallbackCopy();
+                                }});
+                            }} else {{
+                                fallbackCopy();
+                            }}
+                            
+                            function fallbackCopy() {{
+                                input.select();
+                                input.setSelectionRange(0, 99999);
+                                
+                                try {{
+                                    var successful = document.execCommand('copy');
+                                    if (successful) {{
+                                        button.textContent = 'Copied!';
+                                        button.style.backgroundColor = '#28a745';
+                                        
+                                        setTimeout(function() {{
+                                            button.textContent = originalText;
+                                            button.style.backgroundColor = '#007cba';
+                                        }}, 2000);
+                                    }} else {{
+                                        alert('Failed to copy. Please select and copy manually.');
+                                    }}
+                                }} catch(err) {{
+                                    console.error('execCommand failed:', err);
+                                    alert('Failed to copy. Please select and copy manually.');
+                                }}
+                            }}
+                        }});
+                    }}
+                }})();
+            </script>
+            ''',
+            input_id,
+            full_url,
+            button_id,
+            input_id,
+            button_id
+        )
+        return html
+    
+    get_full_landing_page_url_display.short_description = 'Full Landing Page URL'
+    
+    def get_form(self, request, obj=None, **kwargs):
+        """Store request object for use in display methods"""
+        form = super().get_form(request, obj, **kwargs)
+        self._request = request
+        return form
     
     def delete_model(self, request, obj):
         """

@@ -651,6 +651,9 @@ class CourseDetailSerializer(serializers.ModelSerializer):
     average_rating = serializers.SerializerMethodField()
     review_count = serializers.SerializerMethodField()
     
+    # Landing page URL
+    get_landing_page_url = serializers.ReadOnlyField()
+    
     # Optional fields based on query parameters
     enrolled_students = serializers.SerializerMethodField()
     enrollment_stats = serializers.SerializerMethodField()
@@ -668,6 +671,9 @@ class CourseDetailSerializer(serializers.ModelSerializer):
             'overview', 'learning_objectives', 'prerequisites_text',
             'duration_weeks', 'duration', 'sessions_per_week', 'total_projects',
             'value_propositions',
+            
+            # Landing page URL
+            'landing_page_url', 'get_landing_page_url',
             
             # Reviews and ratings
             'reviews', 'average_rating', 'review_count',
@@ -731,8 +737,18 @@ class CourseCreateUpdateSerializer(serializers.ModelSerializer):
             # Introduction/detailed info
             'overview', 'learning_objectives', 'prerequisites_text',
             'duration_weeks', 'sessions_per_week', 'total_projects',
-            'value_propositions'
+            'value_propositions',
+            
+            # Landing page URL (admin editable)
+            'landing_page_url'
         ]
+    
+    def validate_landing_page_url(self, value):
+        """Only allow admin to set custom landing page URL"""
+        request = self.context.get('request')
+        if value and request and not request.user.is_staff:
+            raise serializers.ValidationError("Only admins can set custom landing page URLs")
+        return value
     
     def validate_price(self, value):
         if value < 0:
