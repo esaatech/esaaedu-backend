@@ -42,6 +42,195 @@ def get_trial_period_settings():
         }
 
 
+def ensure_stripe_product_and_prices_in_current_environment(course, billing_period='monthly'):
+    """
+    Ensure Stripe product and prices exist in the current environment (test/live).
+    If they're from the wrong environment, migrate them by creating new ones.
+    
+    This function:
+    1. Checks if the Stripe Product exists in current environment
+    2. If not, creates a new Product and updates BillingProduct
+    3. Checks if the requested Price exists in current environment
+    4. If not, creates new Prices and updates BillingPrice records
+    
+    Args:
+        course: Course model instance
+        billing_period: 'monthly' or 'one_time' - which price to return
+        
+    Returns:
+        str: The valid price ID for the current environment
+    """
+    from courses.price_calculator import calculate_course_prices
+    
+    try:
+        # Get or create billing product
+        billing_product, created = BillingProduct.objects.get_or_create(
+            course=course,
+            defaults={'stripe_product_id': '', 'is_active': True}
+        )
+        
+        # Step 1: Check if Product exists in current environment
+        product_exists = False
+        stripe_product_id = billing_product.stripe_product_id
+        
+        if stripe_product_id:
+            try:
+                stripe.Product.retrieve(stripe_product_id)
+                product_exists = True
+                print(f"✅ Product {stripe_product_id} exists in current environment")
+            except stripe.error.InvalidRequestError as e:
+                if 'No such product' in str(e) or getattr(e, 'code', '') == 'resource_missing':
+                    print(f"⚠️ Product {stripe_product_id} not found in current environment - will migrate")
+                    product_exists = False
+                else:
+                    raise e
+        
+        # Step 2: Create new Product if it doesn't exist
+        if not product_exists:
+            print(f"🔄 Creating new Stripe Product in current environment for course: {course.title}")
+            stripe_product = stripe.Product.create(
+                name=course.title,
+                description=course.description or course.long_description or '',
+                metadata={
+                    'course_id': str(course.id),
+                    'teacher_id': str(course.teacher.id) if course.teacher else '',
+                    'duration_weeks': str(course.duration_weeks) if course.duration_weeks else '0',
+                }
+            )
+            stripe_product_id = stripe_product.id
+            
+            # Update database with new product ID
+            billing_product.stripe_product_id = stripe_product_id
+            billing_product.is_active = True
+            billing_product.save(update_fields=['stripe_product_id', 'is_active'])
+            print(f"✅ Created new product {stripe_product_id} and updated database")
+        else:
+            stripe_product_id = billing_product.stripe_product_id
+        
+        # Step 3: Calculate prices (same logic as course creation)
+        prices = calculate_course_prices(float(course.price), course.duration_weeks or 0)
+        
+        # Step 4: Check and migrate prices
+        # Get existing prices from database
+        existing_prices = BillingPrice.objects.filter(
+            product=billing_product,
+            is_active=True
+        )
+        
+        one_time_price_obj = existing_prices.filter(billing_period='one_time').first()
+        monthly_price_obj = existing_prices.filter(billing_period='monthly').first()
+        
+        # Check and migrate one-time price
+        one_time_price_id = None
+        if one_time_price_obj and one_time_price_obj.stripe_price_id:
+            try:
+                stripe.Price.retrieve(one_time_price_obj.stripe_price_id)
+                one_time_price_id = one_time_price_obj.stripe_price_id
+                print(f"✅ One-time price {one_time_price_id} exists in current environment")
+            except stripe.error.InvalidRequestError as e:
+                if 'No such price' in str(e) or getattr(e, 'code', '') == 'resource_missing':
+                    print(f"⚠️ One-time price {one_time_price_obj.stripe_price_id} not found - creating new one")
+                    one_time_price_obj = None  # Will create new below
+                else:
+                    raise e
+        
+        if not one_time_price_id:
+            # Create new one-time price
+            print(f"🔄 Creating new one-time price in current environment")
+            new_one_time_price = stripe.Price.create(
+                product=stripe_product_id,
+                unit_amount=int(prices['one_time_price'] * 100),  # Convert to cents
+                currency='usd',
+                metadata={
+                    'course_id': str(course.id),
+                    'billing_type': 'one_time',
+                    'migrated': 'true'  # Track that this was migrated
+                }
+            )
+            one_time_price_id = new_one_time_price.id
+            
+            # Update or create BillingPrice record
+            if one_time_price_obj:
+                one_time_price_obj.stripe_price_id = one_time_price_id
+                one_time_price_obj.unit_amount = prices['one_time_price']
+                one_time_price_obj.is_active = True
+                one_time_price_obj.save(update_fields=['stripe_price_id', 'unit_amount', 'is_active'])
+            else:
+                BillingPrice.objects.create(
+                    product=billing_product,
+                    stripe_price_id=one_time_price_id,
+                    billing_period='one_time',
+                    unit_amount=prices['one_time_price'],
+                    currency='usd',
+                    is_active=True
+                )
+            print(f"✅ Created new one-time price {one_time_price_id} and updated database")
+        
+        # Check and migrate monthly price (if course duration > 4 weeks)
+        monthly_price_id = None
+        if prices['total_months'] > 1:
+            if monthly_price_obj and monthly_price_obj.stripe_price_id:
+                try:
+                    stripe.Price.retrieve(monthly_price_obj.stripe_price_id)
+                    monthly_price_id = monthly_price_obj.stripe_price_id
+                    print(f"✅ Monthly price {monthly_price_id} exists in current environment")
+                except stripe.error.InvalidRequestError as e:
+                    if 'No such price' in str(e) or getattr(e, 'code', '') == 'resource_missing':
+                        print(f"⚠️ Monthly price {monthly_price_obj.stripe_price_id} not found - creating new one")
+                        monthly_price_obj = None  # Will create new below
+                    else:
+                        raise e
+            
+            if not monthly_price_id:
+                # Create new monthly price
+                print(f"🔄 Creating new monthly price in current environment")
+                new_monthly_price = stripe.Price.create(
+                    product=stripe_product_id,
+                    unit_amount=int(prices['monthly_price'] * 100),  # Convert to cents
+                    currency='usd',
+                    recurring={'interval': 'month'},
+                    metadata={
+                        'course_id': str(course.id),
+                        'billing_type': 'monthly',
+                        'total_months': str(prices['total_months']),
+                        'monthly_total': str(prices['monthly_total']),
+                        'migrated': 'true'  # Track that this was migrated
+                    }
+                )
+                monthly_price_id = new_monthly_price.id
+                
+                # Update or create BillingPrice record
+                if monthly_price_obj:
+                    monthly_price_obj.stripe_price_id = monthly_price_id
+                    monthly_price_obj.unit_amount = prices['monthly_price']
+                    monthly_price_obj.is_active = True
+                    monthly_price_obj.save(update_fields=['stripe_price_id', 'unit_amount', 'is_active'])
+                else:
+                    BillingPrice.objects.create(
+                        product=billing_product,
+                        stripe_price_id=monthly_price_id,
+                        billing_period='monthly',
+                        unit_amount=prices['monthly_price'],
+                        currency='usd',
+                        is_active=True
+                    )
+                print(f"✅ Created new monthly price {monthly_price_id} and updated database")
+        
+        # Return the requested price ID
+        if billing_period == 'monthly':
+            if not monthly_price_id:
+                raise Exception(f"Monthly pricing not available for this course (duration: {course.duration_weeks} weeks)")
+            return monthly_price_id
+        else:  # one_time
+            return one_time_price_id
+            
+    except Exception as e:
+        print(f"❌ Error ensuring Stripe product/prices in current environment: {e}")
+        import traceback
+        traceback.print_exc()
+        raise e
+
+
 def update_subscription_type_from_stripe(subscription_id):
     """Update subscription type based on Stripe metadata when trial ends and payment is charged"""
     try:
@@ -901,34 +1090,42 @@ class CreatePaymentIntentView(APIView):
                 total_months = math.ceil(course.duration_weeks / 4)
                 print(f"📅 Course duration: {course.duration_weeks} weeks = {total_months} months")
                 
-                # For monthly payments, create a subscription instead of one-time payment
-                # First, create or get a price in Stripe
+                # Ensure product and prices exist in current environment (auto-migrate if needed)
                 try:
-                    billing_product = BillingProduct.objects.get(course=course)
-                    monthly_price = BillingPrice.objects.filter(
-                        product=billing_product, 
-                        billing_period='monthly',
-                        is_active=True
-                    ).first()
-                    if monthly_price:
-                        stripe_price_id = monthly_price.stripe_price_id
-                    else:
-                        raise BillingPrice.DoesNotExist
-                except (BillingProduct.DoesNotExist, BillingPrice.DoesNotExist):
-                    # Create a price on the fly if it doesn't exist
-                    stripe_price = stripe.Price.create(
-                        unit_amount=amount,
-                        currency='usd',
-                        recurring={'interval': 'month'},
-                        product_data={
-                            'name': f"{course.title} - Monthly Subscription",
-                        },
-                        metadata={
-                            'course_id': str(course.id),
-                            'pricing_type': 'monthly'
-                        }
+                    stripe_price_id = ensure_stripe_product_and_prices_in_current_environment(
+                        course, 
+                        billing_period='monthly'
                     )
-                    stripe_price_id = stripe_price.id
+                    print(f"✅ Using price ID: {stripe_price_id} (verified in current environment)")
+                except Exception as e:
+                    print(f"❌ Failed to ensure product/prices in current environment: {e}")
+                    # Fallback: Try to create price on the fly (legacy behavior)
+                    try:
+                        billing_product = BillingProduct.objects.get(course=course)
+                        monthly_price = BillingPrice.objects.filter(
+                            product=billing_product, 
+                            billing_period='monthly',
+                            is_active=True
+                        ).first()
+                        if monthly_price:
+                            stripe_price_id = monthly_price.stripe_price_id
+                        else:
+                            raise BillingPrice.DoesNotExist
+                    except (BillingProduct.DoesNotExist, BillingPrice.DoesNotExist):
+                        # Create a price on the fly if it doesn't exist
+                        stripe_price = stripe.Price.create(
+                            unit_amount=amount,
+                            currency='usd',
+                            recurring={'interval': 'month'},
+                            product_data={
+                                'name': f"{course.title} - Monthly Subscription",
+                            },
+                            metadata={
+                                'course_id': str(course.id),
+                                'pricing_type': 'monthly'
+                            }
+                        )
+                        stripe_price_id = stripe_price.id
                 
                 # Create subscription
                 #print(f"🚀 About to create Stripe subscription with price_id: {stripe_price_id}")
@@ -948,26 +1145,59 @@ class CreatePaymentIntentView(APIView):
                     )
                     print(f"🗓️ Monthly subscription will cancel: {cancel_at.strftime('%Y-%m-%d %H:%M:%S UTC')} (after {total_months} payments)")
                     
-                    subscription = stripe.Subscription.create(
-                    customer=customer_account.stripe_customer_id,
-                    items=[{'price': stripe_price_id}],
-                    # Add trial when requested so Stripe auto-manages conversion after trial
-                    trial_period_days=trial_days if request.data.get('trial_period') else None,
-                    cancel_at=int(cancel_at.timestamp()),  # Cancel after specified number of monthly payments
-                    payment_behavior='default_incomplete',
-                    payment_settings={'save_default_payment_method': 'on_subscription'},
-                    expand=['latest_invoice.payment_intent', 'pending_setup_intent'],
-                    metadata={
-                        'course_id': str(course.id),
-                        'course_title': course.title,
-                        'user_id': str(request.user.id),
-                        'user_email': request.user.email,
-                        'pricing_type': pricing_type,  # Store the original pricing choice
-                        'trial_period': str(bool(request.data.get('trial_period'))).lower(),
-                        'class_id': str(request.data.get('class_id', '')),
-                        'student_profile_id': str(getattr(request.user, 'student_profile', {}).id if hasattr(request.user, 'student_profile') and request.user.student_profile else '')
-                    }
-                    )
+                    # Try to create subscription - if it fails due to invalid price, migrate and retry
+                    max_retries = 1
+                    retry_count = 0
+                    subscription = None
+                    
+                    while retry_count <= max_retries and subscription is None:
+                        try:
+                            subscription = stripe.Subscription.create(
+                                customer=customer_account.stripe_customer_id,
+                                items=[{'price': stripe_price_id}],
+                                # Add trial when requested so Stripe auto-manages conversion after trial
+                                trial_period_days=trial_days if request.data.get('trial_period') else None,
+                                cancel_at=int(cancel_at.timestamp()),  # Cancel after specified number of monthly payments
+                                payment_behavior='default_incomplete',
+                                payment_settings={'save_default_payment_method': 'on_subscription'},
+                                expand=['latest_invoice.payment_intent', 'pending_setup_intent'],
+                                metadata={
+                                    'course_id': str(course.id),
+                                    'course_title': course.title,
+                                    'user_id': str(request.user.id),
+                                    'user_email': request.user.email,
+                                    'pricing_type': pricing_type,  # Store the original pricing choice
+                                    'trial_period': str(bool(request.data.get('trial_period'))).lower(),
+                                    'class_id': str(request.data.get('class_id', '')),
+                                    'student_profile_id': str(getattr(request.user, 'student_profile', {}).id if hasattr(request.user, 'student_profile') and request.user.student_profile else '')
+                                }
+                            )
+                            print(f"✅ Subscription created successfully with price {stripe_price_id}")
+                        except stripe.error.InvalidRequestError as e:
+                            error_code = getattr(e, 'code', '')
+                            error_message = str(e)
+                            
+                            # Check if error is due to invalid price ID (wrong environment)
+                            if ('No such price' in error_message or 
+                                error_code == 'resource_missing' or
+                                'price' in error_message.lower()):
+                                if retry_count < max_retries:
+                                    print(f"⚠️ Subscription creation failed due to invalid price ID: {e}")
+                                    print(f"🔄 Retrying with migrated product/prices...")
+                                    # Migrate product and prices, then retry
+                                    stripe_price_id = ensure_stripe_product_and_prices_in_current_environment(
+                                        course, 
+                                        billing_period='monthly'
+                                    )
+                                    print(f"✅ Migrated to new price ID: {stripe_price_id}, retrying subscription creation...")
+                                    retry_count += 1
+                                else:
+                                    # Max retries reached, raise the error
+                                    print(f"❌ Max retries reached, price migration failed")
+                                    raise e
+                            else:
+                                # Different error, don't retry
+                                raise e
                     #print(f"✅ Stripe subscription created: {subscription.id}")
                    # print(f"✅ Subscription status: {subscription.status}")
                    # print(f"🔍 Metadata sent to Stripe: {subscription.metadata}")
