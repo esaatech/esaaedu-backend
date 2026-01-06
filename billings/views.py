@@ -1192,8 +1192,12 @@ class CreatePaymentIntentView(APIView):
                 #print(f"🚀 Customer: {customer_account.stripe_customer_id}")
                 # Get trial period settings
                 trial_settings = get_trial_period_settings()
-                trial_days = trial_settings['days'] if (request.data.get('trial_period') and trial_settings['enabled']) else 0
-                print(f"🚀 Trial period: {trial_days} days")
+                # Only use trial if explicitly requested AND enabled AND days > 0
+                has_trial = (request.data.get('trial_period') and 
+                            trial_settings['enabled'] and 
+                            trial_settings['days'] > 0)
+                trial_days = trial_settings['days'] if has_trial else 0
+                print(f"🚀 Trial period: {trial_days} days (has_trial: {has_trial})")
                 
                 try:
                     # Calculate when to cancel the subscription after all monthly payments
@@ -1212,26 +1216,35 @@ class CreatePaymentIntentView(APIView):
                     
                     while retry_count <= max_retries and subscription is None:
                         try:
-                            subscription = stripe.Subscription.create(
-                                customer=stripe_customer_id,
-                                items=[{'price': stripe_price_id}],
-                                # Add trial when requested so Stripe auto-manages conversion after trial
-                                trial_period_days=trial_days if request.data.get('trial_period') else None,
-                                cancel_at=int(cancel_at.timestamp()),  # Cancel after specified number of monthly payments
-                                payment_behavior='default_incomplete',
-                                payment_settings={'save_default_payment_method': 'on_subscription'},
-                                expand=['latest_invoice.payment_intent', 'pending_setup_intent'],
-                                metadata={
+                            # Only pass trial_period_days if trial_days > 0
+                            # If trial_days is 0, pass None (no trial period)
+                            subscription_params = {
+                                'customer': stripe_customer_id,
+                                'items': [{'price': stripe_price_id}],
+                                'cancel_at': int(cancel_at.timestamp()),  # Cancel after specified number of monthly payments
+                                'payment_behavior': 'default_incomplete',
+                                'payment_settings': {'save_default_payment_method': 'on_subscription'},
+                                'expand': ['latest_invoice.payment_intent', 'pending_setup_intent'],
+                                'metadata': {
                                     'course_id': str(course.id),
                                     'course_title': course.title,
                                     'user_id': str(request.user.id),
                                     'user_email': request.user.email,
                                     'pricing_type': pricing_type,  # Store the original pricing choice
-                                    'trial_period': str(bool(request.data.get('trial_period'))).lower(),
+                                    'trial_period': str(has_trial).lower(),
                                     'class_id': str(request.data.get('class_id', '')),
                                     'student_profile_id': str(getattr(request.user, 'student_profile', {}).id if hasattr(request.user, 'student_profile') and request.user.student_profile else '')
                                 }
-                            )
+                            }
+                            
+                            # Only add trial_period_days if we have a valid trial (days > 0)
+                            if has_trial and trial_days > 0:
+                                subscription_params['trial_period_days'] = trial_days
+                                print(f"✅ Adding trial period: {trial_days} days")
+                            else:
+                                print(f"ℹ️ No trial period (trial_days={trial_days}, has_trial={has_trial})")
+                            
+                            subscription = stripe.Subscription.create(**subscription_params)
                             print(f"✅ Subscription created successfully with price {stripe_price_id}")
                         except stripe.error.InvalidRequestError as e:
                             error_code = getattr(e, 'code', '')
@@ -1403,32 +1416,73 @@ class CreatePaymentIntentView(APIView):
                     raise e
                 
                 # For incomplete subscriptions, Stripe provides a pending_setup_intent for PM collection
+                # When no trial period, Stripe may create a payment_intent for immediate charge
+                # When trial period exists, Stripe creates a setup_intent for future payment
                 intent_type = 'payment'
                 client_secret = None
                 payment_intent_id = None
                 setup_intent_id = None
-                if getattr(subscription, 'latest_invoice', None) and getattr(subscription.latest_invoice, 'payment_intent', None):
-                    payment_intent = subscription.latest_invoice.payment_intent
-                    client_secret = payment_intent.client_secret
-                    payment_intent_id = payment_intent.id
-                    print(f"💳 Using payment intent from latest_invoice: {payment_intent_id}")
-                elif getattr(subscription, 'pending_setup_intent', None):
+                
+                # Check for payment intent first (for immediate charges, no trial)
+                if getattr(subscription, 'latest_invoice', None):
+                    latest_invoice = subscription.latest_invoice
+                    if hasattr(latest_invoice, 'payment_intent') and latest_invoice.payment_intent:
+                        payment_intent = latest_invoice.payment_intent
+                        client_secret = payment_intent.client_secret
+                        payment_intent_id = payment_intent.id
+                        intent_type = 'payment'
+                        print(f"💳 Using payment intent from latest_invoice: {payment_intent_id}")
+                
+                # Check for setup intent (for trials or future payments)
+                if not client_secret and getattr(subscription, 'pending_setup_intent', None):
                     setup_intent = subscription.pending_setup_intent
                     client_secret = setup_intent.client_secret
                     setup_intent_id = setup_intent.id
                     intent_type = 'setup'
                     print(f"🔧 Using setup intent: {setup_intent_id}")
-                else:
-                    print(f"❌ No payment or setup intent available for subscription")
-                    raise Exception('No payment or setup intent available for subscription')
+                
+                # If still no intent, check if subscription needs payment method collection
+                if not client_secret:
+                    # For subscriptions without trial, Stripe might need us to collect payment method
+                    # Try to get the latest invoice and see if we can create a payment intent
+                    print(f"⚠️ No payment or setup intent found, checking subscription status: {subscription.status}")
+                    print(f"⚠️ Subscription details: trial_end={subscription.get('trial_end')}, latest_invoice={subscription.get('latest_invoice')}")
+                    
+                    # If subscription is incomplete and has no trial, we might need to handle differently
+                    if subscription.status == 'incomplete' and not subscription.get('trial_end'):
+                        print(f"⚠️ Subscription is incomplete without trial - may need immediate payment method")
+                        # Try to get the latest invoice if it exists
+                        if subscription.get('latest_invoice'):
+                            try:
+                                invoice = stripe.Invoice.retrieve(subscription.latest_invoice)
+                                if invoice.payment_intent:
+                                    payment_intent = stripe.PaymentIntent.retrieve(invoice.payment_intent)
+                                    client_secret = payment_intent.client_secret
+                                    payment_intent_id = payment_intent.id
+                                    intent_type = 'payment'
+                                    print(f"💳 Retrieved payment intent from invoice: {payment_intent_id}")
+                            except Exception as e:
+                                print(f"⚠️ Could not retrieve payment intent from invoice: {e}")
+                    
+                    if not client_secret:
+                        print(f"❌ No payment or setup intent available for subscription")
+                        print(f"❌ Subscription ID: {subscription.id}, Status: {subscription.status}")
+                        raise Exception('No payment or setup intent available for subscription')
                 
             else:
                 amount = int(pricing_options['one_time']['amount'] * 100)
                 print(f"💳 Creating one-time payment: ${pricing_options['one_time']['amount']}")
                 
-                if request.data.get('trial_period'):
+                # Check if trial is requested and valid (days > 0)
+                trial_settings = get_trial_period_settings()
+                has_trial_one_time = (request.data.get('trial_period') and 
+                                     trial_settings['enabled'] and 
+                                     trial_settings['days'] > 0)
+                
+                if has_trial_one_time:
                     # For one-time payments with trial, create a subscription that will charge once and then cancel
-                    print(f"🔄 Creating one-time subscription with trial for: ${pricing_options['one_time']['amount']}")
+                    trial_days = trial_settings['days']
+                    print(f"🔄 Creating one-time subscription with trial ({trial_days} days) for: ${pricing_options['one_time']['amount']}")
                     
                     # For subscriptions, we need a recurring price, not a one-time price
                     # Create a special recurring price for one-time trial subscriptions
@@ -1452,10 +1506,6 @@ class CreatePaymentIntentView(APIView):
                         import datetime
                         from datetime import timezone as dt_timezone
                         
-                        # Get trial period settings
-                        trial_settings = get_trial_period_settings()
-                        trial_days = trial_settings['days'] if trial_settings['enabled'] else 0
-                        
                         # Calculate when to cancel: trial end + 1 billing cycle (1 month)
                         trial_end = datetime.datetime.now(dt_timezone.utc) + datetime.timedelta(days=trial_days)
                         cancel_at = trial_end + datetime.timedelta(days=30)  # 1 month after trial ends
@@ -1465,7 +1515,7 @@ class CreatePaymentIntentView(APIView):
                         subscription = stripe.Subscription.create(
                             customer=stripe_customer_id,
                             items=[{'price': stripe_price_id}],
-                            trial_period_days=trial_days,
+                            trial_period_days=trial_days,  # Only called if has_trial_one_time is True, so trial_days > 0
                             cancel_at=int(cancel_at.timestamp()),  # Cancel after first payment
                             payment_behavior='default_incomplete',
                             payment_settings={'save_default_payment_method': 'on_subscription'},
@@ -1607,24 +1657,49 @@ class CreatePaymentIntentView(APIView):
                                 # Don't raise - we still want to return the Stripe subscription
                         
                             # Handle the intents like monthly subscriptions
+                            # Use same improved logic as monthly subscriptions
                             intent_type = 'payment'
                             client_secret = None
                             payment_intent_id = None
                             setup_intent_id = None
-                            if getattr(subscription, 'latest_invoice', None) and getattr(subscription.latest_invoice, 'payment_intent', None):
-                                payment_intent = subscription.latest_invoice.payment_intent
-                                client_secret = payment_intent.client_secret
-                                payment_intent_id = payment_intent.id
-                                print(f"💳 Using payment intent from latest_invoice: {payment_intent_id}")
-                            elif getattr(subscription, 'pending_setup_intent', None):
+                            
+                            # Check for payment intent first (for immediate charges, no trial)
+                            if getattr(subscription, 'latest_invoice', None):
+                                latest_invoice = subscription.latest_invoice
+                                if hasattr(latest_invoice, 'payment_intent') and latest_invoice.payment_intent:
+                                    payment_intent = latest_invoice.payment_intent
+                                    client_secret = payment_intent.client_secret
+                                    payment_intent_id = payment_intent.id
+                                    intent_type = 'payment'
+                                    print(f"💳 Using payment intent from latest_invoice: {payment_intent_id}")
+                            
+                            # Check for setup intent (for trials or future payments)
+                            if not client_secret and getattr(subscription, 'pending_setup_intent', None):
                                 setup_intent = subscription.pending_setup_intent
                                 client_secret = setup_intent.client_secret
                                 setup_intent_id = setup_intent.id
                                 intent_type = 'setup'
                                 print(f"🔧 Using setup intent: {setup_intent_id}")
-                            else:
-                                print(f"❌ No payment or setup intent available for one-time subscription")
-                                raise Exception('No payment or setup intent available for subscription')
+                            
+                            # If still no intent, try to retrieve from invoice
+                            if not client_secret:
+                                print(f"⚠️ No payment or setup intent found for one-time subscription, checking invoice...")
+                                if subscription.get('latest_invoice'):
+                                    try:
+                                        invoice = stripe.Invoice.retrieve(subscription.latest_invoice)
+                                        if invoice.payment_intent:
+                                            payment_intent = stripe.PaymentIntent.retrieve(invoice.payment_intent)
+                                            client_secret = payment_intent.client_secret
+                                            payment_intent_id = payment_intent.id
+                                            intent_type = 'payment'
+                                            print(f"💳 Retrieved payment intent from invoice: {payment_intent_id}")
+                                    except Exception as e:
+                                        print(f"⚠️ Could not retrieve payment intent from invoice: {e}")
+                                
+                                if not client_secret:
+                                    print(f"❌ No payment or setup intent available for one-time subscription")
+                                    print(f"❌ Subscription ID: {subscription.id}, Status: {subscription.status}")
+                                    raise Exception('No payment or setup intent available for subscription')
                         except Exception as e:
                             print(f"⚠️ Could not save local one-time trial subscription: {e}")
                             import traceback
