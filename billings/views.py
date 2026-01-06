@@ -1892,7 +1892,7 @@ class CreatePaymentIntentView(APIView):
                 'payment_intent_id': payment_intent_id,
                 'setup_intent_id': setup_intent_id,
                 'subscription_id': subscription_id,
-                'amount': amount,
+                'amount': amount / 100,  # Convert from cents to dollars for frontend
                 'currency': 'usd',
                 'course_title': course.title,
             }
@@ -2026,10 +2026,12 @@ class ConfirmEnrollmentView(APIView):
             try:
                 # Query Stripe to check subscription and payment status
                 get_stripe_client()
+                print(f"🔍 Attempting to retrieve subscription from Stripe: {subscription_id}")
                 stripe_subscription = stripe.Subscription.retrieve(
                     subscription_id,
                     expand=['latest_invoice.payment_intent', 'pending_setup_intent', 'latest_setup_intent']
                 )
+                print(f"✅ Successfully retrieved subscription from Stripe: {stripe_subscription.id}")
                 
                 subscription_status = stripe_subscription.get('status')
                 print(f"📊 Stripe subscription status: {subscription_status}")
@@ -2179,9 +2181,29 @@ class ConfirmEnrollmentView(APIView):
                     )
                     
             except stripe.error.InvalidRequestError as e:
-                print(f"❌ Stripe error querying subscription: {e}")
+                error_message = str(e)
+                error_code = getattr(e, 'code', None)
+                print(f"❌ Stripe error querying subscription: {error_message}")
+                print(f"❌ Error code: {error_code}")
+                print(f"❌ Subscription ID attempted: {subscription_id}")
+                
+                # Check if subscription doesn't exist
+                if 'No such subscription' in error_message or error_code == 'resource_missing':
+                    return Response(
+                        {
+                            'error': 'Subscription not found in Stripe. The subscription may have been canceled or does not exist.',
+                            'details': error_message,
+                            'subscription_id': subscription_id
+                        }, 
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                
                 return Response(
-                    {'error': 'Could not verify payment status with Stripe. Please contact support.'}, 
+                    {
+                        'error': 'Could not verify payment status with Stripe. Please contact support.',
+                        'details': error_message,
+                        'error_code': error_code
+                    }, 
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
             except Exception as e:
