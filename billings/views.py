@@ -1218,12 +1218,18 @@ class CreatePaymentIntentView(APIView):
                         try:
                             # Only pass trial_period_days if trial_days > 0
                             # If trial_days is 0, pass None (no trial period)
+                            # Payment behavior: Use 'default_incomplete' for trials (creates setup intent)
+                            # For no trial, we still use 'default_incomplete' but Stripe should create setup intent for payment method collection
                             subscription_params = {
                                 'customer': stripe_customer_id,
                                 'items': [{'price': stripe_price_id}],
                                 'cancel_at': int(cancel_at.timestamp()),  # Cancel after specified number of monthly payments
-                                'payment_behavior': 'default_incomplete',
-                                'payment_settings': {'save_default_payment_method': 'on_subscription'},
+                                'payment_behavior': 'default_incomplete',  # Always use this - creates setup intent for payment method collection
+                                'payment_settings': {
+                                    'save_default_payment_method': 'on_subscription',
+                                    'payment_method_types': ['card']  # Explicitly specify payment method types
+                                },
+                                'collection_method': 'charge_automatically',  # Ensure automatic charging
                                 'expand': ['latest_invoice.payment_intent', 'pending_setup_intent'],
                                 'metadata': {
                                     'course_id': str(course.id),
@@ -1243,6 +1249,8 @@ class CreatePaymentIntentView(APIView):
                                 print(f"✅ Adding trial period: {trial_days} days")
                             else:
                                 print(f"ℹ️ No trial period (trial_days={trial_days}, has_trial={has_trial})")
+                                # When no trial, ensure we get a setup intent for payment method collection
+                                # Stripe should create this automatically with default_incomplete, but we'll verify in retry logic
                             
                             subscription = stripe.Subscription.create(**subscription_params)
                             print(f"✅ Subscription created successfully with price {stripe_price_id}")
@@ -1489,13 +1497,51 @@ class CreatePaymentIntentView(APIView):
                         print(f"⚠️ Attempt {attempt + 1}: No payment or setup intent found yet, will retry...")
                         print(f"⚠️ Subscription status: {subscription.status}, latest_invoice: {subscription.get('latest_invoice')}")
                 
-                # Final check: if still no intent after all retries, raise error
+                # Final check: if still no intent after all retries, try to update subscription to get intent
                 if not client_secret:
-                    print(f"❌ No payment or setup intent available after {max_retries} attempts")
-                    print(f"❌ Subscription ID: {subscription.id}, Status: {subscription.status}")
-                    print(f"❌ Latest invoice: {subscription.get('latest_invoice')}")
-                    print(f"❌ Pending setup intent: {subscription.get('pending_setup_intent')}")
-                    raise Exception('No payment or setup intent available for subscription')
+                    print(f"⚠️ No payment or setup intent found after {max_retries} attempts")
+                    print(f"⚠️ Subscription ID: {subscription.id}, Status: {subscription.status}")
+                    print(f"⚠️ Latest invoice: {subscription.get('latest_invoice')}")
+                    print(f"⚠️ Pending setup intent: {subscription.get('pending_setup_intent')}")
+                    
+                    # Try one more time: update subscription to ensure setup intent is created
+                    if not has_trial and subscription.status == 'incomplete':
+                        print(f"🔄 No trial and subscription is incomplete - attempting to update subscription to get setup intent...")
+                        try:
+                            # Update subscription to ensure payment method collection
+                            updated_subscription = stripe.Subscription.modify(
+                                subscription.id,
+                                payment_behavior='default_incomplete',
+                                payment_settings={
+                                    'save_default_payment_method': 'on_subscription',
+                                    'payment_method_types': ['card']
+                                },
+                                expand=['latest_invoice.payment_intent', 'pending_setup_intent']
+                            )
+                            
+                            # Check again for setup intent
+                            if getattr(updated_subscription, 'pending_setup_intent', None):
+                                setup_intent = updated_subscription.pending_setup_intent
+                                client_secret = setup_intent.client_secret
+                                setup_intent_id = setup_intent.id
+                                intent_type = 'setup'
+                                print(f"✅ Got setup intent after subscription update: {setup_intent_id}")
+                            elif getattr(updated_subscription, 'latest_invoice', None):
+                                latest_invoice = updated_subscription.latest_invoice
+                                if hasattr(latest_invoice, 'payment_intent') and latest_invoice.payment_intent:
+                                    payment_intent = latest_invoice.payment_intent
+                                    client_secret = payment_intent.client_secret
+                                    payment_intent_id = payment_intent.id
+                                    intent_type = 'payment'
+                                    print(f"✅ Got payment intent after subscription update: {payment_intent_id}")
+                        except Exception as e:
+                            print(f"⚠️ Failed to update subscription to get intent: {e}")
+                    
+                    # If still no intent, raise error
+                    if not client_secret:
+                        print(f"❌ No payment or setup intent available after all attempts")
+                        print(f"❌ Subscription ID: {subscription.id}, Status: {subscription.status}")
+                        raise Exception('No payment or setup intent available for subscription')
                 
             else:
                 amount = int(pricing_options['one_time']['amount'] * 100)
@@ -1756,13 +1802,47 @@ class CreatePaymentIntentView(APIView):
                                     print(f"⚠️ Attempt {attempt + 1}: No payment or setup intent found yet (one-time), will retry...")
                                     print(f"⚠️ Subscription status: {subscription.status}, latest_invoice: {subscription.get('latest_invoice')}")
                             
-                            # Final check: if still no intent after all retries, raise error
+                            # Final check: if still no intent after all retries, try to update subscription
                             if not client_secret:
-                                print(f"❌ No payment or setup intent available after {max_retries} attempts (one-time)")
-                                print(f"❌ Subscription ID: {subscription.id}, Status: {subscription.status}")
-                                print(f"❌ Latest invoice: {subscription.get('latest_invoice')}")
-                                print(f"❌ Pending setup intent: {subscription.get('pending_setup_intent')}")
-                                raise Exception('No payment or setup intent available for subscription')
+                                print(f"⚠️ No payment or setup intent found after {max_retries} attempts (one-time)")
+                                print(f"⚠️ Subscription ID: {subscription.id}, Status: {subscription.status}")
+                                print(f"⚠️ Latest invoice: {subscription.get('latest_invoice')}")
+                                print(f"⚠️ Pending setup intent: {subscription.get('pending_setup_intent')}")
+                                
+                                # Try to update subscription to get intent (same as monthly)
+                                if not has_trial_one_time and subscription.status == 'incomplete':
+                                    print(f"🔄 No trial and subscription is incomplete - attempting to update subscription...")
+                                    try:
+                                        updated_subscription = stripe.Subscription.modify(
+                                            subscription.id,
+                                            payment_behavior='default_incomplete',
+                                            payment_settings={
+                                                'save_default_payment_method': 'on_subscription',
+                                                'payment_method_types': ['card']
+                                            },
+                                            expand=['latest_invoice.payment_intent', 'pending_setup_intent']
+                                        )
+                                        
+                                        if getattr(updated_subscription, 'pending_setup_intent', None):
+                                            setup_intent = updated_subscription.pending_setup_intent
+                                            client_secret = setup_intent.client_secret
+                                            setup_intent_id = setup_intent.id
+                                            intent_type = 'setup'
+                                            print(f"✅ Got setup intent after subscription update: {setup_intent_id}")
+                                        elif getattr(updated_subscription, 'latest_invoice', None):
+                                            latest_invoice = updated_subscription.latest_invoice
+                                            if hasattr(latest_invoice, 'payment_intent') and latest_invoice.payment_intent:
+                                                payment_intent = latest_invoice.payment_intent
+                                                client_secret = payment_intent.client_secret
+                                                payment_intent_id = payment_intent.id
+                                                intent_type = 'payment'
+                                                print(f"✅ Got payment intent after subscription update: {payment_intent_id}")
+                                    except Exception as e:
+                                        print(f"⚠️ Failed to update subscription to get intent: {e}")
+                                
+                                if not client_secret:
+                                    print(f"❌ No payment or setup intent available after all attempts (one-time)")
+                                    raise Exception('No payment or setup intent available for subscription')
                         except Exception as e:
                             print(f"⚠️ Could not save local one-time trial subscription: {e}")
                             import traceback
