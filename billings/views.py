@@ -2019,12 +2019,179 @@ class ConfirmEnrollmentView(APIView):
                     print(f"❌ Error during polling: {e}")
                     time.sleep(poll_interval)
             
-            # Timeout reached
+            # Timeout reached - webhook didn't arrive, query Stripe directly
             print(f"⏰ Timeout: Webhook did not complete enrollment within {max_wait_time} seconds")
-            return Response(
-                {'error': 'Enrollment confirmation timed out. Please check your enrollment status.'}, 
-                status=status.HTTP_408_REQUEST_TIMEOUT
-            )
+            print(f"🔍 Querying Stripe directly to verify payment status...")
+            
+            try:
+                # Query Stripe to check subscription and payment status
+                get_stripe_client()
+                stripe_subscription = stripe.Subscription.retrieve(
+                    subscription_id,
+                    expand=['latest_invoice.payment_intent', 'pending_setup_intent', 'latest_setup_intent']
+                )
+                
+                subscription_status = stripe_subscription.get('status')
+                print(f"📊 Stripe subscription status: {subscription_status}")
+                
+                # Also check setup intent status if subscription is incomplete
+                setup_intent_status = None
+                setup_intent_id = None
+                if subscription_status == 'incomplete':
+                    # Check if setup intent exists and its status
+                    if hasattr(stripe_subscription, 'pending_setup_intent') and stripe_subscription.pending_setup_intent:
+                        setup_intent_id = stripe_subscription.pending_setup_intent.id
+                        try:
+                            setup_intent = stripe.SetupIntent.retrieve(setup_intent_id)
+                            setup_intent_status = setup_intent.status
+                            print(f"📊 Setup intent status: {setup_intent_status} (ID: {setup_intent_id})")
+                        except Exception as e:
+                            print(f"⚠️ Could not retrieve setup intent: {e}")
+                
+                # Check if payment was successful based on subscription status
+                # 'trialing' = trial started (payment method collected, no charge yet)
+                # 'active' = subscription active (payment succeeded)
+                # 'incomplete' = payment method not collected or payment failed
+                #   BUT: if setup_intent.status == 'succeeded', payment method WAS collected
+                # 'incomplete_expired' = payment method collection expired
+                # 'past_due' = payment failed
+                
+                # Payment successful if:
+                # 1. Subscription is trialing/active, OR
+                # 2. Subscription is incomplete BUT setup intent succeeded (payment method collected, waiting for first charge)
+                payment_successful = (
+                    subscription_status in ['trialing', 'active'] or
+                    (subscription_status == 'incomplete' and setup_intent_status == 'succeeded')
+                )
+                
+                # Handle incomplete status with succeeded setup intent
+                if subscription_status == 'incomplete' and setup_intent_status == 'succeeded':
+                    # Setup intent succeeded but subscription still incomplete - payment method is ready
+                    # This can happen when trial_days=0 and subscription is waiting for first charge
+                    print(f"✅ Setup intent succeeded - payment method collected successfully")
+                    print(f"ℹ️ Subscription is incomplete but payment method is ready - treating as success")
+                    payment_successful = True
+                
+                if payment_successful:
+                    # Payment was successful - create enrollment directly
+                    if subscription_status == 'incomplete' and setup_intent_status == 'succeeded':
+                        print(f"✅ Stripe confirms payment method collected (setup intent succeeded, subscription incomplete)")
+                        print(f"ℹ️ Subscription is incomplete but setup intent succeeded - payment method is ready")
+                    else:
+                        print(f"✅ Stripe confirms payment successful (status: {subscription_status})")
+                    print(f"🔄 Creating enrollment directly since webhook didn't arrive...")
+                    
+                    # Get subscription metadata
+                    metadata = stripe_subscription.get('metadata', {})
+                    course_id_from_stripe = metadata.get('course_id')
+                    class_id_from_stripe = metadata.get('class_id')
+                    pricing_type_from_stripe = metadata.get('pricing_type', 'one_time')
+                    
+                    # Use metadata from Stripe if available, otherwise use request data
+                    final_course_id = course_id_from_stripe or course_id
+                    final_class_id = class_id_from_stripe or class_id
+                    final_pricing_type = pricing_type_from_stripe or request.data.get('pricing_type', 'one_time')
+                    
+                    # Determine if it's a trial based on subscription status and trial_end
+                    has_trial_period = subscription_status == 'trialing' or stripe_subscription.get('trial_end') is not None
+                    
+                    # Get or create subscriber record
+                    try:
+                        subscriber = Subscribers.objects.get(stripe_subscription_id=subscription_id)
+                        # Update subscriber status to match Stripe
+                        if subscriber.status != subscription_status:
+                            subscriber.status = subscription_status
+                            subscriber.save(update_fields=['status', 'updated_at'])
+                            print(f"✅ Updated subscriber status to {subscription_status}")
+                    except Subscribers.DoesNotExist:
+                        # Create subscriber record if it doesn't exist
+                        from .models import CustomerAccount
+                        customer_account = CustomerAccount.objects.get(user=request.user)
+                        subscriber = Subscribers.objects.create(
+                            user=request.user,
+                            course=course,
+                            stripe_subscription_id=subscription_id,
+                            status=subscription_status,
+                            subscription_type='trial' if has_trial_period else final_pricing_type
+                        )
+                        print(f"✅ Created subscriber record: {subscriber.id}")
+                    
+                    # Create enrollment using complete_enrollment_process
+                    enrollment = complete_enrollment_process(
+                        subscription_id=subscription_id,
+                        user=request.user,
+                        course=course,
+                        class_id=final_class_id,
+                        pricing_type=final_pricing_type,
+                        is_trial=has_trial_period
+                    )
+                    
+                    if enrollment:
+                        print(f"✅ Enrollment created directly after Stripe verification: {enrollment.id}")
+                        
+                        # Get trial end date if applicable
+                        trial_end_date = None
+                        if has_trial_period:
+                            trial_end_timestamp = stripe_subscription.get('trial_end')
+                            if trial_end_timestamp:
+                                from datetime import datetime, timezone as dt_timezone
+                                trial_end_date = datetime.fromtimestamp(trial_end_timestamp, tz=dt_timezone.utc).date()
+                            elif hasattr(enrollment, 'payment_due_date') and enrollment.payment_due_date:
+                                trial_end_date = enrollment.payment_due_date
+                        
+                        return Response({
+                            'message': f'{"Trial" if has_trial_period else "Paid"} enrollment successful (verified via Stripe)',
+                            'enrollment_id': str(enrollment.id),
+                            'is_trial': has_trial_period,
+                            'trial_end_date': trial_end_date.isoformat() if trial_end_date else None,
+                            'verified_via': 'stripe_direct_query'
+                        }, status=status.HTTP_201_CREATED)
+                    else:
+                        print(f"❌ Failed to create enrollment after Stripe verification")
+                        return Response(
+                            {'error': 'Payment verified but enrollment creation failed. Please contact support.'}, 
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                        )
+                
+                elif subscription_status in ['incomplete', 'incomplete_expired']:
+                    # Payment method not collected or expired
+                    # (If setup intent succeeded, we already handled it above)
+                    print(f"⚠️ Stripe subscription is {subscription_status} - payment method not collected")
+                    return Response(
+                        {'error': 'Payment method was not collected. Please try again.'}, 
+                        status=status.HTTP_402_PAYMENT_REQUIRED
+                    )
+                
+                elif subscription_status in ['past_due', 'unpaid', 'canceled']:
+                    # Payment failed or subscription canceled
+                    print(f"⚠️ Stripe subscription is {subscription_status} - payment failed")
+                    return Response(
+                        {'error': 'Payment failed. Please check your payment method and try again.'}, 
+                        status=status.HTTP_402_PAYMENT_REQUIRED
+                    )
+                
+                else:
+                    # Unknown status
+                    print(f"⚠️ Unknown subscription status: {subscription_status}")
+                    return Response(
+                        {'error': f'Payment status unclear (status: {subscription_status}). Please contact support.'}, 
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+                    
+            except stripe.error.InvalidRequestError as e:
+                print(f"❌ Stripe error querying subscription: {e}")
+                return Response(
+                    {'error': 'Could not verify payment status with Stripe. Please contact support.'}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            except Exception as e:
+                print(f"❌ Error querying Stripe: {e}")
+                import traceback
+                traceback.print_exc()
+                return Response(
+                    {'error': 'Failed to verify payment status. Please contact support.'}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
             
         except Course.DoesNotExist:
             return Response(
