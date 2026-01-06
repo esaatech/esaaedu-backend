@@ -42,6 +42,76 @@ def get_trial_period_settings():
         }
 
 
+def ensure_stripe_customer_in_current_environment(user):
+    """
+    Ensure Stripe customer exists in the current environment (test/live).
+    If customer ID is from wrong environment, create new customer and update database.
+    
+    Args:
+        user: User model instance
+        
+    Returns:
+        str: The valid customer ID for the current environment
+    """
+    try:
+        # Get or create customer account
+        customer_account, created = CustomerAccount.objects.get_or_create(
+            user=user,
+            defaults={'stripe_customer_id': ''}
+        )
+        
+        # If no customer ID exists, create one
+        if not customer_account.stripe_customer_id:
+            print(f"🔄 Creating new Stripe customer for user: {user.email}")
+            stripe_customer = stripe.Customer.create(
+                email=user.email,
+                name=f"{user.first_name} {user.last_name}".strip() or user.email,
+                metadata={
+                    'user_id': str(user.id),
+                }
+            )
+            customer_account.stripe_customer_id = stripe_customer.id
+            customer_account.save(update_fields=['stripe_customer_id'])
+            print(f"✅ Created new customer {stripe_customer.id} and updated database")
+            return stripe_customer.id
+        
+        # Check if customer exists in current environment
+        try:
+            stripe.Customer.retrieve(customer_account.stripe_customer_id)
+            print(f"✅ Customer {customer_account.stripe_customer_id} exists in current environment")
+            return customer_account.stripe_customer_id
+        except stripe.error.InvalidRequestError as e:
+            error_message = str(e)
+            error_code = getattr(e, 'code', '')
+            
+            if 'No such customer' in error_message or error_code == 'resource_missing':
+                print(f"⚠️ Customer {customer_account.stripe_customer_id} not found in current environment - will migrate")
+                # Create new customer in current environment
+                print(f"🔄 Creating new Stripe customer in current environment for user: {user.email}")
+                stripe_customer = stripe.Customer.create(
+                    email=user.email,
+                    name=f"{user.first_name} {user.last_name}".strip() or user.email,
+                    metadata={
+                        'user_id': str(user.id),
+                        'migrated_from': customer_account.stripe_customer_id  # Track migration
+                    }
+                )
+                old_customer_id = customer_account.stripe_customer_id
+                customer_account.stripe_customer_id = stripe_customer.id
+                customer_account.save(update_fields=['stripe_customer_id'])
+                print(f"✅ Created new customer {stripe_customer.id} and updated database (migrated from {old_customer_id})")
+                return stripe_customer.id
+            else:
+                # Different error, re-raise it
+                raise e
+                
+    except Exception as e:
+        print(f"❌ Error ensuring Stripe customer in current environment: {e}")
+        import traceback
+        traceback.print_exc()
+        raise e
+
+
 def ensure_stripe_product_and_prices_in_current_environment(course, billing_period='monthly'):
     """
     Ensure Stripe product and prices exist in the current environment (test/live).
@@ -111,32 +181,38 @@ def ensure_stripe_product_and_prices_in_current_environment(course, billing_peri
         prices = calculate_course_prices(float(course.price), course.duration_weeks or 0)
         
         # Step 4: Check and migrate prices
-        # Get existing prices from database
+        # Get ALL existing prices from database (not just first)
         existing_prices = BillingPrice.objects.filter(
             product=billing_product,
             is_active=True
         )
         
-        one_time_price_obj = existing_prices.filter(billing_period='one_time').first()
-        monthly_price_obj = existing_prices.filter(billing_period='monthly').first()
-        
-        # Check and migrate one-time price
+        # Check all one-time prices to find one that exists in current environment
         one_time_price_id = None
-        if one_time_price_obj and one_time_price_obj.stripe_price_id:
-            try:
-                stripe.Price.retrieve(one_time_price_obj.stripe_price_id)
-                one_time_price_id = one_time_price_obj.stripe_price_id
-                print(f"✅ One-time price {one_time_price_id} exists in current environment")
-            except stripe.error.InvalidRequestError as e:
-                if 'No such price' in str(e) or getattr(e, 'code', '') == 'resource_missing':
-                    print(f"⚠️ One-time price {one_time_price_obj.stripe_price_id} not found - creating new one")
-                    one_time_price_obj = None  # Will create new below
-                else:
-                    raise e
+        one_time_price_obj = None
+        one_time_prices = existing_prices.filter(billing_period='one_time')
         
+        for price_obj in one_time_prices:
+            if price_obj.stripe_price_id:
+                try:
+                    stripe.Price.retrieve(price_obj.stripe_price_id)
+                    # Found a valid price in current environment
+                    one_time_price_id = price_obj.stripe_price_id
+                    one_time_price_obj = price_obj
+                    print(f"✅ Found valid one-time price {one_time_price_id} in current environment")
+                    break
+                except stripe.error.InvalidRequestError as e:
+                    if 'No such price' in str(e) or getattr(e, 'code', '') == 'resource_missing':
+                        # This price doesn't exist in current environment, mark as invalid
+                        print(f"⚠️ One-time price {price_obj.stripe_price_id} not found in current environment - will deactivate")
+                        price_obj.is_active = False
+                        price_obj.save(update_fields=['is_active'])
+                    else:
+                        raise e
+        
+        # Only create new one-time price if no valid one exists
         if not one_time_price_id:
-            # Create new one-time price
-            print(f"🔄 Creating new one-time price in current environment")
+            print(f"🔄 No valid one-time price found - creating new one in current environment")
             new_one_time_price = stripe.Price.create(
                 product=stripe_product_id,
                 unit_amount=int(prices['one_time_price'] * 100),  # Convert to cents
@@ -149,41 +225,46 @@ def ensure_stripe_product_and_prices_in_current_environment(course, billing_peri
             )
             one_time_price_id = new_one_time_price.id
             
-            # Update or create BillingPrice record
-            if one_time_price_obj:
-                one_time_price_obj.stripe_price_id = one_time_price_id
-                one_time_price_obj.unit_amount = prices['one_time_price']
-                one_time_price_obj.is_active = True
-                one_time_price_obj.save(update_fields=['stripe_price_id', 'unit_amount', 'is_active'])
-            else:
-                BillingPrice.objects.create(
-                    product=billing_product,
-                    stripe_price_id=one_time_price_id,
-                    billing_period='one_time',
-                    unit_amount=prices['one_time_price'],
-                    currency='usd',
-                    is_active=True
-                )
+            # Create new BillingPrice record (don't reuse old invalid ones)
+            BillingPrice.objects.create(
+                product=billing_product,
+                stripe_price_id=one_time_price_id,
+                billing_period='one_time',
+                unit_amount=prices['one_time_price'],
+                currency='usd',
+                is_active=True
+            )
             print(f"✅ Created new one-time price {one_time_price_id} and updated database")
         
         # Check and migrate monthly price (if course duration > 4 weeks)
         monthly_price_id = None
+        monthly_price_obj = None
+        
         if prices['total_months'] > 1:
-            if monthly_price_obj and monthly_price_obj.stripe_price_id:
-                try:
-                    stripe.Price.retrieve(monthly_price_obj.stripe_price_id)
-                    monthly_price_id = monthly_price_obj.stripe_price_id
-                    print(f"✅ Monthly price {monthly_price_id} exists in current environment")
-                except stripe.error.InvalidRequestError as e:
-                    if 'No such price' in str(e) or getattr(e, 'code', '') == 'resource_missing':
-                        print(f"⚠️ Monthly price {monthly_price_obj.stripe_price_id} not found - creating new one")
-                        monthly_price_obj = None  # Will create new below
-                    else:
-                        raise e
+            # Check all monthly prices to find one that exists in current environment
+            monthly_prices = existing_prices.filter(billing_period='monthly')
             
+            for price_obj in monthly_prices:
+                if price_obj.stripe_price_id:
+                    try:
+                        stripe.Price.retrieve(price_obj.stripe_price_id)
+                        # Found a valid price in current environment
+                        monthly_price_id = price_obj.stripe_price_id
+                        monthly_price_obj = price_obj
+                        print(f"✅ Found valid monthly price {monthly_price_id} in current environment")
+                        break
+                    except stripe.error.InvalidRequestError as e:
+                        if 'No such price' in str(e) or getattr(e, 'code', '') == 'resource_missing':
+                            # This price doesn't exist in current environment, mark as invalid
+                            print(f"⚠️ Monthly price {price_obj.stripe_price_id} not found in current environment - will deactivate")
+                            price_obj.is_active = False
+                            price_obj.save(update_fields=['is_active'])
+                        else:
+                            raise e
+            
+            # Only create new monthly price if no valid one exists
             if not monthly_price_id:
-                # Create new monthly price
-                print(f"🔄 Creating new monthly price in current environment")
+                print(f"🔄 No valid monthly price found - creating new one in current environment")
                 new_monthly_price = stripe.Price.create(
                     product=stripe_product_id,
                     unit_amount=int(prices['monthly_price'] * 100),  # Convert to cents
@@ -199,21 +280,15 @@ def ensure_stripe_product_and_prices_in_current_environment(course, billing_peri
                 )
                 monthly_price_id = new_monthly_price.id
                 
-                # Update or create BillingPrice record
-                if monthly_price_obj:
-                    monthly_price_obj.stripe_price_id = monthly_price_id
-                    monthly_price_obj.unit_amount = prices['monthly_price']
-                    monthly_price_obj.is_active = True
-                    monthly_price_obj.save(update_fields=['stripe_price_id', 'unit_amount', 'is_active'])
-                else:
-                    BillingPrice.objects.create(
-                        product=billing_product,
-                        stripe_price_id=monthly_price_id,
-                        billing_period='monthly',
-                        unit_amount=prices['monthly_price'],
-                        currency='usd',
-                        is_active=True
-                    )
+                # Create new BillingPrice record (don't reuse old invalid ones)
+                BillingPrice.objects.create(
+                    product=billing_product,
+                    stripe_price_id=monthly_price_id,
+                    billing_period='monthly',
+                    unit_amount=prices['monthly_price'],
+                    currency='usd',
+                    is_active=True
+                )
                 print(f"✅ Created new monthly price {monthly_price_id} and updated database")
         
         # Return the requested price ID
@@ -1062,23 +1137,8 @@ class CreatePaymentIntentView(APIView):
                     'monthly': {'amount': float(course.price) * 1.15}  # 15% more for installments
                 }
             
-            # Get or create customer
-            customer_account, created = CustomerAccount.objects.get_or_create(
-                user=request.user
-            )
-            
-            if not customer_account.stripe_customer_id:
-                # Create Stripe customer
-                stripe_customer = stripe.Customer.create(
-                    email=request.user.email,
-                    name=f"{request.user.first_name} {request.user.last_name}".strip() or request.user.email,
-                    metadata={
-                        'user_id': str(request.user.id),
-                        'course_id': str(course.id),
-                    }
-                )
-                customer_account.stripe_customer_id = stripe_customer.id
-                customer_account.save()
+            # Ensure customer exists in current environment (auto-migrate if needed)
+            stripe_customer_id = ensure_stripe_customer_in_current_environment(request.user)
             
             # Calculate amount based on pricing type
             if pricing_type == 'monthly':
@@ -1153,7 +1213,7 @@ class CreatePaymentIntentView(APIView):
                     while retry_count <= max_retries and subscription is None:
                         try:
                             subscription = stripe.Subscription.create(
-                                customer=customer_account.stripe_customer_id,
+                                customer=stripe_customer_id,
                                 items=[{'price': stripe_price_id}],
                                 # Add trial when requested so Stripe auto-manages conversion after trial
                                 trial_period_days=trial_days if request.data.get('trial_period') else None,
@@ -1403,7 +1463,7 @@ class CreatePaymentIntentView(APIView):
                         print(f"🗓️ Subscription will cancel: {cancel_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
                         
                         subscription = stripe.Subscription.create(
-                            customer=customer_account.stripe_customer_id,
+                            customer=stripe_customer_id,
                             items=[{'price': stripe_price_id}],
                             trial_period_days=trial_days,
                             cancel_at=int(cancel_at.timestamp()),  # Cancel after first payment
@@ -1586,7 +1646,7 @@ class CreatePaymentIntentView(APIView):
                     payment_intent = stripe.PaymentIntent.create(
                         amount=amount,
                         currency='usd',
-                        customer=customer_account.stripe_customer_id,
+                        customer=stripe_customer_id,
                         metadata={
                             'course_id': str(course.id),
                             'course_title': course.title,
@@ -2083,11 +2143,11 @@ class CreateCustomerPortalSessionView(APIView):
 
     def post(self, request):
         try:
-            # Get customer account
-            customer_account = CustomerAccount.objects.get(user=request.user)
-            
             # Initialize Stripe
             get_stripe_client()
+            
+            # Ensure customer exists in current environment (auto-migrate if needed)
+            stripe_customer_id = ensure_stripe_customer_in_current_environment(request.user)
             
             # Create Stripe Customer Portal session
             # Get Stripe billing redirect URL from environment variable
@@ -2100,7 +2160,7 @@ class CreateCustomerPortalSessionView(APIView):
                 )
             
             session = stripe.billing_portal.Session.create(
-                customer=customer_account.stripe_customer_id,
+                customer=stripe_customer_id,
                 return_url=billing_redirect_url,
                 # Optional: specify a configuration ID if you have one
                 # configuration='bpc_xxxxxxxxxxxxx'
