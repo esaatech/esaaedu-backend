@@ -749,26 +749,51 @@ class StripeWebhookView(APIView):
             # Get subscription ID from setup intent
             # Setup intents don't have subscription field, so we need to find it via customer
             customer_id = setup_intent.get('customer')
+            setup_intent_id = setup_intent.get('id')
             
-            # Find the most recent subscription for this customer
+            # Find the subscription that has this setup intent as its pending_setup_intent
             subscription_id = None
             if customer_id:
                 try:
-                    # Get customer account to find user
-                    customer_account = CustomerAccount.objects.get(stripe_customer_id=customer_id)
-                    # Find the most recent incomplete subscription for this user
-                    recent_subscriber = Subscribers.objects.filter(
-                        user=customer_account.user,
-                        status='incomplete'
-                    ).order_by('-created_at').first()
+                    # Query Stripe to find which subscription has this setup intent
+                    # This is more reliable than guessing from database
+                    get_stripe_client()
+                    subscriptions = stripe.Subscription.list(
+                        customer=customer_id,
+                        status='all',
+                        limit=10,
+                        expand=['data.pending_setup_intent']
+                    )
                     
-                    if recent_subscriber:
-                        subscription_id = recent_subscriber.stripe_subscription_id
-                        print(f"✅ Found subscription {subscription_id} for customer {customer_id}")
-                    else:
-                        print(f"⚠️ No incomplete subscription found for customer {customer_id}")
-                except CustomerAccount.DoesNotExist:
-                    print(f"⚠️ Customer account not found for {customer_id}")
+                    for sub in subscriptions.data:
+                        if hasattr(sub, 'pending_setup_intent') and sub.pending_setup_intent:
+                            if sub.pending_setup_intent.id == setup_intent_id:
+                                subscription_id = sub.id
+                                print(f"✅ Found subscription {subscription_id} with matching setup intent {setup_intent_id}")
+                                break
+                    
+                    # Fallback: If not found via Stripe query, try database lookup
+                    if not subscription_id:
+                        try:
+                            # Get customer account to find user
+                            customer_account = CustomerAccount.objects.get(stripe_customer_id=customer_id)
+                            # Find the most recent incomplete subscription for this user
+                            recent_subscriber = Subscribers.objects.filter(
+                                user=customer_account.user,
+                                status='incomplete'
+                            ).order_by('-created_at').first()
+                            
+                            if recent_subscriber:
+                                subscription_id = recent_subscriber.stripe_subscription_id
+                                print(f"⚠️ Fallback: Found subscription {subscription_id} from database for customer {customer_id}")
+                            else:
+                                print(f"⚠️ No incomplete subscription found for customer {customer_id}")
+                        except CustomerAccount.DoesNotExist:
+                            print(f"⚠️ Customer account not found for {customer_id}")
+                except Exception as e:
+                    print(f"❌ Error finding subscription for setup intent: {e}")
+                    import traceback
+                    traceback.print_exc()
             if subscription_id:
                 try:
                     # Update Subscribers table
@@ -2029,7 +2054,7 @@ class ConfirmEnrollmentView(APIView):
                 print(f"🔍 Attempting to retrieve subscription from Stripe: {subscription_id}")
                 stripe_subscription = stripe.Subscription.retrieve(
                     subscription_id,
-                    expand=['latest_invoice.payment_intent', 'pending_setup_intent', 'latest_setup_intent']
+                    expand=['latest_invoice.payment_intent', 'pending_setup_intent']
                 )
                 print(f"✅ Successfully retrieved subscription from Stripe: {stripe_subscription.id}")
                 
@@ -2098,25 +2123,39 @@ class ConfirmEnrollmentView(APIView):
                     has_trial_period = subscription_status == 'trialing' or stripe_subscription.get('trial_end') is not None
                     
                     # Get or create subscriber record
-                    try:
-                        subscriber = Subscribers.objects.get(stripe_subscription_id=subscription_id)
-                        # Update subscriber status to match Stripe
+                    # Use get_or_create to avoid duplicate key errors (unique constraint on user+course)
+                    subscriber, created = Subscribers.objects.get_or_create(
+                        user=request.user,
+                        course=course,
+                        defaults={
+                            'stripe_subscription_id': subscription_id,
+                            'status': subscription_status,
+                            'subscription_type': 'trial' if has_trial_period else final_pricing_type
+                        }
+                    )
+                    
+                    # Update subscriber if it already existed or if status changed
+                    if not created:
+                        # Subscriber already exists - update it
+                        updated_fields = []
+                        if subscriber.stripe_subscription_id != subscription_id:
+                            subscriber.stripe_subscription_id = subscription_id
+                            updated_fields.append('stripe_subscription_id')
                         if subscriber.status != subscription_status:
                             subscriber.status = subscription_status
-                            subscriber.save(update_fields=['status', 'updated_at'])
-                            print(f"✅ Updated subscriber status to {subscription_status}")
-                    except Subscribers.DoesNotExist:
-                        # Create subscriber record if it doesn't exist
-                        from .models import CustomerAccount
-                        customer_account = CustomerAccount.objects.get(user=request.user)
-                        subscriber = Subscribers.objects.create(
-                            user=request.user,
-                            course=course,
-                            stripe_subscription_id=subscription_id,
-                            status=subscription_status,
-                            subscription_type='trial' if has_trial_period else final_pricing_type
-                        )
-                        print(f"✅ Created subscriber record: {subscriber.id}")
+                            updated_fields.append('status')
+                        if subscriber.subscription_type != ('trial' if has_trial_period else final_pricing_type):
+                            subscriber.subscription_type = 'trial' if has_trial_period else final_pricing_type
+                            updated_fields.append('subscription_type')
+                        
+                        if updated_fields:
+                            updated_fields.append('updated_at')
+                            subscriber.save(update_fields=updated_fields)
+                            print(f"✅ Updated existing subscriber {subscriber.id} with fields: {updated_fields}")
+                        else:
+                            print(f"✅ Subscriber {subscriber.id} already exists and is up to date")
+                    else:
+                        print(f"✅ Created new subscriber record: {subscriber.id}")
                     
                     # Create enrollment using complete_enrollment_process
                     enrollment = complete_enrollment_process(
