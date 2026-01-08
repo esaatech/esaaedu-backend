@@ -206,6 +206,34 @@ Course updates can be performed through **API**, **Course Introduction endpoint*
 - Backend updates subscription status
 - User gains access to course content
 
+**Webhook Handlers:**
+
+**For Subscriptions with Trial Period:**
+- `setup_intent.succeeded`: Payment method collected, subscription status set to `trialing`, enrollment created
+- `invoice.payment_succeeded`: First charge after trial ends, subscription status updated to `active`, subscription type updated from `trial` to actual pricing type
+
+**For Subscriptions without Trial Period:**
+- `setup_intent.succeeded`: 
+  - Payment method collected
+  - Subscription status immediately set to `active`
+  - Enrollment created immediately
+  - Attempts to pay invoice manually (Stripe may also attempt automatically)
+  - If invoice is already paid, triggers `invoice.payment_succeeded` handler
+- `invoice.payment_succeeded`: 
+  - Invoice payment confirmed
+  - Subscription status confirmed as `active`
+  - Payment record created/updated
+  - Enrollment ensured (idempotent)
+
+**Invoice Date Synchronization:**
+- `_handle_subscription_updated`: Syncs `next_invoice_date` and `next_invoice_amount` from Stripe's `current_period_end`
+- `_handle_payment_succeeded`: Syncs invoice dates and amounts from Stripe subscription
+- Ensures billing dates stay accurate and match Stripe's records
+
+**Fallback Logic:**
+- If `next_invoice_date` is not set, API endpoints use `current_period_end` as fallback
+- Ensures correct billing dates are displayed even if webhook was missed
+
 #### 5. Subscription Management
 - User can view subscriptions: `GET /api/billing/subscriptions/me/`
 - User can cancel subscription: `POST /api/billing/subscriptions/{id}/cancel/`
@@ -252,10 +280,26 @@ Payment ──┐
 ### Billing (Student)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/billing/courses/{id}/checkout-session/` | Create checkout session |
+| POST | `/api/billing/courses/{id}/payment-intent/` | Create payment intent (one-time or subscription) |
+| POST | `/api/billing/courses/{id}/confirm-enrollment/` | Confirm enrollment after payment (polls for webhook completion) |
 | GET | `/api/billing/subscriptions/me/` | List user subscriptions |
 | POST | `/api/billing/subscriptions/{id}/cancel/` | Cancel subscription |
 | POST | `/api/billing/webhooks/stripe/` | Stripe webhook handler |
+
+**Payment Intent Endpoint:**
+- Creates Stripe subscription for monthly payments (with or without trial)
+- Creates Stripe PaymentIntent for one-time payments
+- Returns `client_secret` for Stripe Elements integration
+- Returns `intent_type` ('setup' for subscriptions, 'payment' for one-time)
+- Returns `subscription_id` for subscription payments
+
+**Confirm Enrollment Endpoint:**
+- Polls for webhook completion (max 15 seconds)
+- If webhook doesn't arrive, queries Stripe directly to verify payment status
+- For subscriptions: Checks subscription status and setup_intent status
+- For one-time payments: Checks payment_intent status
+- Returns enrollment details if successful
+- Handles payment failures with appropriate error messages
 
 ## Environment Variables
 
@@ -265,6 +309,42 @@ STRIPE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY_HERE
 STRIPE_WEBHOOK_SECRET=YOUR_WEBHOOK_SECRET_HERE
 ```
 
+## Payment Flow Details
+
+### One-Time Payments
+1. Frontend calls `POST /api/billing/courses/{id}/payment-intent/` with `pricing_type: 'one_time'`
+2. Backend creates Stripe PaymentIntent
+3. Frontend uses Stripe Elements to collect payment
+4. Payment succeeds → `payment_intent.succeeded` webhook → Enrollment created
+5. Frontend calls `POST /api/billing/courses/{id}/confirm-enrollment/` to confirm
+
+### Monthly Subscriptions (Without Trial)
+1. Frontend calls `POST /api/billing/courses/{id}/payment-intent/` with `pricing_type: 'monthly'` and `trial_period: false`
+2. Backend creates Stripe Subscription with `payment_behavior: 'default_incomplete'`
+3. Frontend uses Stripe Elements to collect payment method (setup_intent)
+4. `setup_intent.succeeded` webhook:
+   - Subscription status set to `active`
+   - Enrollment created immediately
+   - Attempts to pay invoice manually
+5. `invoice.payment_succeeded` webhook:
+   - Confirms payment
+   - Updates invoice dates
+   - Creates payment record
+6. Frontend calls `POST /api/billing/courses/{id}/confirm-enrollment/` to confirm
+
+### Monthly Subscriptions (With Trial)
+1. Frontend calls `POST /api/billing/courses/{id}/payment-intent/` with `pricing_type: 'monthly'` and `trial_period: true`
+2. Backend creates Stripe Subscription with trial period
+3. Frontend uses Stripe Elements to collect payment method (setup_intent)
+4. `setup_intent.succeeded` webhook:
+   - Subscription status set to `trialing`
+   - Enrollment created with trial status
+5. Trial ends → `invoice.payment_succeeded` webhook:
+   - Subscription status updated to `active`
+   - Subscription type updated from `trial` to `monthly`
+   - First charge processed
+   - Payment record created
+
 ## Error Handling
 
 - Invalid course ID → 404 Not Found
@@ -272,3 +352,6 @@ STRIPE_WEBHOOK_SECRET=YOUR_WEBHOOK_SECRET_HERE
 - Stripe API errors → 400 Bad Request
 - Authentication required → 401 Unauthorized
 - Missing Stripe configuration → 500 Internal Server Error
+- Payment method not collected → 402 Payment Required
+- Payment failed → 402 Payment Required (with specific error message)
+- Enrollment confirmation timeout → 408 Request Timeout
