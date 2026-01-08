@@ -554,10 +554,18 @@ class ListMySubscriptionsView(APIView):
                     payment_description = f"Trial ends {trial_end}"
             elif is_monthly:
                 # For monthly, show next invoice
-                if s['next_invoice_date'] and s['next_invoice_amount']:
-                    payment_description = f"Next invoice: ${float(s['next_invoice_amount']):.2f} on {s['next_invoice_date'].strftime('%b %d, %Y')}"
+                # Use current_period_end as fallback if next_invoice_date is not set
+                next_billing_date = s.get('next_invoice_date')
+                if not next_billing_date and s.get('current_period_end'):
+                    next_billing_date = s['current_period_end']
+                
+                if next_billing_date and s.get('next_invoice_amount'):
+                    payment_description = f"Next invoice: ${float(s['next_invoice_amount']):.2f} on {next_billing_date.strftime('%b %d, %Y')}"
+                elif next_billing_date:
+                    amount = float(s['amount']) if s.get('amount') else 0
+                    payment_description = f"Next invoice: ${amount:.2f} on {next_billing_date.strftime('%b %d, %Y')}" if amount > 0 else f"Next billing: {next_billing_date.strftime('%b %d, %Y')}"
                 else:
-                    amount = float(s['amount']) if s['amount'] else 0
+                    amount = float(s['amount']) if s.get('amount') else 0
                     payment_description = f"Monthly installments of ${amount:.2f}" if amount > 0 else "Monthly installments"
             else:  # one_time
                 # For one-time, show the total amount
@@ -565,12 +573,18 @@ class ListMySubscriptionsView(APIView):
                 payment_description = f"Total amount: ${amount:.2f}" if amount > 0 else "One-time payment"
             
             # Next invoice information
+            # Use current_period_end as fallback if next_invoice_date is not set
+            next_billing_date = s.get('next_invoice_date')
+            if not next_billing_date and s.get('current_period_end'):
+                next_billing_date = s['current_period_end']
+            
             next_invoice_info = None
-            if s['next_invoice_date'] and s['next_invoice_amount']:
+            if next_billing_date:
+                amount = float(s.get('next_invoice_amount', 0)) if s.get('next_invoice_amount') else (float(s.get('amount', 0)) if s.get('amount') else 0)
                 next_invoice_info = {
-                    'date': s['next_invoice_date'].strftime('%b %d, %Y'),
-                    'amount': float(s['next_invoice_amount']),
-                    'formatted': f"${float(s['next_invoice_amount']):.2f} on {s['next_invoice_date'].strftime('%b %d, %Y')}"
+                    'date': next_billing_date.strftime('%b %d, %Y'),
+                    'amount': amount,
+                    'formatted': f"${amount:.2f} on {next_billing_date.strftime('%b %d, %Y')}" if amount > 0 else f"Next billing: {next_billing_date.strftime('%b %d, %Y')}"
                 }
             
             data.append({
@@ -854,13 +868,53 @@ class StripeWebhookView(APIView):
                             traceback.print_exc()
                     else:
                         # For subscriptions WITHOUT trial: setup_intent succeeded means payment method collected
-                        # Stripe should automatically attempt to pay the invoice after setup_intent succeeds
-                        # We'll wait for invoice.payment_succeeded webhook, but check if it's already paid
+                        # For default_incomplete subscriptions, we need to manually pay the invoice
                         print(f"💳 Setup intent succeeded for non-trial subscription {subscription_id}")
-                        print(f"ℹ️ Stripe will automatically attempt to pay the invoice - waiting for invoice.payment_succeeded webhook")
+                        
+                        # Update subscriber status to active (payment method collected, invoice will be paid)
+                        subscriber.status = 'active'
+                        subscriber.save()
+                        print(f"✅ Updated subscriber {subscriber.id} to active status (payment method collected)")
+                        
+                        # CRITICAL: Ensure enrollment is created when payment method is collected
+                        print(f"🎓 Webhook: Ensuring enrollment is created for non-trial subscription {subscription_id}")
+                        try:
+                            course_id = metadata.get('course_id')
+                            class_id = metadata.get('class_id')
+                            pricing_type = metadata.get('pricing_type', 'one_time')
+                            
+                            print(f"🔍 Webhook: Processing non-trial subscription {subscription_id} - Course: {course_id}, Class: {class_id}")
+                            
+                            if course_id and class_id:
+                                from courses.models import Course
+                                course = Course.objects.get(id=course_id)
+                                user = subscriber.user
+                                is_trial = False  # Non-trial subscription
+                                
+                                # Call complete_enrollment_process to ensure enrollment exists
+                                enrollment = complete_enrollment_process(
+                                    subscription_id=subscription_id,
+                                    user=user,
+                                    course=course,
+                                    class_id=class_id,
+                                    pricing_type=pricing_type,
+                                    is_trial=is_trial
+                                )
+                                
+                                if enrollment:
+                                    print(f"✅ Webhook: Enrollment ensured for non-trial subscription {subscription_id}")
+                                else:
+                                    print(f"⚠️ Webhook: Failed to ensure enrollment for subscription {subscription_id}")
+                            else:
+                                print(f"⚠️ Webhook: Missing metadata for subscription {subscription_id}: course_id={course_id}, class_id={class_id}")
+                                
+                        except Exception as e:
+                            print(f"❌ Webhook: Error ensuring enrollment: {e}")
+                            import traceback
+                            traceback.print_exc()
                         
                         try:
-                            # Check if invoice is already paid (might have been paid automatically)
+                            # Get the latest invoice for this subscription
                             latest_invoice_id = stripe_subscription.get('latest_invoice')
                             if latest_invoice_id:
                                 # Retrieve the invoice to check status
@@ -870,13 +924,40 @@ class StripeWebhookView(APIView):
                                     print(f"✅ Invoice {latest_invoice_id} is already paid - triggering payment succeeded handler")
                                     # Trigger payment succeeded handler manually
                                     self._handle_payment_succeeded(invoice)
+                                elif invoice.status in ['open', 'draft']:
+                                    # For non-trial subscriptions, manually pay the invoice
+                                    print(f"💳 Attempting to pay invoice {latest_invoice_id} for non-trial subscription")
+                                    try:
+                                        # Add a small delay to ensure payment method is fully attached
+                                        import time
+                                        time.sleep(0.5)
+                                        
+                                        paid_invoice = stripe.Invoice.pay(latest_invoice_id)
+                                        if paid_invoice.status == 'paid':
+                                            print(f"✅ Invoice {latest_invoice_id} paid successfully")
+                                            # Trigger payment succeeded handler
+                                            self._handle_payment_succeeded(paid_invoice)
+                                        else:
+                                            print(f"⚠️ Invoice payment attempt returned status: {paid_invoice.status}")
+                                            print(f"ℹ️ Will wait for invoice.payment_succeeded webhook")
+                                    except stripe.error.InvalidRequestError as e:
+                                        error_code = getattr(e, 'code', None)
+                                        error_message = str(e)
+                                        print(f"⚠️ Could not pay invoice automatically: {error_message} (code: {error_code})")
+                                        
+                                        # If payment method not ready, wait for Stripe to process
+                                        if 'payment_method' in error_message.lower() or error_code == 'payment_intent_unexpected_state':
+                                            print(f"ℹ️ Payment method may not be ready yet - Stripe will attempt payment automatically")
+                                            print(f"ℹ️ Will wait for invoice.payment_succeeded webhook")
+                                        else:
+                                            # Other errors - log and wait
+                                            print(f"ℹ️ Will wait for invoice.payment_succeeded webhook")
                                 else:
-                                    print(f"ℹ️ Invoice {latest_invoice_id} status is {invoice.status} - waiting for automatic payment")
-                                    print(f"ℹ️ Stripe will attempt to pay automatically - will process via invoice.payment_succeeded webhook")
+                                    print(f"ℹ️ Invoice {latest_invoice_id} status is {invoice.status} - waiting for payment")
                             else:
                                 print(f"⚠️ No latest invoice found for subscription {subscription_id}")
                         except Exception as e:
-                            print(f"⚠️ Error checking invoice status: {e}")
+                            print(f"⚠️ Error attempting to pay invoice: {e}")
                             import traceback
                             traceback.print_exc()
                             print(f"ℹ️ Will wait for invoice.payment_succeeded webhook")
@@ -1039,6 +1120,39 @@ class StripeWebhookView(APIView):
                 print(f"🔄 Trial ended, updating subscription type from trial to actual pricing type")
                 update_subscription_type_from_stripe(subscription['id'])
             
+            # Update next_invoice_date and next_invoice_amount from Stripe subscription
+            try:
+                from datetime import datetime
+                # Get current_period_end as next invoice date for active subscriptions
+                if subscription.get('current_period_end'):
+                    next_invoice_date = datetime.fromtimestamp(
+                        subscription['current_period_end'], tz=timezone.utc
+                    )
+                    subscriber.next_invoice_date = next_invoice_date
+                    print(f"📅 Updated next_invoice_date to {next_invoice_date}")
+                
+                # Get next invoice amount from subscription items
+                if subscription.get('items', {}).get('data', []):
+                    item = subscription['items']['data'][0]
+                    next_invoice_amount = item.get('price', {}).get('unit_amount', 0) / 100
+                    if next_invoice_amount > 0:
+                        subscriber.next_invoice_amount = next_invoice_amount
+                        print(f"💰 Updated next_invoice_amount to ${next_invoice_amount}")
+                
+                # Also update current_period_start and current_period_end
+                if subscription.get('current_period_start'):
+                    subscriber.current_period_start = datetime.fromtimestamp(
+                        subscription['current_period_start'], tz=timezone.utc
+                    )
+                if subscription.get('current_period_end'):
+                    subscriber.current_period_end = datetime.fromtimestamp(
+                        subscription['current_period_end'], tz=timezone.utc
+                    )
+                
+                subscriber.save()
+            except Exception as e:
+                print(f"⚠️ Error updating invoice dates: {e}")
+            
             print(f"✅ Updated subscriber {subscriber.id}: {old_status} → {new_status}")
             
         except Subscribers.DoesNotExist:
@@ -1108,6 +1222,37 @@ class StripeWebhookView(APIView):
                 subscriber.status = 'active'
                 subscriber.subscription_type = pricing_type
                 print(f"✅ Payment succeeded - updated subscriber {subscriber.id} to active status, type: {pricing_type}")
+            
+            # Update next_invoice_date and next_invoice_amount from Stripe subscription
+            try:
+                from datetime import datetime
+                # Get current_period_end as next invoice date for active subscriptions
+                if stripe_subscription.get('current_period_end'):
+                    next_invoice_date = datetime.fromtimestamp(
+                        stripe_subscription['current_period_end'], tz=timezone.utc
+                    )
+                    subscriber.next_invoice_date = next_invoice_date
+                    print(f"📅 Updated next_invoice_date to {next_invoice_date}")
+                
+                # Get next invoice amount from subscription items
+                if stripe_subscription.get('items', {}).get('data', []):
+                    item = stripe_subscription['items']['data'][0]
+                    next_invoice_amount = item.get('price', {}).get('unit_amount', 0) / 100
+                    if next_invoice_amount > 0:
+                        subscriber.next_invoice_amount = next_invoice_amount
+                        print(f"💰 Updated next_invoice_amount to ${next_invoice_amount}")
+                
+                # Also update current_period_start and current_period_end
+                if stripe_subscription.get('current_period_start'):
+                    subscriber.current_period_start = datetime.fromtimestamp(
+                        stripe_subscription['current_period_start'], tz=timezone.utc
+                    )
+                if stripe_subscription.get('current_period_end'):
+                    subscriber.current_period_end = datetime.fromtimestamp(
+                        stripe_subscription['current_period_end'], tz=timezone.utc
+                    )
+            except Exception as e:
+                print(f"⚠️ Error updating invoice dates from payment succeeded: {e}")
             
             subscriber.save()
             
@@ -2850,8 +2995,16 @@ class BillingDashboardView(APIView):
                         payment_description = f"Trial ends {sub.trial_end.strftime('%b %d, %Y') if sub.trial_end else 'N/A'}"
                 elif is_monthly:
                     # For monthly, show next invoice
-                    if sub.next_invoice_date and sub.next_invoice_amount:
-                        payment_description = f"Next invoice: ${float(sub.next_invoice_amount):.2f} on {sub.next_invoice_date.strftime('%b %d, %Y')}"
+                    # Use current_period_end as fallback if next_invoice_date is not set
+                    next_billing_date = sub.next_invoice_date
+                    if not next_billing_date and sub.current_period_end:
+                        next_billing_date = sub.current_period_end
+                    
+                    if next_billing_date and sub.next_invoice_amount:
+                        payment_description = f"Next invoice: ${float(sub.next_invoice_amount):.2f} on {next_billing_date.strftime('%b %d, %Y')}"
+                    elif next_billing_date:
+                        amount = float(sub.amount) if sub.amount else 0
+                        payment_description = f"Next invoice: ${amount:.2f} on {next_billing_date.strftime('%b %d, %Y')}" if amount > 0 else f"Next billing: {next_billing_date.strftime('%b %d, %Y')}"
                     else:
                         payment_description = f"Monthly installments of ${float(sub.amount):.2f}" if sub.amount else "Monthly installments"
                 else:  # one_time
