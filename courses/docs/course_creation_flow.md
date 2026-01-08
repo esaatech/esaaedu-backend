@@ -19,7 +19,13 @@ This document explains how course creation works in the Little Learners Tech pla
   - `update_stripe_product_for_course()`
   - `deactivate_stripe_product_for_course()`
 
-### 3. **Billing Models**
+### 3. **Django Admin Integration**
+- **File**: `courses/admin.py`
+- **Class**: `CourseAdmin`
+- **Purpose**: Provides admin interface for course management with automatic Stripe synchronization
+- **Key Feature**: `save_model()` override detects billing field changes and triggers Stripe updates
+
+### 4. **Billing Models**
 - **File**: `billings/models.py`
 - **Models**: `BillingProduct`, `BillingPrice`
 - **Purpose**: Store Stripe product and price information locally
@@ -152,6 +158,9 @@ This utility file contains three main functions:
 - **Purpose**: Updates existing Stripe product and prices when course is modified
 - **Parameters**: `course` - Django Course instance
 - **Returns**: Dictionary with success status and updated price IDs
+- **Called From**: 
+  - API endpoint: `CourseCreationView.put()` (when price/duration changes detected)
+  - Django Admin: `CourseAdmin.save_model()` (when price/duration changes detected)
 - **Logic**:
   - Finds existing `BillingProduct`
   - Updates Stripe product name, description, and metadata (including duration_weeks)
@@ -205,7 +214,9 @@ This utility file contains three main functions:
 
 ## Course Update Flow
 
-When a course is updated via `PUT /api/courses/teacher/{course_id}/`:
+Course updates can be performed through two methods, both of which trigger Stripe synchronization:
+
+### API Updates (`PUT /api/courses/teacher/{course_id}/`)
 
 1. Course data is validated and updated
 2. System checks if any billing-related fields changed:
@@ -219,10 +230,26 @@ When a course is updated via `PUT /api/courses/teacher/{course_id}/`:
      - **> 4 weeks**: Both one-time and monthly subscription prices are created
 4. Local billing records are updated with new price information
 
+### Django Admin Updates
+
+When a course is updated through Django Admin interface:
+
+1. `CourseAdmin.save_model()` intercepts the save operation
+2. System stores original values (`price`, `duration_weeks`, `is_free`) before save
+3. Course model is saved to database
+4. System compares original vs new values to detect changes
+5. If billing-related fields changed and `BillingProduct` exists:
+   - `update_stripe_product_for_course()` is automatically called
+   - Stripe prices are synchronized (same logic as API updates)
+   - Admin interface shows success/warning message
+6. If course doesn't have Stripe product yet (new courses), update is skipped (product created on publish)
+
 ### Important Notes:
+- **Both Update Methods**: API and Django Admin updates use the same Stripe synchronization logic
 - **Duration Changes**: When `duration_weeks` changes from ≤4 weeks to >4 weeks, the system automatically creates a monthly subscription price option
 - **Duration Changes**: When `duration_weeks` changes from >4 weeks to ≤4 weeks, the monthly subscription price is removed (only one-time price remains)
 - **Price Changes**: When `price` changes, both one-time and monthly prices (if applicable) are recalculated and updated
+- **Admin Feedback**: Django Admin shows success messages when Stripe sync succeeds, and warnings if it fails
 
 ## Course Deletion Flow
 

@@ -142,7 +142,10 @@ This document describes the billing flow for Little Learners Tech platform using
 - Course appears in public course listing
 
 #### 4. Course Updates
-When a teacher updates a course via `PUT /api/courses/{id}/`:
+
+Course updates can be performed through **API** or **Django Admin**, both trigger automatic Stripe synchronization:
+
+**API Updates** (`PUT /api/courses/{id}/`):
 - **Price Updates**: If `price` or `is_free` changes:
   - All existing Stripe prices are deactivated
   - New prices are created with updated amounts
@@ -157,6 +160,13 @@ When a teacher updates a course via `PUT /api/courses/{id}/`:
     - Only one-time payment option remains
   - All existing Stripe prices are deactivated and new ones are created
 - **Combined Updates**: If both price and duration change, prices are recalculated for both billing strategies
+
+**Django Admin Updates**:
+- Same automatic synchronization as API updates
+- `CourseAdmin.save_model()` detects changes to `price`, `is_free`, or `duration_weeks`
+- Automatically calls `update_stripe_product_for_course()` when billing fields change
+- Shows success/warning messages in admin interface
+- Only updates if course already has a `BillingProduct` (new courses skip until product is created)
 
 
 
