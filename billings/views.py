@@ -800,62 +800,86 @@ class StripeWebhookView(APIView):
                     traceback.print_exc()
             if subscription_id:
                 try:
+                    # Get the subscription from Stripe to check if it has a trial period
+                    get_stripe_client()
+                    stripe_subscription = stripe.Subscription.retrieve(subscription_id)
+                    metadata = stripe_subscription.get('metadata', {})
+                    has_trial_period = metadata.get('trial_period', 'false').lower() == 'true'
+                    trial_period_days = stripe_subscription.get('trial_period_days', 0)
+                    has_trial = has_trial_period or (trial_period_days and trial_period_days > 0)
+                    
                     # Update Subscribers table
                     subscriber = Subscribers.objects.get(stripe_subscription_id=subscription_id)
-                    subscriber.status = 'trialing'  # Update to trialing when payment succeeds
-                    # Keep subscription_type as 'trial' - only update to monthly/one_time after trial ends
-                    subscriber.save()
-                    print(f"✅ Updated subscriber {subscriber.id} to trialing status")
                     
-                    # CRITICAL: Ensure enrollment is created when payment succeeds
-                    print(f"🎓 Webhook: Ensuring enrollment is created for subscription {subscription_id}")
-                    try:
-                        # Get the subscription from Stripe to get metadata
-                        stripe_subscription = stripe.Subscription.retrieve(subscription_id)
-                        metadata = stripe_subscription.get('metadata', {})
-                        course_id = metadata.get('course_id')
-                        class_id = metadata.get('class_id')
-                        pricing_type = metadata.get('pricing_type', 'one_time')
+                    if has_trial:
+                        # For subscriptions WITH trial: setup_intent succeeded means trial started
+                        subscriber.status = 'trialing'
+                        subscriber.save()
+                        print(f"✅ Updated subscriber {subscriber.id} to trialing status (trial started)")
                         
-                        print(f"🔍 Webhook: Processing subscription {subscription_id} - Course: {course_id}, Class: {class_id}")
-                        
-                        if course_id and class_id:
-                            from courses.models import Course
-                            course = Course.objects.get(id=course_id)
-                            user = subscriber.user
-                            is_trial = True  # Payment succeeded means trial started
+                        # CRITICAL: Ensure enrollment is created when trial starts
+                        print(f"🎓 Webhook: Ensuring enrollment is created for trial subscription {subscription_id}")
+                        try:
+                            course_id = metadata.get('course_id')
+                            class_id = metadata.get('class_id')
+                            pricing_type = metadata.get('pricing_type', 'one_time')
                             
-                            # Call complete_enrollment_process to ensure enrollment exists
-                            enrollment = complete_enrollment_process(
-                                subscription_id=subscription_id,
-                                user=user,
-                                course=course,
-                                class_id=class_id,
-                                pricing_type=pricing_type,
-                                is_trial=is_trial
-                            )
+                            print(f"🔍 Webhook: Processing trial subscription {subscription_id} - Course: {course_id}, Class: {class_id}")
                             
-                            if enrollment:
-                                print(f"✅ Webhook: Enrollment ensured for subscription {subscription_id}")
+                            if course_id and class_id:
+                                from courses.models import Course
+                                course = Course.objects.get(id=course_id)
+                                user = subscriber.user
+                                
+                                # Call complete_enrollment_process to ensure enrollment exists
+                                enrollment = complete_enrollment_process(
+                                    subscription_id=subscription_id,
+                                    user=user,
+                                    course=course,
+                                    class_id=class_id,
+                                    pricing_type=pricing_type,
+                                    is_trial=True
+                                )
+                                
+                                if enrollment:
+                                    print(f"✅ Webhook: Enrollment ensured for trial subscription {subscription_id}")
+                                else:
+                                    print(f"⚠️ Webhook: Failed to ensure enrollment for subscription {subscription_id}")
                             else:
-                                print(f"⚠️ Webhook: Failed to ensure enrollment for subscription {subscription_id}")
-                        else:
-                            print(f"⚠️ Webhook: Missing metadata for subscription {subscription_id}: course_id={course_id}, class_id={class_id}")
-                            
-                    except Exception as e:
-                        print(f"❌ Webhook: Error ensuring enrollment: {e}")
-                        import traceback
-                        traceback.print_exc()
-                    
-                    # Create payment record when setup succeeds (after enrollment)
-                    try:
-                        setup_intent_id = setup_intent.get('id')
-                        self._create_payment_record_from_setup(subscription_id, setup_intent_id)
-                        print(f"✅ Payment record created for setup intent {setup_intent_id}")
-                    except Exception as e:
-                        print(f"❌ Error creating payment record: {e}")
-                        import traceback
-                        traceback.print_exc()
+                                print(f"⚠️ Webhook: Missing metadata for subscription {subscription_id}: course_id={course_id}, class_id={class_id}")
+                                
+                        except Exception as e:
+                            print(f"❌ Webhook: Error ensuring enrollment: {e}")
+                            import traceback
+                            traceback.print_exc()
+                    else:
+                        # For subscriptions WITHOUT trial: setup_intent succeeded means payment method collected
+                        # Stripe should automatically attempt to pay the invoice after setup_intent succeeds
+                        # We'll wait for invoice.payment_succeeded webhook, but check if it's already paid
+                        print(f"💳 Setup intent succeeded for non-trial subscription {subscription_id}")
+                        print(f"ℹ️ Stripe will automatically attempt to pay the invoice - waiting for invoice.payment_succeeded webhook")
+                        
+                        try:
+                            # Check if invoice is already paid (might have been paid automatically)
+                            latest_invoice_id = stripe_subscription.get('latest_invoice')
+                            if latest_invoice_id:
+                                # Retrieve the invoice to check status
+                                invoice = stripe.Invoice.retrieve(latest_invoice_id, expand=['payment_intent'])
+                                
+                                if invoice.status == 'paid':
+                                    print(f"✅ Invoice {latest_invoice_id} is already paid - triggering payment succeeded handler")
+                                    # Trigger payment succeeded handler manually
+                                    self._handle_payment_succeeded(invoice)
+                                else:
+                                    print(f"ℹ️ Invoice {latest_invoice_id} status is {invoice.status} - waiting for automatic payment")
+                                    print(f"ℹ️ Stripe will attempt to pay automatically - will process via invoice.payment_succeeded webhook")
+                            else:
+                                print(f"⚠️ No latest invoice found for subscription {subscription_id}")
+                        except Exception as e:
+                            print(f"⚠️ Error checking invoice status: {e}")
+                            import traceback
+                            traceback.print_exc()
+                            print(f"ℹ️ Will wait for invoice.payment_succeeded webhook")
                     
                 except Subscribers.DoesNotExist:
                     print(f"⚠️ Subscriber {subscription_id} not found for payment succeeded")
@@ -1039,8 +1063,112 @@ class StripeWebhookView(APIView):
             print(f"Error handling subscription deleted: {e}")
     
     def _handle_payment_succeeded(self, invoice):
-        """Handle successful payment - updates existing payment record"""
-        pass
+        """Handle successful invoice payment - updates subscription status and creates enrollment"""
+        try:
+            invoice_id = invoice.get('id')
+            subscription_id = invoice.get('subscription')
+            invoice_status = invoice.get('status')
+            amount_paid = invoice.get('amount_paid', 0) / 100  # Convert from cents
+            currency = invoice.get('currency', 'usd')
+            
+            print(f"💰 Invoice payment succeeded: {invoice_id} for subscription {subscription_id}")
+            print(f"💰 Amount paid: ${amount_paid} {currency}")
+            
+            if not subscription_id:
+                print(f"⚠️ Invoice {invoice_id} has no subscription - skipping")
+                return
+            
+            # Get subscriber record
+            try:
+                subscriber = Subscribers.objects.get(stripe_subscription_id=subscription_id)
+            except Subscribers.DoesNotExist:
+                print(f"⚠️ Subscriber {subscription_id} not found for invoice payment")
+                return
+            
+            # Get subscription from Stripe to check metadata and status
+            get_stripe_client()
+            stripe_subscription = stripe.Subscription.retrieve(subscription_id)
+            metadata = stripe_subscription.get('metadata', {})
+            subscription_status = stripe_subscription.get('status')
+            
+            # Check if this is a trial subscription or paid subscription
+            has_trial_period = metadata.get('trial_period', 'false').lower() == 'true'
+            trial_period_days = stripe_subscription.get('trial_period_days', 0)
+            has_trial = has_trial_period or (trial_period_days and trial_period_days > 0)
+            pricing_type = metadata.get('pricing_type', 'monthly')
+            
+            # Update subscription status and type
+            if has_trial:
+                # Trial subscription - payment succeeded means trial ended, first charge happened
+                subscriber.status = 'active'
+                subscriber.subscription_type = pricing_type  # Update from 'trial' to actual type
+                print(f"✅ Trial ended - updated subscriber {subscriber.id} to active status, type: {pricing_type}")
+            else:
+                # Non-trial subscription - payment succeeded means subscription is now active
+                subscriber.status = 'active'
+                subscriber.subscription_type = pricing_type
+                print(f"✅ Payment succeeded - updated subscriber {subscriber.id} to active status, type: {pricing_type}")
+            
+            subscriber.save()
+            
+            # Create or update Payment record
+            try:
+                Payment.objects.update_or_create(
+                    stripe_invoice_id=invoice_id,
+                    defaults={
+                        'user': subscriber.user,
+                        'course': subscriber.course,
+                        'amount': amount_paid,
+                        'currency': currency,
+                        'status': 'succeeded',
+                        'paid_at': timezone.now(),
+                    }
+                )
+                print(f"✅ Payment record created/updated for invoice {invoice_id}")
+            except Exception as e:
+                print(f"⚠️ Error creating payment record: {e}")
+            
+            # CRITICAL: Ensure enrollment is created when payment succeeds
+            print(f"🎓 Webhook: Ensuring enrollment is created for subscription {subscription_id}")
+            try:
+                course_id = metadata.get('course_id')
+                class_id = metadata.get('class_id')
+                
+                if course_id and class_id:
+                    from courses.models import Course
+                    course = Course.objects.get(id=course_id)
+                    user = subscriber.user
+                    
+                    # For non-trial subscriptions, payment succeeded means paid enrollment
+                    # For trial subscriptions, payment succeeded means trial ended and first charge happened
+                    is_trial = False  # Payment succeeded means it's no longer a trial
+                    
+                    # Call complete_enrollment_process to ensure enrollment exists
+                    enrollment = complete_enrollment_process(
+                        subscription_id=subscription_id,
+                        user=user,
+                        course=course,
+                        class_id=class_id,
+                        pricing_type=pricing_type,
+                        is_trial=is_trial
+                    )
+                    
+                    if enrollment:
+                        print(f"✅ Webhook: Enrollment ensured for subscription {subscription_id}")
+                    else:
+                        print(f"⚠️ Webhook: Failed to ensure enrollment for subscription {subscription_id}")
+                else:
+                    print(f"⚠️ Webhook: Missing metadata for subscription {subscription_id}: course_id={course_id}, class_id={class_id}")
+                    
+            except Exception as e:
+                print(f"❌ Webhook: Error ensuring enrollment: {e}")
+                import traceback
+                traceback.print_exc()
+                
+        except Exception as e:
+            print(f"❌ Error handling payment succeeded: {e}")
+            import traceback
+            traceback.print_exc()
        
     def _handle_payment_failed(self, invoice):
         """Handle failed payment"""
@@ -2177,11 +2305,56 @@ class ConfirmEnrollmentView(APIView):
                 
                 # Handle incomplete status with succeeded setup intent
                 if subscription_status == 'incomplete' and setup_intent_status == 'succeeded':
-                    # Setup intent succeeded but subscription still incomplete - payment method is ready
-                    # This can happen when trial_days=0 and subscription is waiting for first charge
-                    print(f"✅ Setup intent succeeded - payment method collected successfully")
-                    print(f"ℹ️ Subscription is incomplete but payment method is ready - treating as success")
-                    payment_successful = True
+                    # Setup intent succeeded but subscription still incomplete - check invoice status
+                    # If invoice payment failed, we should not treat this as success
+                    latest_invoice_id = stripe_subscription.get('latest_invoice')
+                    if latest_invoice_id:
+                        try:
+                            invoice = stripe.Invoice.retrieve(latest_invoice_id)
+                            invoice_status = invoice.get('status')
+                            print(f"🔍 Invoice status: {invoice_status} for invoice {latest_invoice_id}")
+                            
+                            if invoice_status == 'paid':
+                                # Invoice is paid - payment was successful
+                                print(f"✅ Invoice is paid - payment successful")
+                                payment_successful = True
+                            elif invoice_status in ['open', 'draft']:
+                                # Invoice is open - check if payment was attempted and failed
+                                last_payment_error = invoice.get('last_payment_error')
+                                if last_payment_error:
+                                    # Payment was attempted but failed
+                                    error_message = last_payment_error.get('message', 'Payment failed')
+                                    print(f"❌ Invoice payment failed: {error_message}")
+                                    return Response(
+                                        {'error': f'Payment failed: {error_message}. Please check your payment method and try again.'}, 
+                                        status=status.HTTP_402_PAYMENT_REQUIRED
+                                    )
+                                # Invoice is open - payment method collected, waiting for payment
+                                # This can happen when trial_days=0 and subscription is waiting for first charge
+                                print(f"✅ Setup intent succeeded - payment method collected successfully")
+                                print(f"ℹ️ Invoice is {invoice_status} - payment method is ready, waiting for charge")
+                                payment_successful = True
+                            elif invoice_status in ['void', 'uncollectible']:
+                                # Invoice payment failed - return error immediately
+                                print(f"❌ Invoice payment failed (status: {invoice_status})")
+                                return Response(
+                                    {'error': 'Payment failed. Your payment method was collected but the charge was declined. Please check your payment method and try again.'}, 
+                                    status=status.HTTP_402_PAYMENT_REQUIRED
+                                )
+                            else:
+                                # Unknown invoice status - be cautious
+                                print(f"⚠️ Unknown invoice status: {invoice_status}")
+                                payment_successful = False
+                        except Exception as e:
+                            print(f"⚠️ Error checking invoice status: {e}")
+                            # If we can't check invoice, assume payment method is ready
+                            print(f"ℹ️ Assuming payment method is ready (setup intent succeeded)")
+                            payment_successful = True
+                    else:
+                        # No invoice yet - payment method is ready
+                        print(f"✅ Setup intent succeeded - payment method collected successfully")
+                        print(f"ℹ️ No invoice yet - payment method is ready")
+                        payment_successful = True
                 
                 if payment_successful:
                     # Payment was successful - create enrollment directly
