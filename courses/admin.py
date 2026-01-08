@@ -157,6 +157,65 @@ class CourseAdmin(admin.ModelAdmin):
         self._request = request
         return form
     
+    def save_model(self, request, obj, form, change):
+        """
+        Override save_model to trigger Stripe updates when price or duration changes.
+        This ensures admin updates sync with Stripe, just like API updates.
+        """
+        # Store original values before save to detect changes
+        original_price = None
+        original_duration_weeks = None
+        original_is_free = None
+        
+        if change and obj.pk:  # Only check for updates, not new objects
+            try:
+                original_obj = Course.objects.get(pk=obj.pk)
+                original_price = original_obj.price
+                original_duration_weeks = original_obj.duration_weeks
+                original_is_free = getattr(original_obj, 'is_free', False)
+            except Course.DoesNotExist:
+                pass
+        
+        # Call parent save to actually save the model
+        super().save_model(request, obj, form, change)
+        
+        # Check if billing-related fields changed and trigger Stripe update
+        if change and obj.pk:  # Only for updates, not new objects
+            price_changed = (
+                original_price is not None and 
+                (obj.price != original_price or getattr(obj, 'is_free', False) != original_is_free)
+            )
+            duration_changed = (
+                original_duration_weeks is not None and 
+                obj.duration_weeks != original_duration_weeks
+            )
+            
+            if price_changed or duration_changed:
+                # Check if billing product exists (course might not have Stripe setup yet)
+                from billings.models import BillingProduct
+                try:
+                    # Only update if billing product exists
+                    BillingProduct.objects.get(course=obj)
+                    from .stripe_integration import update_stripe_product_for_course
+                    stripe_result = update_stripe_product_for_course(obj)
+                    
+                    if stripe_result['success']:
+                        self.message_user(
+                            request,
+                            f'Course updated and Stripe prices synced successfully.',
+                            messages.SUCCESS
+                        )
+                    else:
+                        self.message_user(
+                            request,
+                            f'Course updated but Stripe sync failed: {stripe_result.get("error", "Unknown error")}',
+                            messages.WARNING
+                        )
+                except BillingProduct.DoesNotExist:
+                    # Course doesn't have Stripe product yet - this is normal for new courses
+                    # Stripe product will be created when course is published or via API
+                    pass
+    
     def delete_model(self, request, obj):
         """
         Override delete_model to use the shared cleanup function.
