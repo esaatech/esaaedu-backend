@@ -214,9 +214,11 @@ This utility file contains three main functions:
 
 ## Course Update Flow
 
-Course updates can be performed through two methods, both of which trigger Stripe synchronization:
+Course updates can be performed through three methods, all of which trigger Stripe synchronization:
 
 ### API Updates (`PUT /api/courses/teacher/{course_id}/`)
+
+**Main course update endpoint**
 
 1. Course data is validated and updated
 2. System checks if any billing-related fields changed:
@@ -229,6 +231,22 @@ Course updates can be performed through two methods, both of which trigger Strip
      - **≤ 4 weeks**: Only one-time price is created
      - **> 4 weeks**: Both one-time and monthly subscription prices are created
 4. Local billing records are updated with new price information
+
+### Course Introduction Updates (`PUT /api/courses/teacher/{course_id}/introduction/`)
+
+**Course introduction/overview update endpoint**
+
+1. Course introduction data is validated and updated
+2. System stores original values (`price`, `duration_weeks`, `is_free`) before save
+3. System checks if any billing-related fields changed:
+   - `price` or `is_free`: Affects pricing amounts
+   - `duration_weeks`: Affects billing strategy (one-time vs monthly subscription)
+4. If any billing-related fields changed and `BillingProduct` exists:
+   - `update_stripe_product_for_course()` is automatically called
+   - Stripe prices are synchronized (same logic as main API updates)
+   - Errors are logged but don't block the update
+
+**Note**: This endpoint is primarily for updating introduction fields (overview, learning objectives, etc.), but if `duration_weeks` or `price` are included in the update, Stripe sync is automatically triggered.
 
 ### Django Admin Updates
 
@@ -245,7 +263,7 @@ When a course is updated through Django Admin interface:
 6. If course doesn't have Stripe product yet (new courses), update is skipped (product created on publish)
 
 ### Important Notes:
-- **Both Update Methods**: API and Django Admin updates use the same Stripe synchronization logic
+- **All Update Methods**: API, Course Introduction, and Django Admin updates use the same Stripe synchronization logic
 - **Duration Changes**: When `duration_weeks` changes from ≤4 weeks to >4 weeks, the system automatically creates a monthly subscription price option
 - **Duration Changes**: When `duration_weeks` changes from >4 weeks to ≤4 weeks, the monthly subscription price is removed (only one-time price remains)
 - **Price Changes**: When `price` changes, both one-time and monthly prices (if applicable) are recalculated and updated

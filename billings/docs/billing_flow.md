@@ -143,9 +143,9 @@ This document describes the billing flow for Little Learners Tech platform using
 
 #### 4. Course Updates
 
-Course updates can be performed through **API** or **Django Admin**, both trigger automatic Stripe synchronization:
+Course updates can be performed through **API**, **Course Introduction endpoint**, or **Django Admin** - all trigger automatic Stripe synchronization:
 
-**API Updates** (`PUT /api/courses/{id}/`):
+**Main API Updates** (`PUT /api/courses/teacher/{id}/`):
 - **Price Updates**: If `price` or `is_free` changes:
   - All existing Stripe prices are deactivated
   - New prices are created with updated amounts
@@ -160,6 +160,13 @@ Course updates can be performed through **API** or **Django Admin**, both trigge
     - Only one-time payment option remains
   - All existing Stripe prices are deactivated and new ones are created
 - **Combined Updates**: If both price and duration change, prices are recalculated for both billing strategies
+
+**Course Introduction Updates** (`PUT /api/courses/teacher/{id}/introduction/`):
+- Same automatic synchronization as main API updates
+- Primarily for updating introduction fields (overview, learning objectives, etc.)
+- If `duration_weeks` or `price` are included in the update, Stripe sync is automatically triggered
+- Detects changes to billing-related fields and calls `update_stripe_product_for_course()` when needed
+- Only updates if course already has a `BillingProduct` (new courses skip until product is created)
 
 **Django Admin Updates**:
 - Same automatic synchronization as API updates

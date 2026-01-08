@@ -1766,6 +1766,11 @@ def course_introduction(request, course_id):
     elif request.method == 'PUT':
         # Update course introduction fields directly on the Course model
         try:
+            # Store original values before save to detect changes
+            original_duration_weeks = course.duration_weeks
+            original_price = course.price
+            original_is_free = getattr(course, 'is_free', False)
+            
             serializer = CourseCreateUpdateSerializer(
                 course,
                 data=request.data,
@@ -1773,6 +1778,32 @@ def course_introduction(request, course_id):
             )
             if serializer.is_valid():
                 updated_course = serializer.save()
+                
+                # Check if billing-related fields changed and trigger Stripe update
+                price_changed = (
+                    'price' in request.data and updated_course.price != original_price
+                ) or (
+                    'is_free' in request.data and getattr(updated_course, 'is_free', False) != original_is_free
+                )
+                duration_changed = (
+                    'duration_weeks' in request.data and 
+                    updated_course.duration_weeks != original_duration_weeks
+                )
+                
+                if price_changed or duration_changed:
+                    # Check if billing product exists (course might not have Stripe setup yet)
+                    from billings.models import BillingProduct
+                    try:
+                        BillingProduct.objects.get(course=updated_course)
+                        # Only update if billing product exists
+                        from .stripe_integration import update_stripe_product_for_course
+                        stripe_result = update_stripe_product_for_course(updated_course)
+                        
+                        if not stripe_result['success']:
+                            print(f"⚠️ Stripe update failed for course {updated_course.id} via introduction endpoint: {stripe_result.get('error', 'Unknown error')}")
+                    except BillingProduct.DoesNotExist:
+                        # Course doesn't have Stripe product yet - this is normal for new courses
+                        pass
                 
                 # Return the updated course
                 response_serializer = CourseDetailSerializer(updated_course)
