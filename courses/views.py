@@ -739,6 +739,9 @@ class CourseCreationView(APIView):
                     request.data.pop('is_free')
             
             print(f"about to validate and update course")
+            # Store original duration_weeks to check if it changed
+            original_duration_weeks = course.duration_weeks
+            
             # Use existing serializer for validation and updating
             # Pass request in context so serializer can access original request data
             serializer = CourseCreateUpdateSerializer(
@@ -750,8 +753,12 @@ class CourseCreationView(APIView):
             if serializer.is_valid():
                 updated_course = serializer.save()
                 
-                # Update Stripe product if price changed
-                if 'price' in request.data or 'is_free' in request.data:
+                # Update Stripe product if price, is_free, or duration_weeks changed
+                # Duration changes affect billing strategy (one-time vs monthly subscription)
+                price_changed = 'price' in request.data or 'is_free' in request.data
+                duration_changed = 'duration_weeks' in request.data and updated_course.duration_weeks != original_duration_weeks
+                
+                if price_changed or duration_changed:
                     from .stripe_integration import update_stripe_product_for_course
                     stripe_result = update_stripe_product_for_course(updated_course)
                     

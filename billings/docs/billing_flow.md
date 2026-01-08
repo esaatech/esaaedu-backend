@@ -141,6 +141,23 @@ This document describes the billing flow for Little Learners Tech platform using
 - Teacher can manage course content and pricing
 - Course appears in public course listing
 
+#### 4. Course Updates
+When a teacher updates a course via `PUT /api/courses/{id}/`:
+- **Price Updates**: If `price` or `is_free` changes:
+  - All existing Stripe prices are deactivated
+  - New prices are created with updated amounts
+  - Billing records are updated in database
+- **Duration Updates**: If `duration_weeks` changes:
+  - Billing strategy is recalculated based on new duration
+  - If duration changes from ≤4 weeks to >4 weeks:
+    - Monthly subscription price is automatically created
+    - Both one-time and monthly payment options become available
+  - If duration changes from >4 weeks to ≤4 weeks:
+    - Monthly subscription price is removed
+    - Only one-time payment option remains
+  - All existing Stripe prices are deactivated and new ones are created
+- **Combined Updates**: If both price and duration change, prices are recalculated for both billing strategies
+
 
 
 
@@ -205,8 +222,15 @@ Payment ──┐
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/courses/` | Create new course (auto-creates Stripe products) |
-| PUT | `/api/courses/{id}/` | Update course and pricing |
+| PUT | `/api/courses/{id}/` | Update course, pricing, or duration (auto-updates Stripe products/prices) |
 | DELETE | `/api/courses/{id}/` | Deactivate course |
+
+**Note on Course Updates**: When updating a course via PUT:
+- **Price changes**: Stripe prices are recalculated and updated
+- **Duration changes**: Billing strategy is automatically updated:
+  - If duration changes from ≤4 weeks to >4 weeks: Monthly subscription price is created
+  - If duration changes from >4 weeks to ≤4 weeks: Monthly subscription price is removed
+- **Both price and duration**: All prices are recalculated based on new values
 
 ### Billing (Student)
 | Method | Endpoint | Description |

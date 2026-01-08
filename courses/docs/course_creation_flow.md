@@ -149,13 +149,18 @@ This utility file contains three main functions:
   - Saves to local database
 
 #### `update_stripe_product_for_course(course)`
-- **Purpose**: Updates existing Stripe product when course is modified
+- **Purpose**: Updates existing Stripe product and prices when course is modified
 - **Parameters**: `course` - Django Course instance
-- **Returns**: Dictionary with success status
+- **Returns**: Dictionary with success status and updated price IDs
 - **Logic**:
   - Finds existing `BillingProduct`
-  - Updates Stripe product name and description
-  - Updates local database records
+  - Updates Stripe product name, description, and metadata (including duration_weeks)
+  - Deactivates all existing active prices in Stripe and database
+  - Recalculates prices based on current course price and duration
+  - Creates new prices based on billing strategy:
+    - **≤ 4 weeks**: Creates only one-time price
+    - **> 4 weeks**: Creates both one-time and monthly subscription prices
+  - Updates local database records with new price information
 
 #### `deactivate_stripe_product_for_course(course)`
 - **Purpose**: Deactivates Stripe product when course is deleted
@@ -203,9 +208,21 @@ This utility file contains three main functions:
 When a course is updated via `PUT /api/courses/teacher/{course_id}/`:
 
 1. Course data is validated and updated
-2. `update_stripe_product_for_course()` is called
-3. Stripe product name and description are updated
-4. Local billing records are updated
+2. System checks if any billing-related fields changed:
+   - `price` or `is_free`: Affects pricing amounts
+   - `duration_weeks`: Affects billing strategy (one-time vs monthly subscription)
+3. If any billing-related fields changed, `update_stripe_product_for_course()` is called:
+   - Stripe product name and description are updated
+   - All existing prices are deactivated in Stripe and database
+   - New prices are created based on current course settings:
+     - **≤ 4 weeks**: Only one-time price is created
+     - **> 4 weeks**: Both one-time and monthly subscription prices are created
+4. Local billing records are updated with new price information
+
+### Important Notes:
+- **Duration Changes**: When `duration_weeks` changes from ≤4 weeks to >4 weeks, the system automatically creates a monthly subscription price option
+- **Duration Changes**: When `duration_weeks` changes from >4 weeks to ≤4 weeks, the monthly subscription price is removed (only one-time price remains)
+- **Price Changes**: When `price` changes, both one-time and monthly prices (if applicable) are recalculated and updated
 
 ## Course Deletion Flow
 

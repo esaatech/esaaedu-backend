@@ -671,6 +671,10 @@ class StripeWebhookView(APIView):
                     self._handle_payment_intent_canceled(event['data']['object'])
                 elif event['type'] == 'setup_intent.canceled':
                     self._handle_setup_intent_canceled(event['data']['object'])
+                elif event['type'] == 'invoice.voided':
+                    self._handle_invoice_voided(event['data']['object'])
+                elif event['type'] == 'invoice.updated':
+                    self._handle_invoice_updated(event['data']['object'])
                     
                 else:
                     print(f"ℹ️ Unhandled event type: {event['type']}")
@@ -1071,9 +1075,15 @@ class StripeWebhookView(APIView):
             payment_intent_id = payment_intent['id']
             print(f"🚫 Payment intent canceled: {payment_intent_id}")
             
-            # Debug: Find any payment records associated with this payment intent
-            payments_to_delete = Payment.objects.filter(stripe_payment_intent_id=payment_intent_id)
-            print(f"🔍 Found {payments_to_delete.count()} payment records for canceled payment intent")
+            # Update any payment records associated with this payment intent
+            payments = Payment.objects.filter(stripe_payment_intent_id=payment_intent_id)
+            print(f"🔍 Found {payments.count()} payment records for canceled payment intent")
+            
+            for payment in payments:
+                if payment.status != 'canceled':
+                    payment.status = 'canceled'
+                    payment.save(update_fields=['status'])
+                    print(f"✅ Updated payment {payment.id} status to canceled")
                 
         except Exception as e:
             print(f"❌ Error handling payment intent canceled: {e}")
@@ -1086,12 +1096,76 @@ class StripeWebhookView(APIView):
             setup_intent_id = setup_intent['id']
             print(f"🚫 Setup intent canceled: {setup_intent_id}")
             
-            # Debug: Find any payment records associated with this setup intent
-            payments_to_delete = Payment.objects.filter(stripe_payment_intent_id=setup_intent_id)
-            print(f"🔍 Found {payments_to_delete.count()} payment records for canceled setup intent")
+            # Update any payment records associated with this setup intent
+            payments = Payment.objects.filter(stripe_payment_intent_id=setup_intent_id)
+            print(f"🔍 Found {payments.count()} payment records for canceled setup intent")
+            
+            for payment in payments:
+                if payment.status != 'canceled':
+                    payment.status = 'canceled'
+                    payment.save(update_fields=['status'])
+                    print(f"✅ Updated payment {payment.id} status to canceled")
                 
         except Exception as e:
             print(f"❌ Error handling setup intent canceled: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _handle_invoice_voided(self, invoice):
+        """Handle when invoice is voided (usually means payment was canceled)"""
+        try:
+            invoice_id = invoice.get('id')
+            print(f"🚫 Invoice voided: {invoice_id}")
+            
+            # Update any payment records associated with this invoice
+            payments = Payment.objects.filter(stripe_invoice_id=invoice_id)
+            print(f"🔍 Found {payments.count()} payment records for voided invoice")
+            
+            for payment in payments:
+                if payment.status != 'canceled':
+                    payment.status = 'canceled'
+                    payment.save(update_fields=['status'])
+                    print(f"✅ Updated payment {payment.id} status to canceled (invoice voided)")
+                
+        except Exception as e:
+            print(f"❌ Error handling invoice voided: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _handle_invoice_updated(self, invoice):
+        """Handle when invoice is updated (status changes, etc.)"""
+        try:
+            invoice_id = invoice.get('id')
+            invoice_status = invoice.get('status')
+            print(f"🔄 Invoice updated: {invoice_id} (status: {invoice_status})")
+            
+            # Update payment records based on invoice status
+            payments = Payment.objects.filter(stripe_invoice_id=invoice_id)
+            
+            for payment in payments:
+                # Map invoice status to payment status
+                if invoice_status == 'paid' and payment.status != 'succeeded':
+                    payment.status = 'succeeded'
+                    # Get paid_at timestamp if available
+                    paid_at_timestamp = invoice.get('status_transitions', {}).get('paid_at')
+                    if paid_at_timestamp:
+                        from datetime import datetime
+                        from django.utils import timezone
+                        payment.paid_at = timezone.make_aware(datetime.fromtimestamp(paid_at_timestamp))
+                    payment.save(update_fields=['status', 'paid_at'])
+                    print(f"✅ Updated payment {payment.id} status to succeeded (invoice paid)")
+                elif invoice_status == 'void' and payment.status != 'canceled':
+                    payment.status = 'canceled'
+                    payment.save(update_fields=['status'])
+                    print(f"✅ Updated payment {payment.id} status to canceled (invoice voided)")
+                elif invoice_status == 'uncollectible' and payment.status != 'canceled':
+                    # Mark as canceled if invoice is uncollectible (no valid status for failed in Payment model)
+                    payment.status = 'canceled'
+                    payment.save(update_fields=['status'])
+                    print(f"✅ Updated payment {payment.id} status to canceled (invoice uncollectible)")
+                
+        except Exception as e:
+            print(f"❌ Error handling invoice updated: {e}")
             import traceback
             traceback.print_exc()
 
