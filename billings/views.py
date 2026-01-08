@@ -2057,7 +2057,9 @@ class ConfirmEnrollmentView(APIView):
             course = get_object_or_404(Course, id=course_id, status='published')
             class_id = request.data.get('class_id')
             subscription_id = request.data.get('subscription_id')
+            payment_intent_id = request.data.get('payment_intent_id')
             is_trial = request.data.get('trial_period', False)
+            pricing_type = request.data.get('pricing_type', 'one_time')
             
             if not class_id:
                 return Response(
@@ -2065,10 +2067,18 @@ class ConfirmEnrollmentView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            if not subscription_id:
+            # For one-time payments without trial, payment_intent_id is required instead of subscription_id
+            # For subscriptions (monthly or one-time with trial), subscription_id is required
+            if not subscription_id and not payment_intent_id:
                 return Response(
-                    {'error': 'Subscription ID is required for enrollment confirmation'}, 
+                    {'error': 'Either Subscription ID or Payment Intent ID is required for enrollment confirmation'}, 
                     status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # If it's a one-time payment without subscription, handle it differently
+            if payment_intent_id and not subscription_id:
+                return self._handle_one_time_payment_enrollment(
+                    request, course, class_id, payment_intent_id, pricing_type
                 )
             
             # Get the class
@@ -2346,6 +2356,224 @@ class ConfirmEnrollmentView(APIView):
                 {'error': 'Failed to confirm enrollment', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def _handle_one_time_payment_enrollment(self, request, course, class_id, payment_intent_id, pricing_type):
+        """Handle enrollment confirmation for one-time payments (no subscription)"""
+        try:
+            from courses.models import Class
+            from student.models import EnrolledCourse
+            import time
+            
+            selected_class = get_object_or_404(Class, id=class_id)
+            
+            # Poll for payment intent status (max 15 seconds)
+            max_wait_time = 15
+            poll_interval = 0.5
+            start_time = time.time()
+            
+            print(f"🔄 Polling for payment intent completion: {payment_intent_id}")
+            
+            while time.time() - start_time < max_wait_time:
+                try:
+                    # Check payment intent status directly from Stripe
+                    get_stripe_client()
+                    payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+                    
+                    if payment_intent.status == 'succeeded':
+                        # Check if enrollment was created by webhook
+                        student_profile = getattr(request.user, 'student_profile', None)
+                        if not student_profile:
+                            return Response(
+                                {'error': 'Student profile not found'}, 
+                                status=status.HTTP_400_BAD_REQUEST
+                            )
+                        
+                        enrollment = EnrolledCourse.objects.filter(
+                            student_profile=student_profile,
+                            course=course
+                        ).first()
+                        
+                        if enrollment:
+                            print(f"✅ Enrollment completed: {enrollment.id}")
+                            return Response({
+                                'message': 'Payment successful and enrollment completed',
+                                'enrollment_id': str(enrollment.id),
+                                'is_trial': False,
+                                'trial_end_date': None
+                            }, status=status.HTTP_201_CREATED)
+                        else:
+                            # Payment succeeded but enrollment not created - create it now
+                            print(f"🔄 Payment succeeded but enrollment not found - creating enrollment...")
+                            enrollment = self._create_one_time_enrollment(
+                                request.user, course, class_id, payment_intent_id, pricing_type
+                            )
+                            
+                            if enrollment:
+                                return Response({
+                                    'message': 'Payment successful and enrollment created',
+                                    'enrollment_id': str(enrollment.id),
+                                    'is_trial': False,
+                                    'trial_end_date': None
+                                }, status=status.HTTP_201_CREATED)
+                    
+                    elif payment_intent.status in ['canceled', 'payment_failed']:
+                        return Response(
+                            {'error': f'Payment {payment_intent.status}. Please try again.'}, 
+                            status=status.HTTP_402_PAYMENT_REQUIRED
+                        )
+                    
+                    time.sleep(poll_interval)
+                    
+                except stripe.error.InvalidRequestError as e:
+                    print(f"⚠️ Payment intent not found or error: {e}")
+                    time.sleep(poll_interval)
+                except Exception as e:
+                    print(f"❌ Error during polling: {e}")
+                    time.sleep(poll_interval)
+            
+            # Timeout - query Stripe directly
+            print(f"⏰ Timeout: Checking payment intent status directly...")
+            try:
+                get_stripe_client()
+                payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+                
+                if payment_intent.status == 'succeeded':
+                    # Create enrollment directly
+                    enrollment = self._create_one_time_enrollment(
+                        request.user, course, class_id, payment_intent_id, pricing_type
+                    )
+                    
+                    if enrollment:
+                        return Response({
+                            'message': 'Payment verified and enrollment created',
+                            'enrollment_id': str(enrollment.id),
+                            'is_trial': False,
+                            'trial_end_date': None,
+                            'verified_via': 'stripe_direct_query'
+                        }, status=status.HTTP_201_CREATED)
+                    else:
+                        return Response(
+                            {'error': 'Payment verified but enrollment creation failed'}, 
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                        )
+                else:
+                    return Response(
+                        {'error': f'Payment status: {payment_intent.status}. Please try again.'}, 
+                        status=status.HTTP_402_PAYMENT_REQUIRED
+                    )
+            except Exception as e:
+                print(f"❌ Error verifying payment: {e}")
+                return Response(
+                    {'error': 'Could not verify payment status. Please contact support.'}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+                
+        except Exception as e:
+            print(f"❌ Error handling one-time payment enrollment: {e}")
+            import traceback
+            traceback.print_exc()
+            return Response(
+                {'error': 'Failed to confirm enrollment', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _create_one_time_enrollment(self, user, course, class_id, payment_intent_id, pricing_type):
+        """Create enrollment for one-time payments (no subscription)"""
+        try:
+            from student.models import EnrolledCourse
+            from courses.models import Class
+            from django.db import transaction
+            
+            with transaction.atomic():
+                # Get student profile
+                student_profile = getattr(user, 'student_profile', None)
+                if not student_profile:
+                    print(f"❌ Student profile not found for user {user.id}")
+                    return None
+                
+                # Check if enrollment already exists
+                existing_enrollment = EnrolledCourse.objects.filter(
+                    student_profile=student_profile,
+                    course=course
+                ).first()
+                
+                if existing_enrollment and existing_enrollment.status in ['active', 'completed']:
+                    print(f"✅ Enrollment already exists: {existing_enrollment.id}")
+                    return existing_enrollment
+                
+                # Get the selected class
+                try:
+                    selected_class = Class.objects.get(id=class_id)
+                except Class.DoesNotExist:
+                    print(f"❌ Class {class_id} not found")
+                    return None
+                
+                # Get payment amount from Stripe
+                get_stripe_client()
+                payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+                amount_paid = payment_intent.amount / 100  # Convert from cents
+                
+                # Create enrollment
+                enrollment = EnrolledCourse.objects.create(
+                    student_profile=student_profile,
+                    course=course,
+                    status='active',
+                    enrolled_by=user,
+                    
+                    # Payment information
+                    payment_status='paid',
+                    amount_paid=amount_paid,
+                    payment_due_date=None,
+                    discount_applied=0,
+                    
+                    # Course initialization
+                    total_lessons_count=course.total_lessons or 0,
+                    total_assignments_assigned=getattr(course, 'total_assignments', 0),
+                    
+                    # Progress tracking initialization
+                    progress_percentage=0,
+                    completed_lessons_count=0,
+                    total_assignments_completed=0,
+                    
+                    # Engagement defaults
+                    total_study_time=timezone.timedelta(),
+                    total_video_watch_time=timezone.timedelta(),
+                    login_count=0,
+                    
+                    # Communication preferences
+                    parent_notifications_enabled=True,
+                    reminder_emails_enabled=True,
+                )
+                
+                # Add student to the selected class
+                try:
+                    if selected_class.student_count < selected_class.max_capacity:
+                        selected_class.students.add(user)
+                except Exception as e:
+                    print(f"⚠️ Failed to add student to class: {e}")
+                
+                # Create Payment record
+                try:
+                    Payment.objects.create(
+                        user=user,
+                        course=course,
+                        stripe_payment_intent_id=payment_intent_id,
+                        amount=amount_paid,
+                        currency=payment_intent.currency,
+                        status='succeeded',
+                        paid_at=timezone.now()
+                    )
+                except Exception as e:
+                    print(f"⚠️ Failed to create payment record: {e}")
+                
+                print(f"✅ One-time enrollment created: {enrollment.id}")
+                return enrollment
+                
+        except Exception as e:
+            print(f"❌ Error creating one-time enrollment: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
 
 class CancelIncompleteSubscriptionView(APIView):
