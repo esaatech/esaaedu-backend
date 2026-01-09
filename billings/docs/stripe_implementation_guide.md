@@ -95,6 +95,13 @@ stripe login
 
 This opens your browser to authorize the CLI with your Stripe account.
 
+**When is login required?**
+- ✅ **Required** for: `stripe trigger` (manual event triggering)
+- ✅ **Required** for: `stripe listen` (webhook forwarding) - but only once
+- ❌ **NOT required** for: Testing payments directly in your app with test cards
+
+**Note:** After the first `stripe login`, your credentials are saved, so you typically only need to do this once per machine.
+
 ### 2.3 Forward Webhooks to Local Server
 
 ```bash
@@ -113,20 +120,43 @@ stripe listen --forward-to localhost:8000/api/billing/webhooks/stripe/
 > Forwarding events to http://localhost:8000/api/billing/webhooks/stripe/
 ```
 
-### 2.4 Trigger Test Events
+### 2.4 Testing Payments - Two Methods
 
-In a separate terminal, trigger test events:
+You have **two ways** to test payments:
+
+#### Method 1: Test Payments Directly (Recommended for Normal Testing)
+
+**You do NOT need `stripe trigger` for this.** Just:
+
+1. **Make sure `stripe listen` is running** (to receive webhooks)
+2. **Use test cards in your frontend** (see section 7.1 for test card numbers)
+3. **Complete the payment flow in your browser**
+
+This is the **normal way** to test - it simulates real user behavior.
+
+**When to use:** Testing the complete payment flow, frontend integration, user experience
+
+#### Method 2: Trigger Test Events Manually (For Webhook Testing)
+
+**You DO need `stripe login` for this.** This is for testing webhook handlers in isolation:
 
 ```bash
-# Test payment succeeded
+# First, login (one-time setup)
+stripe login
+
+# Then, in a separate terminal, trigger test events:
 stripe trigger payment_intent.succeeded
-
-# Test subscription created
 stripe trigger customer.subscription.created
-
-# Test invoice payment succeeded
 stripe trigger invoice.payment_succeeded
 ```
+
+**When to use:** 
+- Testing webhook handlers without going through full payment flow
+- Testing edge cases or specific webhook events
+- Debugging webhook processing logic
+- Testing error scenarios
+
+**Note:** `stripe trigger` creates fake events - they won't have real payment data, so use this mainly for webhook handler testing, not end-to-end payment testing.
 
 ### 2.5 View Event Logs
 
