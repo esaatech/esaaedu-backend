@@ -1487,6 +1487,8 @@ class CreatePaymentIntentView(APIView):
             pricing_type = request.data.get('pricing_type', 'one_time')
             
             # Get billing data for the course
+            # Initialize billing_product to None so it's accessible in all code paths
+            billing_product = None
             try:
                 billing_product = BillingProduct.objects.get(course=course)
                 # Get pricing options from billing prices (active only)
@@ -1508,6 +1510,7 @@ class CreatePaymentIntentView(APIView):
                     'one_time': {'amount': float(course.price)},
                     'monthly': {'amount': float(course.price) * 1.15}  # 15% more for installments
                 }
+                # billing_product remains None
             
             # Ensure customer exists in current environment (auto-migrate if needed)
             stripe_customer_id = ensure_stripe_customer_in_current_environment(request.user)
@@ -1930,22 +1933,32 @@ class CreatePaymentIntentView(APIView):
                     trial_days = trial_settings['days']
                     print(f"🔄 Creating one-time subscription with trial ({trial_days} days) for: ${pricing_options['one_time']['amount']}")
                     
+                    # Ensure product exists before creating price (reuse existing product, don't create new one)
+                    if not billing_product:
+                        print(f"⚠️ No billing product found, ensuring product exists in current environment...")
+                        try:
+                            ensure_stripe_product_and_prices_in_current_environment(course, billing_period='one_time')
+                            billing_product = BillingProduct.objects.get(course=course)
+                            print(f"✅ Product ensured: {billing_product.stripe_product_id}")
+                        except Exception as e:
+                            print(f"❌ Failed to ensure product: {e}")
+                            raise Exception(f"Cannot create subscription: Product does not exist for course {course.id}")
+                    
                     # For subscriptions, we need a recurring price, not a one-time price
                     # Create a special recurring price for one-time trial subscriptions
+                    # IMPORTANT: Use existing product ID, not product_data (which creates new product)
                     stripe_price = stripe.Price.create(
+                        product=billing_product.stripe_product_id,  # ✅ Use existing product instead of product_data
                         unit_amount=amount,
                         currency='usd',
                         recurring={'interval': 'month'},  # Required for subscriptions, but will cancel after first payment
-                        product_data={
-                            'name': f"{course.title} - One-time Payment (Trial)",
-                        },
                         metadata={
                             'course_id': str(course.id),
                             'pricing_type': 'one_time_trial'
                         }
                     )
                     stripe_price_id = stripe_price.id
-                    print(f"✅ Created recurring price for one-time trial: {stripe_price_id}")
+                    print(f"✅ Created recurring price for one-time trial: {stripe_price_id} (using existing product: {billing_product.stripe_product_id})")
                     
                     # Create a subscription with trial that will cancel after first payment
                     try:
