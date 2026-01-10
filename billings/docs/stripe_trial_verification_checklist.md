@@ -48,14 +48,23 @@ Use this checklist to verify that a monthly subscription with trial period is co
 ## 📄 Invoice Status
 
 ### Current Invoice (During Trial)
-- [ ] **Latest Invoice**: Should be `None` or not exist during trial
-- [ ] **OR if invoice exists**: Status should be `draft` or `open` (not `paid`)
-- [ ] **Invoice Amount**: Should be $0.00 during trial (if invoice exists)
+- [ ] **Invoices Section**: May show a $0.00 invoice with status `Paid` (this is the trial invoice)
+- [ ] **Upcoming Invoice Section**: Shows preview of invoice that will be billed when trial ends
+- [ ] **Upcoming Invoice Amount**: Should match your monthly subscription price
+- [ ] **Upcoming Invoice Date**: Should match `trial_end` date
+- [ ] **If you click on the invoice in "Invoices" section**: Status should be `draft` (this is normal - it's a draft invoice that will be finalized when trial ends)
 
 ### Expected Behavior
-- [ ] **No Paid Invoice Yet**: During trial, there should be NO paid invoices
-- [ ] **Invoice Will Be Created**: Invoice will be automatically created when trial ends
+- [ ] **Draft Invoice Created**: Stripe creates a draft invoice during trial (this is normal)
+- [ ] **Draft Invoice Status**: When opened, shows as `draft` (will be finalized when trial ends)
+- [ ] **No Paid Invoice Yet**: During trial, there should be NO paid invoices (only draft)
+- [ ] **Invoice Will Be Finalized**: Draft invoice will be automatically finalized when trial ends
+- [ ] **Invoice Will Be Charged**: When trial ends, Stripe will finalize and charge the draft invoice
 - [ ] **Invoice Date**: Will match `trial_end` timestamp
+
+### Understanding Draft vs Paid Invoices
+- **Draft Invoice** (during trial): Created but not finalized, shows $0.00 or preview amount
+- **Paid Invoice** (after trial): Created when trial ends, charged immediately, shows actual amount
 
 ---
 
@@ -200,8 +209,14 @@ Metadata:
 5. **Check Metadata**: Click "..." → View metadata → Verify course_id, pricing_type, trial_period
 6. **Check Price**: Click on price ID → Verify it's monthly recurring, correct amount
 7. **Check Product**: Click on product → Verify it's your course product (not a new one)
-8. **Check Invoices**: Should be empty or show $0.00 draft invoice during trial
-9. **Check Events**: Developers → Events → Filter by subscription ID → Verify webhook events
+8. **Check Invoices Section**: 
+   - May show $0.00 invoice with "Paid" status (trial invoice - this is normal)
+   - If you click on it, status should be `draft` (this is expected)
+9. **Check Upcoming Invoice Section**: 
+   - Should show preview of invoice that will be billed when trial ends
+   - Amount should match monthly subscription price
+   - Date should match trial_end date
+10. **Check Events**: Developers → Events → Filter by subscription ID → Verify webhook events
 
 ---
 
