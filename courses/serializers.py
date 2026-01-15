@@ -1659,10 +1659,11 @@ class ClassSessionSerializer(serializers.ModelSerializer):
 class StudentBasicSerializer(serializers.ModelSerializer):
     """Basic student information for class enrollment"""
     name = serializers.SerializerMethodField()
+    firebase_uid = serializers.CharField(read_only=True)
     
     class Meta:
         model = User
-        fields = ['id', 'email', 'name', 'first_name', 'last_name']
+        fields = ['id', 'email', 'name', 'first_name', 'last_name', 'firebase_uid']
     
     def get_name(self, obj):
         return obj.get_full_name() or obj.email
@@ -1929,13 +1930,14 @@ class ClassroomClassSerializer(serializers.ModelSerializer):
     course_title = serializers.CharField(source='course.title', read_only=True)
     course_id = serializers.CharField(source='course.id', read_only=True)
     teacher_name = serializers.CharField(source='teacher.get_full_name', read_only=True)
+    teacher_id = serializers.CharField(source='teacher.firebase_uid', read_only=True)
     student_count = serializers.IntegerField(read_only=True)
     
     class Meta:
         model = Class
         fields = [
             'id', 'name', 'description', 'course_id', 'course_title',
-            'teacher_name', 'max_capacity', 'student_count',
+            'teacher_name', 'teacher_id', 'max_capacity', 'student_count',
             'is_active', 'start_date', 'end_date'
         ]
 
