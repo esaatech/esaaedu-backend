@@ -5350,7 +5350,14 @@ class StudentCourseDashboardView(APIView):
                     if course_image:
                         image_url = course_image.url if hasattr(course_image, 'url') else str(course_image)
                     else:
-                        image_url = "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=300&h=200&fit=crop"
+                        image_url = None  # Return null instead of default URL so CourseImage can handle fallback
+                    
+                    # Get course thumbnail (same pattern as image)
+                    course_thumbnail = getattr(course, 'thumbnail', None)
+                    if course_thumbnail:
+                        thumbnail_url = course_thumbnail.url if hasattr(course_thumbnail, 'url') else str(course_thumbnail)
+                    else:
+                        thumbnail_url = None
                     
                     # Calculate next lesson
                     next_lesson = "Course Completed!" if enrollment.status == 'completed' else (
@@ -5369,6 +5376,7 @@ class StudentCourseDashboardView(APIView):
                         'description': course.description,
                         'instructor': instructor_name,
                         'image': image_url,
+                        'thumbnail': thumbnail_url,  # Add thumbnail field for consistency
                         'icon': course.icon,
                         'progress': float(enrollment.progress_percentage),
                         'total_lessons': course.lessons.count(),
@@ -5427,7 +5435,14 @@ class StudentCourseDashboardView(APIView):
                     if course_image:
                         image_url = course_image.url if hasattr(course_image, 'url') else str(course_image)
                     else:
-                        image_url = "https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=300&h=200&fit=crop"
+                        image_url = None  # Return null instead of default URL so CourseImage can handle fallback
+                    
+                    # Get course thumbnail (same pattern as image)
+                    course_thumbnail = getattr(course, 'thumbnail', None)
+                    if course_thumbnail:
+                        thumbnail_url = course_thumbnail.url if hasattr(course_thumbnail, 'url') else str(course_thumbnail)
+                    else:
+                        thumbnail_url = None
                     
                     # Get instructor name
                     instructor_name = "Little Learners Tech"
@@ -5442,6 +5457,7 @@ class StudentCourseDashboardView(APIView):
                         'description': course.description,
                         'instructor': instructor_name,
                         'image': image_url,
+                        'thumbnail': thumbnail_url,  # Add thumbnail field like archived courses
                         'icon': course.icon,
                         'total_lessons': getattr(course, 'total_lessons', 12),
                         'duration': getattr(course, 'duration', '8 weeks'),
