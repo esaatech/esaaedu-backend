@@ -61,7 +61,7 @@ class ProgramSerializer(serializers.ModelSerializer):
             from django.conf import settings
             domain = getattr(settings, 'FRONTEND_URL', 'https://www.sbtyacedemy.com')
         
-        return f"{domain}/{obj.slug}"
+        return f"{domain}/programs/{obj.slug}"
     
     def get_courses(self, obj):
         """

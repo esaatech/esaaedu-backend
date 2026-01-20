@@ -271,7 +271,7 @@ class Program(models.Model):
     def get_seo_url(self, request=None):
         """
         Returns full SEO URL for this program.
-        Example: https://www.sbtyacedemy.com/math
+        Example: https://www.sbtyacedemy.com/programs/math-program
         """
         if request:
             domain = request.build_absolute_uri('/').rstrip('/')
@@ -279,7 +279,7 @@ class Program(models.Model):
             # Default domain (can be configured in settings)
             domain = getattr(settings, 'FRONTEND_URL', 'https://www.sbtyacedemy.com')
         
-        return f"{domain}/{self.slug}"
+        return f"{domain}/programs/{self.slug}"
     
     @property
     def course_count(self):

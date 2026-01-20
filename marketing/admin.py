@@ -492,7 +492,7 @@ class ProgramAdmin(admin.ModelAdmin):
     def marketing_url_display(self, obj):
         """Display marketing URL (same as SEO URL) - shown in Basic Information section."""
         if obj.slug:
-            url = f"https://www.sbtyacedemy.com/{obj.slug}"
+            url = f"https://www.sbtyacedemy.com/programs/{obj.slug}"
             return format_html(
                 '<div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">'
                 '<strong style="min-width: 120px;">Marketing URL:</strong>'
@@ -510,7 +510,7 @@ class ProgramAdmin(admin.ModelAdmin):
     def seo_url_display(self, obj):
         """Display SEO URL with copy button (shown in Metadata section)."""
         if obj.slug:
-            url = f"https://www.sbtyacedemy.com/{obj.slug}"
+            url = f"https://www.sbtyacedemy.com/programs/{obj.slug}"
             return format_html(
                 '<div style="display: flex; align-items: center; gap: 8px;">'
                 '<input type="text" value="{}" readonly style="flex: 1; padding: 4px; border: 1px solid #ddd; border-radius: 4px;" id="seo-url-{}">'
