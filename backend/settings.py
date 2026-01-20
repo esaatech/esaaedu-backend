@@ -76,6 +76,7 @@ INSTALLED_APPS = [
     "ai",
     "portfolio",
     "tutorx",
+    "marketing",
     
 ]
 

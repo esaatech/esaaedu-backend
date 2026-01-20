@@ -1,0 +1,26 @@
+/* Program Admin CSS */
+
+.disabled-fieldset {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.disabled-fieldset input,
+.disabled-fieldset select,
+.disabled-fieldset .selector {
+    background-color: #f5f5f5;
+    cursor: not-allowed;
+}
+
+/* Warning message styling */
+.category-warning,
+.courses-warning {
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.category-warning strong,
+.courses-warning strong {
+    color: #856404;
+}
+
