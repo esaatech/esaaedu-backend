@@ -18,8 +18,13 @@ The `Program` model represents a marketing program that groups courses together 
 - **`description`**: TextField - Program description displayed on landing page
 
 #### Hero Section
-- **`hero_media_url`**: URLField - GCS URL for hero image or video (used as background)
-- **`hero_media_type`**: CharField - Type of media: 'image' or 'video' (default: 'image')
+- **`hero_media`**: FileField - Hero image or video file (uploaded to GCS automatically)
+  - Supports images: jpg, jpeg, png, gif, webp
+  - Supports videos: mp4, webm, mov
+  - Upload path: `marketing/programs/hero_media/`
+  - Drag-and-drop or click to upload in admin
+- **`hero_media_url`**: URLField (read-only, auto-generated) - GCS URL for hero media (auto-generated from `hero_media` file)
+- **`hero_media_type`**: CharField - Type of media: 'image' or 'video' (auto-detected from file extension, default: 'image')
 - **`hero_title`**: CharField - Main headline displayed over hero media (e.g., "LIVE ONLINE MATH PROGRAMS")
 - **`hero_subtitle`**: CharField - Optional subtitle or tagline displayed below hero title
 - **`hero_features`**: JSONField - List of features displayed in hero section (e.g., ["Canadian Curriculum", "Small Groups", "Real Results"])
@@ -60,7 +65,8 @@ Validates that either `category` OR `courses` is set (not both, not neither). Ra
 #### `save(*args, **kwargs)`
 - Auto-generates slug from name if not provided
 - Ensures slug uniqueness (appends counter if duplicate)
-- Calls `full_clean()` to run validation before saving
+- Auto-generates `hero_media_url` from `hero_media` file if it exists
+- Note: Validation happens in form's `clean()` method, not in model's `save()`
 
 #### `get_courses()`
 Returns courses for this program:
@@ -75,7 +81,10 @@ Returns full SEO URL for this program:
 - Falls back to `settings.FRONTEND_URL` if request is None
 
 #### `course_count` (property)
-Returns the number of courses in this program (calls `get_courses().count()`)
+Returns the number of courses in this program:
+- If `category` is set: Counts all published courses in that category
+- If `courses` ManyToMany is set: Counts all selected courses (regardless of status)
+- Returns 0 if neither is set
 
 ### Model Validation
 
@@ -83,6 +92,8 @@ The model enforces the following rules:
 1. **Mutually Exclusive Selection**: Either `category` OR `courses` must be set, but not both
 2. **Slug Uniqueness**: Slug is automatically made unique if duplicates exist
 3. **Auto-slug Generation**: Slug is auto-generated from name if not provided
+4. **File Type Validation**: `hero_media` file must be a valid image (jpg, png, gif, webp) or video (mp4, webm, mov)
+5. **Media Type Auto-Detection**: `hero_media_type` is automatically set based on file extension
 
 ### Database Indexes
 
@@ -110,18 +121,34 @@ The model includes indexes on:
 
 #### Field Organization
 Fields are organized into logical sections:
-1. **Basic Information**: Name, slug, description
-2. **Hero Media**: Media URL and type
-3. **Call to Action**: CTA text
-4. **Course Selection**: Category or courses (with warning about mutual exclusivity)
-5. **Discount & Promotion**: Discount toggle, promotion message, promo code
-6. **Status**: Active toggle
-7. **Metadata**: ID, timestamps, SEO URL, course count
+1. **Basic Information**: Name, slug, description, marketing URL
+2. **Hero Section**: 
+   - Hero media file upload (drag-and-drop or click to browse)
+   - Hero media URL (read-only, auto-generated)
+   - Hero media type (auto-detected)
+   - Hero title, subtitle, features, value propositions
+3. **Program Overview**: Features with checkmarks
+4. **Trust Strip**: Trust indicators
+5. **Call to Action**: CTA text
+6. **Course Selection**: Category or courses (with warning about mutual exclusivity)
+7. **Discount & Promotion**: Discount toggle, promotion message, promo code
+8. **Status**: Active toggle
+9. **Metadata**: ID, timestamps, SEO URL, course count
 
 #### Custom Admin Features
+- **Drag-and-Drop File Upload**: Upload hero images/videos directly in admin
+- **Automatic GCS Upload**: Files are automatically uploaded to GCS on save
+- **Automatic File Cleanup**: Old files are deleted from GCS when:
+  - File is replaced with a new one
+  - Clear checkbox is checked
+  - Program is deleted
+- **File Type Validation**: Only allows valid image/video file types
+- **Auto-Detection**: Media type is automatically detected from file extension
 - **SEO URL Display**: Shows full URL with copy button
 - **Course Count Link**: Links to filtered course list in admin
-- **Validation**: Ensures clean() is called on save
+- **JSON List Widgets**: User-friendly interface for editing feature lists
+- **Mutual Exclusivity Enforcement**: JavaScript prevents selecting both category and courses
+- **Validation**: Form validation ensures either category OR courses is set
 
 ## Usage Example
 
@@ -129,20 +156,23 @@ Fields are organized into logical sections:
 
 ```python
 from marketing.models import Program
+from django.core.files.uploadedfile import SimpleUploadedFile
 
 # Create a program that includes all courses in "Mathematics" category
+# Note: In admin, you can drag-and-drop or click to upload the file
+# For programmatic creation, you would upload the file first, then use the file path
 program = Program.objects.create(
     name="Math Program",
     description="Comprehensive math courses for all ages",
     category="Mathematics",
-    hero_media_url="https://storage.googleapis.com/.../math-hero.jpg",
-    hero_media_type="image",
+    hero_media_type="image",  # Auto-detected from file extension
     cta_text="Start Learning Math Today",
     is_active=True,
     discount_enabled=True,
     promotion_message="Special promotion: 20% off all math courses!",
     promo_code="MATH20"
 )
+# hero_media_url is auto-generated from hero_media file
 # Slug is auto-generated: "math-program"
 ```
 
@@ -157,14 +187,15 @@ course1 = Course.objects.get(title="Python for Kids")
 course2 = Course.objects.get(title="JavaScript Basics")
 
 # Create program with specific courses
+# Note: Upload hero_media file via admin or programmatically
 program = Program.objects.create(
     name="Coding Program",
     description="Learn coding with our best courses",
-    hero_media_url="https://storage.googleapis.com/.../coding-hero.mp4",
-    hero_media_type="video",
+    hero_media_type="video",  # Auto-detected from file extension
     cta_text="Start Coding Today"
 )
 program.courses.add(course1, course2)
+# hero_media_url is auto-generated from hero_media file
 # Slug is auto-generated: "coding-program"
 ```
 
@@ -181,6 +212,30 @@ count = program.course_count
 url = program.get_seo_url(request)
 ```
 
+## File Upload & GCS Integration
+
+### How It Works
+
+1. **Upload**: User drags-and-drops or clicks to select a file in Django admin
+2. **Validation**: File type is validated (images: jpg, png, gif, webp; videos: mp4, webm, mov)
+3. **GCS Upload**: On save, file is automatically uploaded to GCS at `marketing/programs/hero_media/{filename}`
+4. **URL Generation**: `hero_media_url` is automatically generated from the GCS file URL
+5. **Media Type Detection**: `hero_media_type` is automatically set based on file extension
+6. **Cleanup**: Old files are automatically deleted from GCS when:
+   - File is replaced with a new one
+   - Clear checkbox is checked and form is saved
+   - Program is deleted
+
+### Signals
+
+The app includes a `pre_delete` signal that ensures files are deleted from GCS when a Program is deleted, even if admin delete is bypassed.
+
+### Admin Interface
+
+- **File Upload Widget**: Standard Django admin file upload widget with drag-and-drop support
+- **Clear Checkbox**: Check "Clear" to remove the file (deletes from GCS and clears database field)
+- **Read-only URL**: `hero_media_url` is read-only and shows the generated GCS URL
+
 ## Migration
 
 After creating the model, run:
@@ -190,13 +245,14 @@ python manage.py makemigrations marketing
 python manage.py migrate
 ```
 
-## Next Steps
+## Implementation Status
 
-1. **Phase 2**: Admin interface with GCS media upload integration
-2. **Phase 3**: API endpoint to fetch program by slug
-3. **Phase 4**: Frontend API service method
-4. **Phase 5**: Frontend ProgramLandingPage component
-5. **Phase 6**: Frontend route configuration
+- ✅ **Phase 1**: Backend - Create marketing app and Program model
+- ✅ **Phase 2**: Backend - Admin interface with GCS media upload integration
+- ⏳ **Phase 3**: Backend - API endpoint to fetch program by slug
+- ⏳ **Phase 4**: Frontend - API service method
+- ⏳ **Phase 5**: Frontend - ProgramLandingPage component
+- ⏳ **Phase 6**: Frontend - Route configuration
 
 ## Related Documentation
 
