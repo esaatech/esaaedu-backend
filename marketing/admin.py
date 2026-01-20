@@ -4,8 +4,12 @@ from django.urls import reverse
 from django import forms
 from django.core.exceptions import ValidationError
 from django.utils.safestring import mark_safe
+from django.core.files.storage import default_storage
+import logging
 from courses.models import Course
 from .models import Program
+
+logger = logging.getLogger(__name__)
 
 
 class JSONListWidget(forms.Widget):
@@ -305,6 +309,20 @@ class ProgramAdminForm(forms.ModelForm):
         
         return slug
     
+    def clean_hero_media(self):
+        """Handle hero_media field clearing."""
+        # Get the value from cleaned_data (already processed by Django's FileField)
+        hero_media = self.cleaned_data.get('hero_media')
+        
+        # When clear checkbox is checked, Django sets FileField to False
+        # We need to convert this to None/empty to actually clear the field
+        if hero_media is False:
+            # Clear checkbox was checked - return empty string to clear the field
+            # Django FileField accepts empty string to clear
+            return ''
+        
+        return hero_media
+    
     def clean(self):
         """Validate that either category OR courses is set (but not both)."""
         cleaned_data = super().clean()
@@ -406,7 +424,8 @@ class ProgramAdmin(admin.ModelAdmin):
         'updated_at',
         'seo_url_display',
         'marketing_url_display',
-        'course_count_display'
+        'course_count_display',
+        'hero_media_url'  # Auto-generated from hero_media file
     ]
     
     fieldsets = (
@@ -414,8 +433,9 @@ class ProgramAdmin(admin.ModelAdmin):
             'fields': ('name', 'slug', 'description', 'marketing_url_display')
         }),
         ('Hero Section', {
-            'description': 'Hero section with background media and text overlay. Media is used as background, text is displayed on top.',
+            'description': 'Hero section with background media and text overlay. Drag and drop or click to upload an image (jpg, png, gif, webp) or video (mp4, webm) file - it will be automatically uploaded to GCS when you save. Media type is auto-detected from file extension. Media is used as background, text is displayed on top.',
             'fields': (
+                'hero_media',
                 'hero_media_url',
                 'hero_media_type',
                 'hero_title',
@@ -506,11 +526,87 @@ class ProgramAdmin(admin.ModelAdmin):
     
     def save_model(self, request, obj, form, change):
         """Override save - validation happens in form.clean()."""
+        # Get old file info before save
+        old_hero_media_name = None
+        if change and obj.pk:
+            try:
+                old_obj = Program.objects.get(pk=obj.pk)
+                old_hero_media_name = old_obj.hero_media.name if old_obj.hero_media else None
+            except Program.DoesNotExist:
+                pass
+        
+        # Check if hero_media clear checkbox is checked
+        # Django admin sends 'hero_media-clear' in POST data when checkbox is checked
+        is_clearing = False
+        if hasattr(form, 'data') and form.data:
+            is_clearing = form.data.get('hero_media-clear') == 'on'
+        
+        # Save the model first (Django handles the clear checkbox automatically)
         super().save_model(request, obj, form, change)
+        
+        # Refresh from database to get the actual saved state
+        obj.refresh_from_db()
+        
+        # After save, check what actually happened
+        new_hero_media_name = obj.hero_media.name if obj.hero_media else None
+        
+        # If file was cleared or removed, delete from GCS and clear URL
+        if is_clearing or (old_hero_media_name and not new_hero_media_name):
+            # File was cleared - delete from GCS
+            if old_hero_media_name:
+                try:
+                    if default_storage.exists(old_hero_media_name):
+                        default_storage.delete(old_hero_media_name)
+                        logger.info(f"Deleted hero_media from GCS (cleared): {old_hero_media_name}")
+                except Exception as e:
+                    logger.error(f"Error deleting hero_media from GCS: {e}")
+            
+            # Clear the URL field
+            Program.objects.filter(pk=obj.pk).update(hero_media_url=None)
+            
+            # If clearing, ensure the field is actually cleared in the database
+            # The form's clean_hero_media should have converted False to '', but let's ensure it
+            if is_clearing:
+                # Refresh to get current state
+                obj.refresh_from_db()
+                # If field still has a value, force clear it using direct database update
+                # For FileField, empty string clears it
+                if obj.hero_media:
+                    Program.objects.filter(pk=obj.pk).update(hero_media='')
+                    obj.refresh_from_db()
+        # If file was replaced, delete old file
+        elif old_hero_media_name and new_hero_media_name and old_hero_media_name != new_hero_media_name:
+            try:
+                if default_storage.exists(old_hero_media_name):
+                    default_storage.delete(old_hero_media_name)
+                    logger.info(f"Deleted old hero_media from GCS (replaced): {old_hero_media_name}")
+            except Exception as e:
+                logger.error(f"Error deleting old hero_media from GCS: {e}")
+        
+        # Update hero_media_url after save (if new file exists)
+        if obj.hero_media:
+            try:
+                obj.hero_media_url = default_storage.url(obj.hero_media.name)
+                Program.objects.filter(pk=obj.pk).update(hero_media_url=obj.hero_media_url)
+            except Exception as e:
+                logger.error(f"Error generating hero_media_url: {e}")
     
     def save_related(self, request, form, formsets, change):
         """Save related objects (like ManyToMany courses)."""
         super().save_related(request, form, formsets, change)
+    
+    def delete_model(self, request, obj):
+        """Override delete to remove hero_media from GCS."""
+        # Delete hero_media file from GCS
+        if obj.hero_media:
+            try:
+                if default_storage.exists(obj.hero_media.name):
+                    default_storage.delete(obj.hero_media.name)
+                    logger.info(f"Deleted hero_media from GCS: {obj.hero_media.name}")
+            except Exception as e:
+                logger.error(f"Error deleting hero_media from GCS: {e}")
+        
+        super().delete_model(request, obj)
     
     def get_form(self, request, obj=None, **kwargs):
         """Return custom form with dynamic category choices."""

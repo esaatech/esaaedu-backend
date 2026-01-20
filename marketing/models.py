@@ -2,6 +2,7 @@ from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils.text import slugify
 from django.conf import settings
+from django.core.files.storage import default_storage
 import uuid
 import logging
 
@@ -35,11 +36,18 @@ class Program(models.Model):
     )
     
     # Hero Media
+    hero_media = models.FileField(
+        upload_to='marketing/programs/hero_media/',
+        blank=True,
+        null=True,
+        help_text="Hero image or video file (uploaded to GCS automatically). Supports images (jpg, png, gif, webp) and videos (mp4, webm)."
+    )
     hero_media_url = models.URLField(
         max_length=500,
         blank=True,
         null=True,
-        help_text="GCS URL for hero image or video (used as background)"
+        editable=False,
+        help_text="GCS URL for hero media (auto-generated from hero_media file)"
     )
     hero_media_type = models.CharField(
         max_length=10,
@@ -148,11 +156,31 @@ class Program(models.Model):
     def clean(self):
         """
         Validate that either category OR courses is set, but not both.
+        Also validate hero_media file type if provided.
         Note: For ManyToMany fields, this validation should primarily happen in the form's clean() method
         since ManyToMany relationships aren't saved until after the model instance is saved.
         This method serves as a backup validation for existing instances.
         """
         super().clean()
+        
+        # Validate hero_media file type
+        if self.hero_media:
+            import os
+            file_ext = os.path.splitext(self.hero_media.name)[1].lower()
+            allowed_image_exts = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+            allowed_video_exts = ['.mp4', '.webm', '.mov']
+            allowed_exts = allowed_image_exts + allowed_video_exts
+            
+            if file_ext not in allowed_exts:
+                raise ValidationError({
+                    'hero_media': f'Invalid file type. Allowed types: {", ".join(allowed_exts)}'
+                })
+            
+            # Auto-detect media type based on extension
+            if file_ext in allowed_image_exts:
+                self.hero_media_type = 'image'
+            elif file_ext in allowed_video_exts:
+                self.hero_media_type = 'video'
         
         has_category = bool(self.category and self.category.strip())
         
@@ -206,6 +234,18 @@ class Program(models.Model):
         # Calling full_clean() would trigger model.clean() which can't access ManyToMany
         # for new instances. Validation is handled in the form.
         super().save(*args, **kwargs)
+        
+        # Auto-generate hero_media_url from hero_media file if it exists
+        # Note: This is also handled in admin.save_model(), but we do it here
+        # as a fallback for programmatic saves
+        if self.hero_media and not self.hero_media_url:
+            try:
+                # Get the public URL from GCS
+                self.hero_media_url = default_storage.url(self.hero_media.name)
+                # Update without triggering save() again to avoid recursion
+                Program.objects.filter(pk=self.pk).update(hero_media_url=self.hero_media_url)
+            except Exception as e:
+                logger.error(f"Error generating hero_media_url: {e}")
     
     def get_courses(self):
         """
