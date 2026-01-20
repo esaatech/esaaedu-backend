@@ -39,6 +39,9 @@ urlpatterns = [
     path("api/tutorx/", include('tutorx.urls')),
     path("api/", include(router.urls)),
     
+    # Public marketing program landing pages (simplified URL)
+    path("programs/", include('marketing.urls')),
+    
     # API Documentation
     path("api/docs/", api_documentation, name="api_documentation"),
     path("api/docs/course-creation/", course_creation_contract, name="course_creation_contract"),
