@@ -927,6 +927,7 @@ class FrontendCourseSerializer(serializers.ModelSerializer):
     icon = serializers.CharField()  # Will need to map to Lucide icon names
     projects = serializers.SerializerMethodField()
     classSize = serializers.SerializerMethodField()
+    billing = serializers.SerializerMethodField()
     age = serializers.CharField(source='age_range')
     longDescription = serializers.CharField(source='long_description')
     category = serializers.CharField(read_only=False)  # Explicitly include category field
@@ -939,7 +940,7 @@ class FrontendCourseSerializer(serializers.ModelSerializer):
             'id', 'icon', 'title', 'description', 'longDescription',
             'age', 'duration_weeks', 'duration', 'level', 'required_computer_skills_level', 'color', 'projects', 'price',
             'popular', 'featured', 'features', 'schedule', 'classSize', 'certificate', 'status', 'category', 'age_range',
-            'image', 'thumbnail'  # Added image and thumbnail fields
+            'image', 'thumbnail', 'billing'  # Added image, thumbnail, and billing fields
         ]
     
     def get_projects(self, obj):
@@ -955,6 +956,13 @@ class FrontendCourseSerializer(serializers.ModelSerializer):
         if obj.max_students and obj.max_students > 0:
             return f"Max {obj.max_students} students"
         return "Small class size"
+    
+    def get_billing(self, obj):
+        """
+        Get billing data for the course using the helper function
+        """
+        from .views import get_course_billing_data_helper
+        return get_course_billing_data_helper(obj)
 
 
 class FeaturedCoursesSerializer(serializers.Serializer):
