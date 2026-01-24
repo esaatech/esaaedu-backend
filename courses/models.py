@@ -925,7 +925,9 @@ class Project(models.Model):
         SubmissionType,
         on_delete=models.PROTECT,
         related_name="projects",
-        help_text="Type of submission expected from students"
+        null=True,
+        blank=True,
+        help_text="Type of submission expected from students (set when scheduling as ClassEvent)"
     )
     
     # File upload constraints (if applicable)

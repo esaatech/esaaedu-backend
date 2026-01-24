@@ -119,6 +119,7 @@ class ProjectSerializer(serializers.ModelSerializer):
 class ProjectCreateUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating and updating projects
+    submission_type is optional - it's set when scheduling the project as a ClassEvent
     """
     class Meta:
         model = Project
@@ -126,6 +127,68 @@ class ProjectCreateUpdateSerializer(serializers.ModelSerializer):
             'course', 'title', 'instructions', 'submission_type',
             'allowed_file_types', 'points', 'due_at', 'order'
         ]
+        extra_kwargs = {
+            'submission_type': {'required': False, 'allow_null': True}
+        }
+    
+    def to_internal_value(self, data):
+        """
+        Handle submission_type conversion from string name to ID before validation
+        If submission_type is not provided, it remains None (optional field)
+        """
+        from courses.models import SubmissionType
+        
+        # Make a mutable copy of the data
+        if hasattr(data, 'copy'):
+            data = data.copy()
+        elif isinstance(data, dict):
+            data = dict(data)
+        else:
+            data = dict(data.items()) if hasattr(data, 'items') else dict(data)
+        
+        # If submission_type is provided as a string (name), convert it to ID
+        if 'submission_type' in data:
+            submission_type_value = data['submission_type']
+            
+            # If it's None, empty string, or already None, keep it as None
+            if submission_type_value is None or submission_type_value == '':
+                data['submission_type'] = None
+            # If it's a string (name like 'note', 'link', etc.), convert to ID
+            elif isinstance(submission_type_value, str):
+                try:
+                    submission_type = SubmissionType.objects.get(name=submission_type_value, is_active=True)
+                    data['submission_type'] = submission_type.id
+                except SubmissionType.DoesNotExist:
+                    # Let validation handle the error
+                    pass
+        
+        return super().to_internal_value(data)
+    
+    def validate_submission_type(self, value):
+        """
+        Validate submission_type - ensures it exists and is active if provided
+        Returns None if value is None (optional field)
+        """
+        from courses.models import SubmissionType
+        
+        # If None, return None (field is optional)
+        if value is None:
+            return None
+        
+        # If it's already a SubmissionType instance, return it
+        if isinstance(value, SubmissionType):
+            if not value.is_active:
+                raise serializers.ValidationError("Submission type is not active.")
+            return value
+        
+        # Value should be an ID at this point (from to_internal_value)
+        try:
+            submission_type = SubmissionType.objects.get(id=value, is_active=True)
+            return submission_type
+        except SubmissionType.DoesNotExist:
+            raise serializers.ValidationError(
+                f"Submission type with ID '{value}' not found or is inactive."
+            )
     
     def validate_course(self, value):
         """Ensure the course belongs to the requesting teacher"""
