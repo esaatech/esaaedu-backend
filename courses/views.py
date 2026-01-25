@@ -221,10 +221,36 @@ def get_course_average_rating(course):
 def featured_courses(request):
     """
     Get featured courses for home page
+    Now includes billing data for consistency with public courses endpoint
     """
     try:
-        serializer = FeaturedCoursesSerializer({})
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        # Get featured courses directly
+        featured_courses = Course.objects.filter(
+            status='published',
+            featured=True
+        ).select_related('teacher').order_by('-created_at')[:6]  # Limit to 6 featured courses
+        
+        # Build comprehensive course data with billing (same as public courses)
+        courses_data = []
+        for course in featured_courses:
+            try:
+                # Get base course data from serializer
+                serializer = FrontendCourseSerializer(course)
+                course_data = serializer.data
+                
+                # Add billing data (same as public courses endpoint)
+                course_data['billing'] = get_course_billing_data_helper(course)
+                
+                courses_data.append(course_data)
+            except Exception as course_error:
+                print(f"ERROR processing featured course {course.title}: {course_error}")
+                # Still include the course but without billing
+                serializer = FrontendCourseSerializer(course)
+                course_data = serializer.data
+                course_data['billing'] = None
+                courses_data.append(course_data)
+        
+        return Response({'courses': courses_data}, status=status.HTTP_200_OK)
     except Exception as e:
         return Response(
             {'error': 'Failed to fetch featured courses', 'details': str(e)},
