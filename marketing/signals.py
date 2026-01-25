@@ -23,3 +23,4 @@ def delete_program_hero_media(sender, instance, **kwargs):
         except Exception as e:
             logger.error(f"Error deleting hero_media from GCS: {e}")
 
+
