@@ -1,14 +1,80 @@
 from django.contrib import admin
+from django.contrib import messages
+from django import forms
+from django.utils.html import format_html
 from .models import (
     EnrolledCourse, StudentAttendance, StudentGrade, StudentBehavior, 
     StudentNote, StudentCommunication, StudentLessonProgress,
     LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback,
     Conversation, Message, CodeSnippet
 )
+from courses.models import Class
+from .utils import complete_enrollment_without_stripe
+
+
+class EnrolledCourseAdminForm(forms.ModelForm):
+    """Custom form for EnrolledCourse admin with class_instance field"""
+    class_instance = forms.ModelChoiceField(
+        queryset=Class.objects.none(),
+        required=False,
+        help_text="Select a class for this enrollment (optional). Classes are filtered by the selected course."
+    )
+    
+    class Meta:
+        model = EnrolledCourse
+        fields = '__all__'
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        # Get course from instance, initial data, or POST data
+        course = None
+        
+        # First check instance (for editing existing enrollment)
+        if self.instance and self.instance.pk and self.instance.course:
+            course = self.instance.course
+        # Then check initial data (for new enrollment with pre-selected course)
+        elif 'course' in self.initial:
+            try:
+                from courses.models import Course
+                course_id = self.initial['course']
+                if course_id:
+                    course = Course.objects.get(id=course_id)
+            except (Course.DoesNotExist, ValueError, TypeError):
+                pass
+        # Finally check POST data (when form is submitted)
+        elif hasattr(self, 'data') and self.data and 'course' in self.data:
+            try:
+                from courses.models import Course
+                course_id = self.data.get('course')
+                if course_id:
+                    course = Course.objects.get(id=course_id)
+            except (Course.DoesNotExist, ValueError, TypeError):
+                pass
+        
+        # Filter classes by course
+        if course:
+            classes = Class.objects.filter(
+                course=course,
+                is_active=True
+            ).order_by('name')
+            self.fields['class_instance'].queryset = classes
+            
+            # Update help text with class count
+            class_count = classes.count()
+            if class_count > 0:
+                self.fields['class_instance'].help_text = f"Select a class for this enrollment ({class_count} active class{'es' if class_count != 1 else ''} available)"
+            else:
+                self.fields['class_instance'].help_text = "No active classes available for this course"
+        else:
+            # For new enrollments without course selected, show no classes
+            self.fields['class_instance'].queryset = Class.objects.none()
+            self.fields['class_instance'].help_text = "Select a course first to see available classes"
 
 
 @admin.register(EnrolledCourse)
 class EnrolledCourseAdmin(admin.ModelAdmin):
+    form = EnrolledCourseAdminForm
     list_display = [
         'student_profile', 'course', 'status', 'progress_percentage', 
         'enrollment_date', 'payment_status', 'last_accessed'
@@ -30,7 +96,7 @@ class EnrolledCourseAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('student_profile', 'course', 'status', 'enrolled_by')
+            'fields': ('student_profile', 'course', 'class_instance', 'status', 'enrolled_by')
         }),
         ('Academic Progress', {
             'fields': (
@@ -79,6 +145,75 @@ class EnrolledCourseAdmin(admin.ModelAdmin):
     )
     
     actions = ['mark_completed', 'issue_certificates', 'update_progress']
+    
+    class Media:
+        js = ('admin/js/enrolled_course_admin.js',)
+    
+    def get_form(self, request, obj=None, **kwargs):
+        """Update form to set initial enrolled_by and filter classes"""
+        form = super().get_form(request, obj, **kwargs)
+        
+        # For new enrollments, set default enrolled_by to current user
+        if obj is None:
+            form.base_fields['enrolled_by'].initial = request.user
+        
+        return form
+    
+    def save_model(self, request, obj, form, change):
+        """
+        Override save_model to handle new enrollments via complete_enrollment_without_stripe
+        For existing enrollments, use normal Django save
+        """
+        # Get class_instance from form (not saved to model, just used for enrollment)
+        class_instance = form.cleaned_data.get('class_instance')
+        class_id = str(class_instance.id) if class_instance else None
+        
+        # Only use new enrollment function for NEW enrollments
+        if not change:  # New enrollment
+            try:
+                # Get payment details from form
+                payment_status = form.cleaned_data.get('payment_status', 'free')
+                amount_paid = form.cleaned_data.get('amount_paid', 0) or 0
+                payment_due_date = form.cleaned_data.get('payment_due_date')
+                
+                # Use the shared enrollment function
+                enrollment = complete_enrollment_without_stripe(
+                    student_profile=obj.student_profile,
+                    course=obj.course,
+                    class_id=class_id,
+                    enrolled_by=request.user,
+                    payment_status=payment_status,
+                    amount_paid=amount_paid,
+                    payment_due_date=payment_due_date,
+                    create_payment_record=(payment_status == 'paid' and amount_paid > 0)
+                )
+                
+                if enrollment:
+                    # Copy enrollment data back to obj for admin display
+                    obj.id = enrollment.id
+                    obj.status = enrollment.status
+                    obj.payment_status = enrollment.payment_status
+                    obj.amount_paid = enrollment.amount_paid
+                    obj.enrollment_date = enrollment.enrollment_date
+                    obj.enrolled_by = enrollment.enrolled_by
+                    
+                    messages.success(
+                        request,
+                        f'Student successfully enrolled in {obj.course.title}. '
+                        f'{"Added to class: " + class_instance.name if class_instance else "No class selected."}'
+                    )
+                else:
+                    messages.error(request, 'Failed to create enrollment. Please check the error logs.')
+                    
+            except Exception as e:
+                messages.error(request, f'Error creating enrollment: {str(e)}')
+                import traceback
+                traceback.print_exc()
+                # Fall back to normal save if there's an error
+                super().save_model(request, obj, form, change)
+        else:
+            # Editing existing enrollment - use normal Django save
+            super().save_model(request, obj, form, change)
     
     def mark_completed(self, request, queryset):
         for enrollment in queryset:
