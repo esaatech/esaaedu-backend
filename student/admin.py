@@ -31,8 +31,14 @@ class EnrolledCourseAdminForm(forms.ModelForm):
         course = None
         
         # First check instance (for editing existing enrollment)
-        if self.instance and self.instance.pk and self.instance.course:
-            course = self.instance.course
+        if self.instance and self.instance.pk:
+            try:
+                # Use course_id to avoid RelatedObjectDoesNotExist error
+                if hasattr(self.instance, 'course_id') and self.instance.course_id:
+                    from courses.models import Course
+                    course = Course.objects.get(id=self.instance.course_id)
+            except (Course.DoesNotExist, AttributeError):
+                pass
         # Then check initial data (for new enrollment with pre-selected course)
         elif 'course' in self.initial:
             try:
@@ -171,6 +177,15 @@ class EnrolledCourseAdmin(admin.ModelAdmin):
         # Only use new enrollment function for NEW enrollments
         if not change:  # New enrollment
             try:
+                # Validate required fields
+                if not obj.student_profile:
+                    messages.error(request, 'Student profile is required.')
+                    return
+                
+                if not obj.course:
+                    messages.error(request, 'Course is required.')
+                    return
+                
                 # Get payment details from form
                 payment_status = form.cleaned_data.get('payment_status', 'free')
                 amount_paid = form.cleaned_data.get('amount_paid', 0) or 0
@@ -197,9 +212,11 @@ class EnrolledCourseAdmin(admin.ModelAdmin):
                     obj.enrollment_date = enrollment.enrollment_date
                     obj.enrolled_by = enrollment.enrolled_by
                     
+                    # Use enrollment's course for message (safer)
+                    course_title = enrollment.course.title if enrollment.course else obj.course.title if obj.course else 'course'
                     messages.success(
                         request,
-                        f'Student successfully enrolled in {obj.course.title}. '
+                        f'Student successfully enrolled in {course_title}. '
                         f'{"Added to class: " + class_instance.name if class_instance else "No class selected."}'
                     )
                 else:
