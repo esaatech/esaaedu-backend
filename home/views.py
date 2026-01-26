@@ -305,7 +305,7 @@ class LandingPageView(APIView):
         try:
             # Build comprehensive landing page data using separate methods
             landing_data = {
-                'testimonials': self._get_testimonials_data(),
+                'testimonials': self._get_testimonials_data(limit=6),  # Return 6 initially for homepage
                 'featured_courses': self._get_featured_courses_data(),
                 'stats': self._get_landing_stats_data(),
                 'hero_section': self._get_hero_section_data(),
@@ -319,7 +319,7 @@ class LandingPageView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    def _get_testimonials_data(self):
+    def _get_testimonials_data(self, limit=None):
         """
         Get testimonials data for "What People Are Saying" section
         Returns featured reviews with parent information and course tags
@@ -328,7 +328,11 @@ class LandingPageView(APIView):
         reviews = CourseReview.objects.filter(
             is_featured=True,
             is_verified=True
-        ).select_related('course').order_by('-created_at')[:6]  # Limit to 6 for homepage
+        ).select_related('course').order_by('-created_at')
+        
+        # Apply limit if specified, otherwise return all
+        if limit:
+            reviews = reviews[:limit]
         
         testimonials = []
         for review in reviews:
@@ -445,6 +449,101 @@ class LandingPageView(APIView):
         ).aggregate(avg_rating=Avg('rating'))['avg_rating']
         
         return round(float(avg_rating), 1) if avg_rating else 0.0
+
+
+class TestimonialsView(APIView):
+    """
+    Testimonials Pagination CBV - Get paginated testimonials for "View More" functionality
+    GET: Retrieve testimonials with offset and limit parameters
+    """
+    permission_classes = [permissions.AllowAny]  # Public endpoint
+    
+    def get(self, request):
+        """
+        GET: Retrieve paginated testimonials
+        Query parameters:
+        - offset: Number of testimonials to skip (default: 0)
+        - limit: Number of testimonials to return (default: 6)
+        """
+        try:
+            # Get query parameters
+            offset = int(request.query_params.get('offset', 0))
+            limit = int(request.query_params.get('limit', 6))
+            
+            # Validate parameters
+            if offset < 0:
+                offset = 0
+            if limit < 1 or limit > 50:  # Max limit of 50
+                limit = 6
+            
+            # Get featured reviews, ordered by display preference
+            reviews = CourseReview.objects.filter(
+                is_featured=True,
+                is_verified=True
+            ).select_related('course').order_by('-created_at')
+            
+            # Apply pagination
+            total_count = reviews.count()
+            paginated_reviews = reviews[offset:offset + limit]
+            
+            # Format testimonials
+            testimonials = []
+            for review in paginated_reviews:
+                # Get parent name from review
+                parent_name = getattr(review, 'parent_name', 'Parent')
+                child_name = review.student_name
+                child_age = review.student_age
+                
+                # Format parent display name
+                if child_age:
+                    parent_display = f"{parent_name} of {child_name} ({child_age})"
+                else:
+                    parent_display = f"{parent_name} of {child_name}"
+                
+                # Get course category for the tag
+                course_category = review.course.category
+                
+                # Generate avatar initials
+                if not parent_name:
+                    avatar_initials = "P"
+                else:
+                    words = parent_name.split()
+                    if len(words) >= 2:
+                        avatar_initials = f"{words[0][0]}{words[1][0]}".upper()
+                    else:
+                        avatar_initials = f"{words[0][0]}".upper()
+                
+                testimonial = {
+                    'id': str(review.id),
+                    'rating': review.rating,
+                    'quote': review.review_text,
+                    'reviewer_name': parent_display,
+                    'course_tag': course_category,
+                    'course_title': review.course.title,
+                    'avatar_initials': avatar_initials,
+                    'created_at': review.created_at.isoformat(),
+                }
+                testimonials.append(testimonial)
+            
+            return Response({
+                'testimonials': testimonials,
+                'count': len(testimonials),
+                'offset': offset,
+                'limit': limit,
+                'total': total_count,
+                'has_more': (offset + limit) < total_count
+            }, status=status.HTTP_200_OK)
+            
+        except ValueError as e:
+            return Response(
+                {'error': 'Invalid offset or limit parameter', 'details': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to retrieve testimonials', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class AssessmentSubmissionView(APIView):

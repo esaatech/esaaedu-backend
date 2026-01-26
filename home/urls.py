@@ -7,6 +7,9 @@ urlpatterns = [
     # Landing page - main endpoint for homepage
     path('', views.LandingPageView.as_view(), name='landing_page'),
     
+    # Testimonials pagination endpoint for "View More" functionality
+    path('testimonials/', views.TestimonialsView.as_view(), name='testimonials'),
+    
     # Contact overview - main endpoint for contact page
     path('contact/', views.ContactView.as_view(), name='contact_overview'),
     
