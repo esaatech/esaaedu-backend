@@ -63,6 +63,10 @@ urlpatterns = [
     path('code-snippets/<uuid:code_id>/', views.CodeSnippetDetailView.as_view(), name='code_snippet_detail'),
     path('code-snippets/share/<str:share_token>/', views.CodeSnippetShareView.as_view(), name='code_snippet_share'),
     
+    # Admin endpoints for enrollment form
+    path('admin/courses/<uuid:course_id>/classes/', views.admin_course_classes, name='admin_course_classes'),
+    path('admin/courses/<uuid:course_id>/lessons/', views.admin_course_lessons, name='admin_course_lessons'),
+    
     # TODO: Add other student-related endpoints as needed
     # path('attendance/', views.student_attendance, name='student_attendance'),
     # path('attendance/<uuid:attendance_id>/', views.student_attendance_detail, name='student_attendance_detail'),

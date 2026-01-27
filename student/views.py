@@ -2,8 +2,9 @@ from django.shortcuts import get_object_or_404
 from django.http import Http404
 from rest_framework import status, permissions
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.response import Response
+from rest_framework.authentication import SessionAuthentication
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
 from django.utils import timezone
@@ -5224,3 +5225,99 @@ class CodeSnippetShareView(APIView):
                 {'error': 'Failed to fetch shared code snippet', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# ===== ADMIN ENDPOINTS FOR ENROLLMENT FORM =====
+
+@api_view(['GET'])
+@authentication_classes([SessionAuthentication])
+@permission_classes([permissions.IsAuthenticated])
+def admin_course_classes(request, course_id):
+    """
+    Admin endpoint to get classes for a specific course (for enrollment form)
+    Only accessible to admin users
+    """
+    if not request.user.is_staff:
+        return Response(
+            {'error': 'Only admin users can access this endpoint'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    try:
+        course = get_object_or_404(Course, id=course_id)
+        
+        # Get all active classes for this course (not just available ones)
+        classes = Class.objects.filter(
+            course=course,
+            is_active=True
+        ).select_related('course', 'teacher').prefetch_related('students').order_by('name')
+        
+        classes_data = []
+        for cls in classes:
+            classes_data.append({
+                'id': cls.id,
+                'name': cls.name,
+                'description': cls.description or '',
+                'max_capacity': cls.max_capacity,
+                'student_count': cls.student_count,
+                'available_spots': cls.available_spots,
+                'teacher_name': cls.teacher.get_full_name() or cls.teacher.email,
+            })
+        
+        return Response(classes_data, status=status.HTTP_200_OK)
+        
+    except Course.DoesNotExist:
+        return Response(
+            {'error': 'Course not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        return Response(
+            {'error': 'Failed to fetch classes', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@authentication_classes([SessionAuthentication])
+@permission_classes([permissions.IsAuthenticated])
+def admin_course_lessons(request, course_id):
+    """
+    Admin endpoint to get lessons for a specific course (for enrollment form)
+    Only accessible to admin users
+    """
+    if not request.user.is_staff:
+        return Response(
+            {'error': 'Only admin users can access this endpoint'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    try:
+        course = get_object_or_404(Course, id=course_id)
+        
+        # Get all lessons for this course
+        lessons = course.lessons.all().order_by('order')
+        
+        lessons_data = []
+        for lesson in lessons:
+            lessons_data.append({
+                'id': lesson.id,
+                'title': lesson.title,
+                'description': lesson.description or '',
+                'type': lesson.type,
+                'order': lesson.order,
+                'duration': lesson.duration or 0,
+            })
+        
+        return Response(lessons_data, status=status.HTTP_200_OK)
+        
+    except Course.DoesNotExist:
+        return Response(
+            {'error': 'Course not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        return Response(
+            {'error': 'Failed to fetch lessons', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

@@ -258,6 +258,8 @@ class EnrolledCourse(models.Model):
     @property
     def days_since_enrollment(self):
         """Calculate days since enrollment"""
+        if not self.enrollment_date:
+            return None
         return (timezone.now().date() - self.enrollment_date).days
     
     @property
@@ -294,7 +296,7 @@ class EnrolledCourse(models.Model):
         """Determine if student is at risk based on engagement metrics"""
         if self.days_since_last_access and self.days_since_last_access > 7:
             return True
-        if self.progress_percentage < 50 and self.days_since_enrollment > 30:
+        if self.days_since_enrollment and self.progress_percentage < 50 and self.days_since_enrollment > 30:
             return True
         if self.assignment_completion_rate < 60:
             return True
