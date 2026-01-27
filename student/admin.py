@@ -24,17 +24,16 @@ class LenientClassChoiceField(forms.ModelChoiceField):
         try:
             # Try to get the object directly from the model, not from queryset
             return self.queryset.model.objects.get(pk=value)
-        except (ValueError, TypeError, self.queryset.model.DoesNotExist) as e:
-            print(f"[DEBUG] LenientClassChoiceField.to_python: Could not convert {value}: {e}")
+        except (ValueError, TypeError, self.queryset.model.DoesNotExist):
             # Return None - clean_class_instance will handle validation
             return None
 
 class EnrolledCourseAdminForm(forms.ModelForm):
     """Custom form for EnrolledCourse admin with class_instance field"""
     class_instance = LenientClassChoiceField(
-        queryset=Class.objects.all(),  # Start with all classes, will be filtered in __init__
+        queryset=Class.objects.none(),  # Start with empty queryset - will be populated via AJAX or when course is selected
         required=False,
-        help_text="Select a class for this enrollment (optional). Classes are filtered by the selected course."
+        help_text="Select a course and click 'Load Classes' to see available classes"
     )
     
     class Meta:
@@ -44,12 +43,21 @@ class EnrolledCourseAdminForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
+        # Set enrolled_by initial value if it's a new enrollment and field exists
+        if not self.instance or not self.instance.pk:
+            if 'enrolled_by' in self.fields:
+                # Get request from kwargs if available (Django admin passes it)
+                request = kwargs.get('request')
+                if request and hasattr(request, 'user'):
+                    self.fields['enrolled_by'].initial = request.user
+                    # Limit queryset to only current user
+                    from django.contrib.auth import get_user_model
+                    User = get_user_model()
+                    self.fields['enrolled_by'].queryset = User.objects.filter(id=request.user.id)
+        
         # Get course from instance, initial data, or POST data
         course = None
         from courses.models import Course
-        
-        print(f"[DEBUG] EnrolledCourseAdminForm.__init__: is_bound={self.is_bound}, instance.pk={self.instance.pk if self.instance else None}")
-        logger.info(f"EnrolledCourseAdminForm.__init__: is_bound={self.is_bound}, instance.pk={self.instance.pk if self.instance else None}")
         
         # First check instance (for editing existing enrollment)
         if self.instance and self.instance.pk:
@@ -57,41 +65,24 @@ class EnrolledCourseAdminForm(forms.ModelForm):
                 # Use course_id to avoid RelatedObjectDoesNotExist error
                 if hasattr(self.instance, 'course_id') and self.instance.course_id:
                     course = Course.objects.get(id=self.instance.course_id)
-                    print(f"[DEBUG] Found course from instance: {course.id} - {course.title}")
-                    logger.info(f"EnrolledCourseAdminForm.__init__: Found course from instance: {course.id} - {course.title}")
-            except (Course.DoesNotExist, AttributeError) as e:
-                print(f"[DEBUG] Error getting course from instance: {e}")
-                logger.warning(f"EnrolledCourseAdminForm.__init__: Error getting course from instance: {e}")
+            except (Course.DoesNotExist, AttributeError):
+                pass
         # Then check initial data (for new enrollment with pre-selected course)
         elif 'course' in self.initial:
             try:
                 course_id = self.initial['course']
                 if course_id:
                     course = Course.objects.get(id=course_id)
-                    print(f"[DEBUG] Found course from initial: {course.id} - {course.title}")
-                    logger.info(f"EnrolledCourseAdminForm.__init__: Found course from initial: {course.id} - {course.title}")
-            except (Course.DoesNotExist, ValueError, TypeError) as e:
-                print(f"[DEBUG] Error getting course from initial: {e}")
-                logger.warning(f"EnrolledCourseAdminForm.__init__: Error getting course from initial: {e}")
+            except (Course.DoesNotExist, ValueError, TypeError):
+                pass
         # Finally check POST data (when form is submitted)
         elif self.is_bound and 'course' in self.data:
             try:
                 course_id = self.data.get('course')
-                print(f"[DEBUG] POST data has course_id: {course_id} (type: {type(course_id)})")
-                logger.info(f"EnrolledCourseAdminForm.__init__: POST data has course_id: {course_id} (type: {type(course_id)})")
                 if course_id:
                     course = Course.objects.get(id=course_id)
-                    print(f"[DEBUG] Found course from POST: {course.id} - {course.title}")
-                    logger.info(f"EnrolledCourseAdminForm.__init__: Found course from POST: {course.id} - {course.title}")
-            except (Course.DoesNotExist, ValueError, TypeError) as e:
-                print(f"[DEBUG] Error getting course from POST: {e}")
-                logger.warning(f"EnrolledCourseAdminForm.__init__: Error getting course from POST: {e}")
-        
-        # Check if class_instance is in POST data
-        if self.is_bound and 'class_instance' in self.data:
-            class_instance_id = self.data.get('class_instance')
-            print(f"[DEBUG] POST data has class_instance_id: {class_instance_id} (type: {type(class_instance_id)})")
-            logger.info(f"EnrolledCourseAdminForm.__init__: POST data has class_instance_id: {class_instance_id} (type: {type(class_instance_id)})")
+            except (Course.DoesNotExist, ValueError, TypeError):
+                pass
         
         # For new enrollments, update queryset based on course
         if not self.instance or not self.instance.pk:
@@ -104,9 +95,6 @@ class EnrolledCourseAdminForm(forms.ModelForm):
                 ).order_by('name')
                 self.fields['class_instance'].queryset = classes
                 class_count = classes.count()
-                class_ids = list(classes.values_list('id', flat=True))
-                print(f"[DEBUG] Set class_instance queryset with {class_count} classes. Class IDs: {class_ids}")
-                logger.info(f"EnrolledCourseAdminForm.__init__: Set class_instance queryset with {class_count} classes. Class IDs: {class_ids}")
                 if class_count > 0:
                     self.fields['class_instance'].help_text = f"Select a class for this enrollment ({class_count} active class{'es' if class_count != 1 else ''} available)"
                 else:
@@ -125,8 +113,6 @@ class EnrolledCourseAdminForm(forms.ModelForm):
                 # No course selected yet - disable fields until course is selected and data is loaded
                 self.fields['class_instance'].queryset = Class.objects.none()
                 self.fields['class_instance'].help_text = "Select a course and click 'Load Classes' to see available classes"
-                print(f"[DEBUG] No course found, setting empty queryset for class_instance")
-                logger.info(f"EnrolledCourseAdminForm.__init__: No course found, setting empty queryset for class_instance")
                 
                 if 'current_lesson' in self.fields:
                     self.fields['current_lesson'].queryset = Lesson.objects.none()
@@ -155,62 +141,37 @@ class EnrolledCourseAdminForm(forms.ModelForm):
         """Validate that the selected class belongs to the selected course"""
         # Get raw value from POST data before validation
         raw_value = self.data.get('class_instance') if self.is_bound else None
-        print(f"[DEBUG] clean_class_instance: raw_value from POST: {raw_value} (type: {type(raw_value)})")
-        logger.info(f"EnrolledCourseAdminForm.clean_class_instance: raw_value from POST: {raw_value} (type: {type(raw_value)})")
-        
-        # Get the queryset to check what's available
-        queryset = self.fields['class_instance'].queryset
-        queryset_ids = list(queryset.values_list('id', flat=True))
-        print(f"[DEBUG] clean_class_instance: queryset has {queryset.count()} classes. IDs: {queryset_ids}")
-        logger.info(f"EnrolledCourseAdminForm.clean_class_instance: queryset has {queryset.count()} classes. IDs: {queryset_ids}")
         
         class_instance = self.cleaned_data.get('class_instance')
         course = self.cleaned_data.get('course')
-        
-        print(f"[DEBUG] clean_class_instance: cleaned_data class_instance: {class_instance}, course: {course}")
-        logger.info(f"EnrolledCourseAdminForm.clean_class_instance: cleaned_data class_instance: {class_instance}, course: {course}")
         
         # If class_instance is None but we have a raw_value, try to get it directly
         if not class_instance and raw_value:
             try:
                 class_instance = Class.objects.get(pk=raw_value)
-                print(f"[DEBUG] clean_class_instance: Retrieved class directly from DB: {class_instance.id} - {class_instance.name}")
-                logger.info(f"EnrolledCourseAdminForm.clean_class_instance: Retrieved class directly from DB: {class_instance.id}")
-            except (ValueError, TypeError, Class.DoesNotExist) as e:
-                print(f"[DEBUG] clean_class_instance: Could not retrieve class {raw_value}: {e}")
-                logger.warning(f"EnrolledCourseAdminForm.clean_class_instance: Could not retrieve class {raw_value}: {e}")
+            except (ValueError, TypeError, Class.DoesNotExist):
                 raise forms.ValidationError(f"Invalid class selected: {raw_value}")
         
         # If no class is selected, that's fine (it's optional)
         if not class_instance:
-            print(f"[DEBUG] clean_class_instance: No class_instance selected, returning None")
-            logger.info("EnrolledCourseAdminForm.clean_class_instance: No class_instance selected, returning None")
             return class_instance
         
         # If no course is selected, we can't validate
         if not course:
-            print(f"[DEBUG] clean_class_instance: No course selected, cannot validate class")
-            logger.warning("EnrolledCourseAdminForm.clean_class_instance: No course selected, cannot validate class")
             return class_instance
         
         # Validate that the class belongs to the course
         if class_instance.course != course:
-            print(f"[DEBUG] clean_class_instance: Class {class_instance.id} does not belong to course {course.id}")
-            logger.error(f"EnrolledCourseAdminForm.clean_class_instance: Class {class_instance.id} does not belong to course {course.id}")
             raise forms.ValidationError(
                 f"The selected class '{class_instance.name}' does not belong to the selected course '{course.title}'."
             )
         
         # Also check if class is active
         if not class_instance.is_active:
-            print(f"[DEBUG] clean_class_instance: Class {class_instance.id} is not active")
-            logger.error(f"EnrolledCourseAdminForm.clean_class_instance: Class {class_instance.id} is not active")
             raise forms.ValidationError(
                 f"The selected class '{class_instance.name}' is not active."
             )
         
-        print(f"[DEBUG] clean_class_instance: Validation passed for class {class_instance.id}")
-        logger.info(f"EnrolledCourseAdminForm.clean_class_instance: Validation passed for class {class_instance.id}")
         return class_instance
     
     def clean_current_lesson(self):
@@ -238,6 +199,8 @@ class EnrolledCourseAdminForm(forms.ModelForm):
 @admin.register(EnrolledCourse)
 class EnrolledCourseAdmin(admin.ModelAdmin):
     form = EnrolledCourseAdminForm
+    # Use autocomplete_fields for lazy loading - only loads results when you type
+    autocomplete_fields = ['student_profile', 'course']
     list_display = [
         'student_profile', 'course', 'status', 'progress_percentage', 
         'enrollment_date', 'payment_status', 'last_accessed'
@@ -317,12 +280,28 @@ class EnrolledCourseAdmin(admin.ModelAdmin):
     class Media:
         js = ('admin/js/enrolled_course_admin.js',)
     
+    def get_queryset(self, request):
+        """Optimize queryset with select_related to reduce database queries"""
+        qs = super().get_queryset(request)
+        return qs.select_related('student_profile', 'student_profile__user', 'course', 'enrolled_by', 'current_lesson')
+    
+    def get_readonly_fields(self, request, obj=None):
+        """Make enrolled_by readonly for new enrollments"""
+        readonly = list(super().get_readonly_fields(request, obj))
+        if obj is None:  # New enrollment
+            readonly.append('enrolled_by')
+        return readonly
+    
     def get_form(self, request, obj=None, **kwargs):
-        """Update form to set initial enrolled_by and filter classes"""
+        """Update form to limit enrolled_by queryset for new enrollments"""
         form = super().get_form(request, obj, **kwargs)
         
-        # For new enrollments, set default enrolled_by to current user
-        if obj is None:
+        # For new enrollments, limit enrolled_by queryset to only current user
+        # This prevents loading all users when the form is rendered
+        if obj is None and 'enrolled_by' in form.base_fields:
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            form.base_fields['enrolled_by'].queryset = User.objects.filter(id=request.user.id)
             form.base_fields['enrolled_by'].initial = request.user
         
         return form
@@ -332,14 +311,12 @@ class EnrolledCourseAdmin(admin.ModelAdmin):
         Override save_model to handle new enrollments via complete_enrollment_without_stripe
         For existing enrollments, use normal Django save
         """
-        logger.info(f"EnrolledCourseAdmin.save_model: change={change}, form.is_valid()={form.is_valid()}")
-        if not form.is_valid():
-            logger.error(f"EnrolledCourseAdmin.save_model: Form errors: {form.errors}")
-            logger.error(f"EnrolledCourseAdmin.save_model: Form non_field_errors: {form.non_field_errors()}")
+        # For new enrollments, set enrolled_by to current user if not already set
+        if not change and not obj.enrolled_by:
+            obj.enrolled_by = request.user
         
         # Get class_instance from form (not saved to model, just used for enrollment)
         class_instance = form.cleaned_data.get('class_instance')
-        logger.info(f"EnrolledCourseAdmin.save_model: class_instance from cleaned_data: {class_instance}")
         class_id = str(class_instance.id) if class_instance else None
         
         # Only use new enrollment function for NEW enrollments

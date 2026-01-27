@@ -35,6 +35,32 @@ Created a shared utility function `complete_enrollment_without_stripe()` that ha
 - `student/urls.py` - URL routes
 - `student/static/admin/js/enrolled_course_admin.js` - JavaScript for dynamic loading
 
+#### Performance Optimizations
+
+To ensure fast form loading even with large datasets, the following optimizations were implemented:
+
+1. **Autocomplete Fields (Lazy Loading)**
+   - `student_profile` and `course` fields use Django's `autocomplete_fields`
+   - Fields load empty initially - no database queries on page load
+   - Results are fetched via AJAX only when you start typing
+   - Searches as you type (e.g., typing "a" shows all students/courses starting with "a")
+   - Dramatically reduces initial page load time from minutes to seconds
+
+2. **Enrolled By Field Optimization**
+   - `enrolled_by` field is readonly for new enrollments
+   - Queryset limited to only the current logged-in admin user
+   - Prevents loading all users/admins/teachers into dropdown
+   - Automatically set to current admin user
+
+3. **Class Instance Field Optimization**
+   - Starts with empty queryset (`Class.objects.none()`)
+   - Classes loaded on-demand via AJAX when "Load Classes" button is clicked
+   - No initial database query for classes
+
+4. **Query Optimization**
+   - Added `select_related()` and `prefetch_related()` to admin queryset
+   - Reduces database queries when viewing enrollment list
+
 #### Features
 
 1. **Dynamic Class Loading**
@@ -56,7 +82,13 @@ Created a shared utility function `complete_enrollment_without_stripe()` that ha
    - Custom `clean_current_lesson()` validates lesson belongs to selected course
    - Handles cases where classes/lessons are loaded via AJAX
 
-4. **Admin API Endpoints**
+4. **Autocomplete Search**
+   - Student Profile: Search by email, first name, last name, or parent email
+   - Course: Search by title or description
+   - Results appear as you type (minimum 2 characters)
+   - No need to load all records - only matching results are fetched
+
+5. **Admin API Endpoints**
    - `GET /api/student/admin/courses/<course_id>/classes/` - Get classes for a course
    - `GET /api/student/admin/courses/<course_id>/lessons/` - Get lessons for a course
    - Both endpoints require admin/staff authentication via SessionAuthentication
