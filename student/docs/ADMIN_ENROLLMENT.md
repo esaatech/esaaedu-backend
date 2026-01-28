@@ -199,12 +199,101 @@ GET /api/student/admin/courses/<course_id>/lessons/
 - If class doesn't belong to course, validation error is raised
 - AJAX errors are displayed to the user with helpful messages
 
-## Future Enhancements (Phase 3 & 4)
+## Phase 3: Free Course Enrollment Endpoint
 
-### Phase 3: Free Course Check in Frontend
-- Add free course check to frontend enrollment endpoints
-- Bypass Stripe for free courses
-- Use `complete_enrollment_without_stripe()` for free course enrollments
+**Files Modified:**
+- `courses/views.py` - New endpoint `student_enroll_free_course`
+- `courses/urls.py` - URL route for free enrollment
+
+### Overview
+
+A dedicated endpoint for free course enrollment that bypasses the Stripe payment flow. The frontend checks if a course is free (`is_free=True` or `price=0`) and calls this endpoint directly instead of going through the payment flow.
+
+### Endpoint Details
+
+**URL:** `POST /api/courses/student/enroll-free/<course_id>/`
+
+**Authentication:** Required (IsAuthenticated)
+
+**Request Body:**
+```json
+{
+  "class_id": "uuid" // Optional - UUID of the class to enroll in
+}
+```
+
+**Response (Success - 201 Created):**
+```json
+{
+  "message": "Free enrollment successful",
+  "enrollment_id": "uuid",
+  "is_trial": false,
+  "trial_end_date": null
+}
+```
+
+**Response Format Consistency:**
+The response format matches `ConfirmEnrollmentView` from the billing app to ensure frontend consistency. Both paid and free enrollments return the same structure:
+- `message`: Success message
+- `enrollment_id`: UUID of the created enrollment
+- `is_trial`: Always `false` for free courses
+- `trial_end_date`: Always `null` for free courses
+
+**Error Responses:**
+
+- **400 Bad Request**: Course is not free, student profile not found, or already enrolled
+- **404 Not Found**: Course not found or not published
+- **500 Internal Server Error**: Enrollment creation failed
+
+### Implementation Details
+
+1. **Course Validation:**
+   - Verifies course exists and is published
+   - Checks `course.is_free == True` OR `course.price == 0`
+   - Returns error if course is not free
+
+2. **Enrollment Creation:**
+   - Uses `complete_enrollment_without_stripe()` from `student/utils.py`
+   - Sets `payment_status='free'` and `amount_paid=0`
+   - Optionally assigns student to a class if `class_id` is provided
+
+3. **Idempotency:**
+   - If enrollment already exists and is active, returns existing enrollment
+   - If enrollment exists but is inactive, reactivates it
+
+### Frontend Integration
+
+The frontend should:
+1. Check if course is free before initiating enrollment
+2. If free, call `POST /api/courses/student/enroll-free/<course_id>/` with optional `class_id`
+3. Handle the response the same way as paid enrollment responses
+4. If not free, proceed with normal Stripe payment flow
+
+### Example Frontend Flow
+
+```javascript
+// Check if course is free
+if (course.is_free || course.price === 0) {
+  // Use free enrollment endpoint
+  const response = await fetch(`/api/courses/student/enroll-free/${courseId}/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify({ class_id: selectedClassId })
+  });
+  
+  const data = await response.json();
+  // Handle response same as paid enrollment
+  console.log('Enrollment ID:', data.enrollment_id);
+} else {
+  // Proceed with Stripe payment flow
+  // ... existing payment code
+}
+```
+
+## Future Enhancements (Phase 4)
 
 ### Phase 4: Payment Record Creation
 - Automatically create Payment records for cash payments

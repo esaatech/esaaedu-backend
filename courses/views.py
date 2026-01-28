@@ -3235,6 +3235,79 @@ def student_enroll_course(request, course_id):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def student_enroll_free_course(request, course_id):
+    """
+    Enroll the current student in a free course (bypasses Stripe payment flow).
+    This endpoint is called by the frontend when a course is determined to be free.
+    
+    Response format matches ConfirmEnrollmentView for consistency with paid enrollments.
+    """
+    try:
+        # Get student profile
+        student_profile = getattr(request.user, 'student_profile', None)
+        if not student_profile:
+            return Response(
+                {'error': 'Student profile not found. Please complete your profile setup.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get course
+        try:
+            course = Course.objects.get(id=course_id, status='published')
+        except Course.DoesNotExist:
+            return Response(
+                {'error': 'Course not found or not available for enrollment'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Verify course is actually free
+        if not course.is_free and course.price > 0:
+            return Response(
+                {'error': 'This course is not free. Please use the payment enrollment flow.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get class_id from request (optional)
+        class_id = request.data.get('class_id')
+        
+        # Use the shared enrollment function
+        from student.utils import complete_enrollment_without_stripe
+        
+        enrollment = complete_enrollment_without_stripe(
+            student_profile=student_profile,
+            course=course,
+            class_id=class_id,
+            enrolled_by=request.user,
+            payment_status='free',
+            amount_paid=0,
+            payment_due_date=None,
+            create_payment_record=False
+        )
+        
+        if not enrollment:
+            return Response(
+                {'error': 'Failed to create enrollment. Please try again or contact support.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        # Return response matching ConfirmEnrollmentView format for consistency
+        return Response({
+            'message': 'Free enrollment successful',
+            'enrollment_id': str(enrollment.id),
+            'is_trial': False,
+            'trial_end_date': None
+        }, status=status.HTTP_201_CREATED)
+    
+    except Exception as e:
+        logger.error(f"Error in student_enroll_free_course: {e}", exc_info=True)
+        return Response(
+            {'error': 'Failed to enroll in free course', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
    
 
 @api_view(['GET'])

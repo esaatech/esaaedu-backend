@@ -75,6 +75,7 @@ urlpatterns = [
     path('student/recommendations/', views.student_course_recommendations, name='student_course_recommendations'),
     path('student/dashboard/', views.StudentCourseDashboardView.as_view(), name='student_course_dashboard'),
     path('student/enroll/<uuid:course_id>/', views.student_enroll_course, name='student_enroll_course'),
+    path('student/enroll-free/<uuid:course_id>/', views.student_enroll_free_course, name='student_enroll_free_course'),
     path('student/courses/<uuid:course_id>/lessons/', views.student_course_lessons, name='student_course_lessons'),
     path('student/courses/<uuid:course_id>/projects/', views.student_course_projects, name='student_course_projects'),
     path('student/projects/<int:project_id>/submit/', views.student_project_submit, name='student_project_submit'),
