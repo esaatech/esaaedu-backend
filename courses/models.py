@@ -41,6 +41,12 @@ class Course(models.Model):
         ('archived', 'Archived'),
     ]
     
+    DELIVERY_TYPE_CHOICES = [
+        ('live', 'Live'),
+        ('self_paced', 'Self-paced'),
+        ('hybrid', 'Hybrid (Live + Self-paced)'),
+    ]
+    
     # Basic Information
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     title = models.CharField(max_length=200, help_text="Course title")
@@ -76,6 +82,12 @@ class Course(models.Model):
     )
     
     # Pricing & Features
+    delivery_type = models.CharField(
+        max_length=20,
+        choices=DELIVERY_TYPE_CHOICES,
+        default='live',
+        help_text="How this course is delivered: live, self-paced, or hybrid"
+    )
     price = models.DecimalField(
         max_digits=10, 
         decimal_places=2, 
