@@ -160,6 +160,38 @@ def share_url(self):
 
 **Update**: Added `share_token` field to allow students to see their share tokens
 
+**Fields**:
+- `id`: Submission ID
+- `project`: Project ID
+- `project_title`: Project title (from project)
+- `project_points`: Project points (from project)
+- `project_instructions`: Project instructions (from project)
+- `submission_type`: Submission type (from ClassEvent if available, else Project)
+- `project_platform`: Platform details (from ClassEvent if available, else null)
+- `status`: Submission status
+- `content`: Submission content
+- `file_url`: File URL if applicable
+- `reflection`: Student reflection
+- `submitted_at`: Submission timestamp
+- `graded_at`: Grading timestamp
+- `points_earned`: Points awarded
+- `points_possible`: Total points possible
+- `percentage`: Score percentage
+- `passed`: Whether student passed
+- `is_graded`: Whether submission is graded
+- `feedback`: Teacher feedback
+- `feedback_response`: Student response to feedback
+- `feedback_checked`: Whether student has seen feedback
+- `feedback_checked_at`: When feedback was checked
+- `grader_name`: Name of grader
+- `share_token`: Share token for public sharing
+- `created_at`: Creation timestamp
+- `updated_at`: Update timestamp
+
+**Methods**:
+- `get_submission_type()`: Gets submission_type from ClassEvent (if available) or Project
+- `get_project_platform()`: Gets project_platform from ClassEvent (if available)
+
 ## Dashboard Overview Updates
 
 ### Project Assessments List
@@ -275,6 +307,10 @@ path('student/projects/submissions/share/<str:share_token>/',
 - `courses/urls.py` - URL routing
 - `student/views.py` - Dashboard overview
 - `courses/migrations/0052_add_share_token_to_project_submission.py` - Migration
+
+## Related Documentation
+
+- `student_project_submission_workflow.md` - Complete workflow for student project submission, including scheduling requirements, ClassEvent integration, and submission type handling
 
 ## Migration Instructions
 
