@@ -4981,7 +4981,52 @@ class CodeSnippetDetailView(APIView):
             serializer = CodeSnippetCreateUpdateSerializer(snippet, data=request.data)
             
             if serializer.is_valid():
+                # Check if this is a CSS file update - if so, upload to GCP
+                language = serializer.validated_data.get('language', snippet.language).lower()
+                css_file_url = None
+                
+                # Determine if we need to update CSS in GCP
+                needs_css_upload = False
+                if language == 'css':
+                    needs_css_upload = True  # Full update always includes code
+                
+                if needs_css_upload:
+                    # Import CSS upload utility
+                    from .css_upload_utils import upload_css_to_gcp, delete_css_from_gcp
+                    
+                    css_content = serializer.validated_data.get('code', '')
+                    title = serializer.validated_data.get('title', '')
+                    
+                    # Delete old GCP file if it exists
+                    if snippet.css_file_url:
+                        delete_css_from_gcp(snippet.css_file_url)
+                    
+                    # Upload new/updated CSS to GCP
+                    css_file_url, saved_path = upload_css_to_gcp(css_content, title=title)
+                    
+                    if css_file_url:
+                        # CSS uploaded successfully - css_file_url will be set after save
+                        pass
+                    else:
+                        # GCP upload failed, but we'll still save to database
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"Failed to upload CSS to GCP for snippet update, but saving to database anyway")
+                
+                # Save the snippet
                 serializer.save()
+                
+                # If CSS was uploaded, update the css_file_url field
+                if needs_css_upload and css_file_url:
+                    snippet.css_file_url = css_file_url
+                    snippet.save(update_fields=['css_file_url'])
+                elif language != 'css' and snippet.css_file_url:
+                    # Language changed away from CSS - delete GCP file and clear css_file_url
+                    from .css_upload_utils import delete_css_from_gcp
+                    delete_css_from_gcp(snippet.css_file_url)
+                    snippet.css_file_url = None
+                    snippet.save(update_fields=['css_file_url'])
+                
                 # Return full detail
                 detail_serializer = CodeSnippetDetailSerializer(snippet, context={'request': request})
                 return Response(detail_serializer.data, status=status.HTTP_200_OK)
@@ -4993,6 +5038,9 @@ class CodeSnippetDetailView(APIView):
         except PermissionError as e:
             return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
         except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error updating code snippet: {e}", exc_info=True)
             return Response(
                 {'error': 'Failed to update code snippet', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -5011,7 +5059,56 @@ class CodeSnippetDetailView(APIView):
             serializer = CodeSnippetCreateUpdateSerializer(snippet, data=request.data, partial=True)
             
             if serializer.is_valid():
+                # Check if this is a CSS file update - if so, upload to GCP
+                language = serializer.validated_data.get('language', snippet.language).lower()
+                css_file_url = None
+                
+                # Determine if we need to update CSS in GCP
+                # Case 1: Language is being changed to CSS
+                # Case 2: Language is already CSS and code is being updated
+                needs_css_upload = False
+                if language == 'css':
+                    if 'code' in serializer.validated_data or 'language' in serializer.validated_data:
+                        needs_css_upload = True
+                
+                if needs_css_upload:
+                    # Import CSS upload utility
+                    from .css_upload_utils import upload_css_to_gcp, delete_css_from_gcp
+                    
+                    css_content = serializer.validated_data.get('code', snippet.code)
+                    title = serializer.validated_data.get('title', snippet.title)
+                    
+                    # Delete old GCP file if it exists
+                    if snippet.css_file_url:
+                        delete_css_from_gcp(snippet.css_file_url)
+                    
+                    # Upload new/updated CSS to GCP
+                    css_file_url, saved_path = upload_css_to_gcp(css_content, title=title)
+                    
+                    if css_file_url:
+                        # CSS uploaded successfully - css_file_url will be set after save
+                        pass
+                    else:
+                        # GCP upload failed, but we'll still save to database
+                        # Log warning but don't fail the request
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"Failed to upload CSS to GCP for snippet update, but saving to database anyway")
+                
+                # Save the snippet
                 serializer.save()
+                
+                # If CSS was uploaded, update the css_file_url field
+                if needs_css_upload and css_file_url:
+                    snippet.css_file_url = css_file_url
+                    snippet.save(update_fields=['css_file_url'])
+                elif language != 'css' and snippet.css_file_url:
+                    # Language changed away from CSS - delete GCP file and clear css_file_url
+                    from .css_upload_utils import delete_css_from_gcp
+                    delete_css_from_gcp(snippet.css_file_url)
+                    snippet.css_file_url = None
+                    snippet.save(update_fields=['css_file_url'])
+                
                 # Return full detail
                 detail_serializer = CodeSnippetDetailSerializer(snippet, context={'request': request})
                 return Response(detail_serializer.data, status=status.HTTP_200_OK)
@@ -5023,6 +5120,9 @@ class CodeSnippetDetailView(APIView):
         except PermissionError as e:
             return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
         except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error updating code snippet: {e}", exc_info=True)
             return Response(
                 {'error': 'Failed to update code snippet', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -5038,6 +5138,21 @@ class CodeSnippetDetailView(APIView):
                 )
             
             snippet = self.get_object(code_id, request.user)
+            
+            # Delete CSS file from GCP if it exists (regardless of language, in case of data inconsistency)
+            if snippet.css_file_url:
+                from .css_upload_utils import delete_css_from_gcp
+                import logging
+                logger = logging.getLogger(__name__)
+                
+                try:
+                    delete_css_from_gcp(snippet.css_file_url)
+                    logger.info(f"Deleted CSS file from GCP: {snippet.css_file_url}")
+                except Exception as e:
+                    # Log error but don't block database delete
+                    logger.error(f"Error deleting CSS file from GCP: {e}", exc_info=True)
+            
+            # Delete from database
             snippet.delete()
             return Response(
                 {'message': 'Code snippet deleted successfully'},
@@ -5049,6 +5164,9 @@ class CodeSnippetDetailView(APIView):
         except PermissionError as e:
             return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
         except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error deleting code snippet: {e}", exc_info=True)
             return Response(
                 {'error': 'Failed to delete code snippet', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -5074,11 +5192,41 @@ class CodeSnippetCreateView(APIView):
             serializer = CodeSnippetCreateUpdateSerializer(data=request.data)
             
             if serializer.is_valid():
+                # Check if this is a CSS file - if so, upload to GCP
+                language = serializer.validated_data.get('language', '').lower()
+                css_file_url = None
+                
+                if language == 'css':
+                    # Import CSS upload utility
+                    from .css_upload_utils import upload_css_to_gcp
+                    
+                    css_content = serializer.validated_data.get('code', '')
+                    title = serializer.validated_data.get('title', '')
+                    
+                    # Upload CSS to GCP
+                    css_file_url, saved_path = upload_css_to_gcp(css_content, title=title)
+                    
+                    if css_file_url:
+                        # CSS uploaded successfully - css_file_url will be set after save
+                        pass
+                    else:
+                        # GCP upload failed, but we'll still save to database
+                        # Log warning but don't fail the request
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"Failed to upload CSS to GCP for snippet, but saving to database anyway")
+                
                 # Set student or teacher based on role
                 if request.user.role == 'student':
                     snippet = serializer.save(student=request.user)
                 else:  # teacher
                     snippet = serializer.save(teacher=request.user)
+                
+                # If CSS was uploaded, update the css_file_url field
+                if language == 'css' and css_file_url:
+                    snippet.css_file_url = css_file_url
+                    snippet.save(update_fields=['css_file_url'])
+                
                 # Return full detail
                 detail_serializer = CodeSnippetDetailSerializer(snippet, context={'request': request})
                 return Response(detail_serializer.data, status=status.HTTP_201_CREATED)
@@ -5086,6 +5234,9 @@ class CodeSnippetCreateView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
             
         except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error creating code snippet: {e}", exc_info=True)
             return Response(
                 {'error': 'Failed to create code snippet', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

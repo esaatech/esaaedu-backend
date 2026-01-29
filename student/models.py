@@ -1658,6 +1658,14 @@ class CodeSnippet(models.Model):
         help_text="Programming language"
     )
     
+    # CSS-specific: GCP URL for CSS files (only populated when language is 'css')
+    css_file_url = models.URLField(
+        null=True,
+        blank=True,
+        max_length=500,
+        help_text="GCP URL for CSS files. Only populated when language is 'css'. Allows CSS to be referenced in HTML via <link> tags."
+    )
+    
     # Sharing (default to True as requested)
     is_shared = models.BooleanField(
         default=True,
@@ -1683,6 +1691,7 @@ class CodeSnippet(models.Model):
             models.Index(fields=['share_token']),
             models.Index(fields=['language']),
             models.Index(fields=['is_shared']),
+            models.Index(fields=['css_file_url']),  # Index for CSS file lookups
         ]
         verbose_name = "Code Snippet"
         verbose_name_plural = "Code Snippets"
