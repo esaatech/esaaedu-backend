@@ -5054,18 +5054,8 @@ class TeacherDashboardAPIView(APIView):
 
     def get_total_students(self, teacher):
         """Count total students across all teacher's courses"""
-        # Debug: Check teacher's courses
-        teacher_courses = Course.objects.filter(teacher=teacher)
-        print(f"DEBUG TOTAL STUDENTS: Teacher {teacher.email} has {teacher_courses.count()} courses")
-        
-        # Debug: Check all enrollments for this teacher's courses
         enrollments = EnrolledCourse.objects.filter(course__teacher=teacher)
-        print(f"DEBUG TOTAL STUDENTS: Found {enrollments.count()} total enrollments")
-        
-        # Debug: Check distinct students
         distinct_students = enrollments.values('student_profile__user').distinct()
-        print(f"DEBUG TOTAL STUDENTS: Found {distinct_students.count()} distinct students")
-        
         return distinct_students.count()
 
     def get_active_courses(self, teacher):
@@ -5079,12 +5069,7 @@ class TeacherDashboardAPIView(APIView):
         """Count total enrollments across all teacher's courses"""
         from student.models import EnrolledCourse
         
-        # Get all enrollments for this teacher's courses
         enrollments = EnrolledCourse.objects.filter(course__teacher=teacher)
-        
-        # Debug: Check enrollments
-        print(f"DEBUG TOTAL ENROLLMENTS: Teacher {teacher.email} has {enrollments.count()} total enrollments")
-        
         return enrollments.count()
 
     def get_monthly_revenue(self, teacher):
@@ -5142,17 +5127,21 @@ class TeacherDashboardAPIView(APIView):
             return 0
 
     def get_upcoming_classes(self, teacher):
-        """Get today's and upcoming live classes"""
+        """Get today's and upcoming live classes, including ongoing classes that started before today"""
         from datetime import datetime, timedelta
+        from django.db.models import Q
         
         today = datetime.now().date()
         end_of_week = today + timedelta(days=7)
+        current_time = timezone.now()
         
         # Get ClassEvents with lesson_type='live' for teacher's courses
+        # Include: events that haven't ended yet AND start within the next week (or started before today but are ongoing)
         live_classes = ClassEvent.objects.filter(
             class_instance__course__teacher=teacher,
             lesson_type='live',
-            start_time__date__range=[today, end_of_week]
+            end_time__gt=current_time,  # Include ongoing classes that haven't ended
+            start_time__date__lte=end_of_week  # Limit to events starting within next week or ongoing
         ).select_related('class_instance', 'class_instance__course').order_by('start_time')
         
         return {
@@ -5173,7 +5162,10 @@ class TeacherDashboardAPIView(APIView):
                     'duration_minutes': cls.duration_minutes,
                     'description': cls.description,
                 }
-                for cls in live_classes.filter(start_time__date=today)
+                for cls in live_classes.filter(
+                    Q(start_time__date=today) |  # Classes starting today
+                    Q(start_time__date__lt=today, end_time__gt=current_time)  # Ongoing classes that started before today
+                )
             ],
             'upcoming_classes': [
                 {
@@ -5203,17 +5195,11 @@ class TeacherDashboardAPIView(APIView):
         
         activities = []
         
-        # Debug: Check teacher's courses
-        teacher_courses = Course.objects.filter(teacher=teacher)
-        print(f"DEBUG RECENT ACTIVITY: Teacher {teacher.email} has {teacher_courses.count()} courses")
-        
         # Student enrollments
         enrollments = EnrolledCourse.objects.filter(
             course__teacher=teacher,
             enrollment_date__gte=datetime.now().date() - timedelta(days=7)
         ).select_related('student_profile__user', 'course')[:5]
-        
-        print(f"DEBUG RECENT ACTIVITY: Found {enrollments.count()} recent enrollments")
         
         for enrollment in enrollments:
             student_name = enrollment.student_profile.user.get_full_name() or enrollment.student_profile.user.first_name
@@ -6638,15 +6624,6 @@ def generate_jitsi_token(user, classroom):
     - RS256 with RSA private key (JaaS recommended)
     - HS256 with symmetric secret (simpler, less secure)
     """
-    print("=" * 80)
-    print("🔐 Starting Jitsi JWT Token Generation")
-    print(f"User: {user.id} ({user.email}), Role: {user.role}")
-    print(f"Classroom: {classroom.room_code}")
-    logger.info("=" * 80)
-    logger.info("🔐 Starting Jitsi JWT Token Generation")
-    logger.info(f"User: {user.id} ({user.email}), Role: {user.role}")
-    logger.info(f"Classroom: {classroom.room_code}")
-    
     # Get Jitsi configuration from settings
     jitsi_app_id = getattr(settings, 'JITSI_APP_ID', '')
     jitsi_app_secret = getattr(settings, 'JITSI_APP_SECRET', '')
@@ -6656,14 +6633,6 @@ def generate_jitsi_token(user, classroom):
     # Ensure jitsi_domain is always a string (handle case where it might be None)
     jitsi_domain_raw = getattr(settings, 'JITSI_DOMAIN', 'meet.jit.si')
     jitsi_domain = str(jitsi_domain_raw) if jitsi_domain_raw else 'meet.jit.si'
-    
-    print("📋 Configuration:")
-    print(f"  Domain: {jitsi_domain}")
-    print(f"  App ID: {jitsi_app_id[:50]}..." if len(jitsi_app_id) > 50 else f"  App ID: {jitsi_app_id}")
-    print(f"  KID: {jitsi_kid[:50]}..." if jitsi_kid and len(jitsi_kid) > 50 else f"  KID: {jitsi_kid}")
-    print(f"  Algorithm: {jitsi_algorithm}")
-    print(f"  Token Expiry: {token_expiry_hours} hours")
-   
     
     # Determine issuer based on domain and credentials (need to check this before using)
     # 8x8.vc has special requirements: always use "chat" as issuer, even with vpaas credentials
@@ -6678,18 +6647,10 @@ def generate_jitsi_token(user, classroom):
     # The vpaas private key can't be verified by 8x8.vc when using iss='chat'
     # For now, disable JWT for 8x8.vc and use public rooms
     if is_8x8vc and has_vpaas:
-        print("⚠️ 8x8.vc with vpaas credentials: JWT authentication may not be supported.")
-        print("⚠️ 8x8.vc cannot verify vpaas-signed tokens with iss='chat'.")
-        print("⚠️ Returning None - will use public Jitsi without JWT authentication.")
-        logger.warning("⚠️ 8x8.vc with vpaas credentials: JWT authentication may not be supported.")
-        logger.warning("⚠️ 8x8.vc cannot verify vpaas-signed tokens with iss='chat'.")
-        logger.warning("⚠️ Returning None - will use public Jitsi without JWT authentication.")
         return None
     
     # If no app secret configured, return None (will use public Jitsi without auth)
     if not jitsi_app_secret:
-        print("⚠️ JITSI_APP_SECRET not configured. Using public Jitsi without JWT authentication.")
-        logger.warning("⚠️ JITSI_APP_SECRET not configured. Using public Jitsi without JWT authentication.")
         return None
     
     # Normalize the key: handle escaped newlines and strip quotes/whitespace
@@ -6709,34 +6670,19 @@ def generate_jitsi_token(user, classroom):
     # Determine if user is moderator (teachers are moderators)
     is_moderator = user.role == 'teacher'
     
-    print("🔍 Detection:")
-    print(f"  Is 8x8.vc: {is_8x8vc}")
-    print(f"  Is jitsi.com: {is_jitsi_com}")
-    print(f"  Has vpaas credentials: {has_vpaas}")
-    logger.info("🔍 Detection:")
-    logger.info(f"  Is 8x8.vc: {is_8x8vc}")
-    logger.info(f"  Is jitsi.com: {is_jitsi_com}")
-    logger.info(f"  Has vpaas credentials: {has_vpaas}")
-    
     # 8x8.vc requires "chat" as issuer regardless of credentials (hybrid approach)
     if is_8x8vc:
         # For 8x8.vc: use "chat" as issuer/subject, but can still use vpaas key for signing
         issuer = 'chat'
         subject = 'chat'
-        print(f"✅ Using 8x8.vc format: iss='{issuer}', sub='{subject}' (vpaas credentials: {has_vpaas})")
-        logger.info(f"✅ Using 8x8.vc format: iss='{issuer}', sub='{subject}' (vpaas credentials: {has_vpaas})")
     elif is_jitsi_com and has_vpaas:
         # For jitsi.com with vpaas: use JaaS format
         issuer = jitsi_app_id
         subject = jitsi_app_id
-        print(f"✅ Using JaaS format: iss='{issuer[:50]}...', sub='{subject[:50]}...', domain={jitsi_domain}")
-        logger.info(f"✅ Using JaaS format: iss='{issuer[:50]}...', sub='{subject[:50]}...', domain={jitsi_domain}")
     else:
         # Regular Jitsi Meet format (meet.jit.si without vpaas): use "chat" as issuer
         issuer = 'chat'
         subject = 'chat'
-        print(f"✅ Using regular Jitsi Meet format: iss='{issuer}', sub='{subject}', domain={jitsi_domain}")
-        logger.info(f"✅ Using regular Jitsi Meet format: iss='{issuer}', sub='{subject}', domain={jitsi_domain}")
     
     # JWT payload according to Jitsi/JaaS specification
     now = datetime.utcnow()
@@ -6751,21 +6697,6 @@ def generate_jitsi_token(user, classroom):
         'room': classroom.room_code,  # Room name (must match Jitsi room)
         'sub': subject,  # Subject: app ID for JaaS, "chat" or app ID for Jitsi Meet
     }
-    
-    print("📦 JWT Payload:")
-    print(f"  iss: '{payload['iss']}'")
-    print(f"  sub: '{payload['sub']}'")
-    print(f"  aud: '{payload['aud']}'")
-    print(f"  room: '{payload['room']}'")
-    print(f"  exp: {payload['exp']} ({datetime.fromtimestamp(payload['exp']).isoformat()})")
-    print(f"  nbf: {payload['nbf']} ({datetime.fromtimestamp(payload['nbf']).isoformat()})")
-    logger.info("📦 JWT Payload:")
-    logger.info(f"  iss: '{payload['iss']}'")
-    logger.info(f"  sub: '{payload['sub']}'")
-    logger.info(f"  aud: '{payload['aud']}'")
-    logger.info(f"  room: '{payload['room']}'")
-    logger.info(f"  exp: {payload['exp']} ({datetime.fromtimestamp(payload['exp']).isoformat()})")
-    logger.info(f"  nbf: {payload['nbf']} ({datetime.fromtimestamp(payload['nbf']).isoformat()})")
     
     # Add context - 8x8.vc and regular Jitsi Meet use same format
     # Only jitsi.com with vpaas uses full JaaS context
@@ -6810,31 +6741,18 @@ def generate_jitsi_token(user, classroom):
         if is_8x8vc:
             # For 8x8.vc: DO NOT include KID header (even with vpaas credentials)
             # 8x8.vc uses "chat" as issuer, so KID causes tenant mismatch
-            print("🚫 Skipping KID header for 8x8.vc (using iss='chat', KID would cause tenant mismatch)")
-            logger.info("🚫 Skipping KID header for 8x8.vc (using iss='chat', KID would cause tenant mismatch)")
+            pass
         elif is_jitsi_com and has_vpaas:
             # For jitsi.com with vpaas: use full KID
             if jitsi_kid:
                 headers['kid'] = jitsi_kid
-                logger.info(f"✅ Using JaaS KID for jitsi.com: {jitsi_kid[:50]}...")
             else:
                 headers['kid'] = jitsi_app_id
-                logger.info(f"✅ Using app ID as KID fallback for jitsi.com: {jitsi_app_id[:50]}...")
         else:
             # For regular Jitsi Meet (meet.jit.si without vpaas)
             # KID may not be required, but include if provided
             if jitsi_kid:
                 headers['kid'] = jitsi_kid
-                logger.info(f"✅ Using KID for regular Jitsi Meet: {jitsi_kid[:50]}...")
-            else:
-                logger.info("ℹ️ No KID provided for regular Jitsi Meet (may not be required)")
-    
-    logger.info("📋 JWT Headers:")
-    if headers:
-        for key, value in headers.items():
-            logger.info(f"  {key}: {value[:50]}..." if len(str(value)) > 50 else f"  {key}: {value}")
-    else:
-        logger.info("  (no headers)")
     
     # Sign token with app secret/private key
     try:
@@ -6855,7 +6773,6 @@ def generate_jitsi_token(user, classroom):
             # RSA private key detected - use RS256
             actual_algorithm = 'RS256'
             signing_key = jitsi_app_secret
-            logger.debug("Detected RSA private key, using RS256 algorithm")
         elif jitsi_algorithm == 'RS256':
             # Explicitly requested RS256 - validate it's a private key
             if isinstance(jitsi_app_secret, str):
@@ -6874,48 +6791,8 @@ def generate_jitsi_token(user, classroom):
             # Use HS256 with symmetric secret
             actual_algorithm = 'HS256'
             signing_key = jitsi_app_secret
-            logger.debug("Using HS256 algorithm with symmetric secret")
-        
-        # Log context structure
-        logger.info("📋 Context Structure:")
-        if 'context' in payload:
-            logger.info(f"  User ID: {payload['context'].get('user', {}).get('id', 'N/A')}")
-            logger.info(f"  User Name: {payload['context'].get('user', {}).get('name', 'N/A')}")
-            logger.info(f"  Moderator: {payload['context'].get('user', {}).get('moderator', False)}")
-            logger.info(f"  Features: {list(payload['context'].get('features', {}).keys())}")
-            if 'group' in payload['context']:
-                logger.info(f"  Group: {payload['context']['group']}")
-        else:
-            logger.info("  (no context)")
-        
-        # Attempt to encode the token
-        logger.info("🔨 Encoding JWT token...")
-        logger.info(f"  Algorithm: {actual_algorithm}")
-        logger.info(f"  Key type: {'RSA Private Key' if actual_algorithm == 'RS256' else 'Symmetric Secret'}")
         
         token = jwt.encode(payload, signing_key, algorithm=actual_algorithm, headers=headers)
-        
-        # Decode to verify (for logging only)
-        try:
-            decoded = jwt.decode(token, options={"verify_signature": False})
-            logger.info("✅ Token encoded successfully!")
-            print(f"📝 Decoded token verification:")
-            print(f"  iss: '{decoded.get('iss', 'N/A')}'")
-            print(f"  sub: '{decoded.get('sub', 'N/A')}'")
-            print(f"  room: '{decoded.get('room', 'N/A')}'")
-            print(f"  Token length: {len(token)} characters")
-            print(f"  Token preview: {token[:50]}...")
-            logger.info(f"📝 Decoded token verification:")
-            logger.info(f"  iss: '{decoded.get('iss', 'N/A')}'")
-            logger.info(f"  sub: '{decoded.get('sub', 'N/A')}'")
-            logger.info(f"  room: '{decoded.get('room', 'N/A')}'")
-            logger.info(f"  Token length: {len(token)} characters")
-            logger.info(f"  Token preview: {token[:50]}...")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not decode token for verification: {e}")
-        
-        logger.info(f"✅ Generated JWT token using {actual_algorithm} for user {user.id} (moderator: {is_moderator}, room: {classroom.room_code})")
-        logger.info("=" * 80)
         return token
             
     except InvalidKeyError as e:
@@ -6979,32 +6856,14 @@ class ClassroomView(APIView):
             classroom, created = class_instance.get_or_create_classroom()
             
             # Generate JWT token for Jitsi authentication
-            print(f"🎯 API: Generating JWT token for classroom {classroom.room_code}")
-            print(f"🎯 API: User {request.user.id} ({request.user.email}), Role: {request.user.role}")
-            logger.info(f"🎯 API: Generating JWT token for classroom {classroom.room_code}")
-            logger.info(f"🎯 API: User {request.user.id} ({request.user.email}), Role: {request.user.role}")
-            
             jitsi_token = generate_jitsi_token(request.user, classroom)
             jitsi_domain = getattr(settings, 'JITSI_DOMAIN', 'meet.jit.si')
-            
-            print(f"🎯 API: Token generation result: {'SUCCESS' if jitsi_token else 'FAILED/NONE'}")
-            if jitsi_token:
-                print(f"🎯 API: Token length: {len(jitsi_token)} characters")
-                print(f"🎯 API: Token preview: {jitsi_token[:50]}...")
-                logger.info(f"🎯 API: Token length: {len(jitsi_token)} characters")
-                logger.info(f"🎯 API: Token preview: {jitsi_token[:50]}...")
-            else:
-                print(f"🎯 API: No token generated - will use public Jitsi")
-                logger.warning(f"🎯 API: No token generated - will use public Jitsi")
-            
-            logger.info(f"🎯 API: Token generation result: {'SUCCESS' if jitsi_token else 'FAILED/NONE'}")
             
             serializer = ClassroomSerializer(classroom)
             response_data = serializer.data
             response_data['jitsi_token'] = jitsi_token
             response_data['jitsi_domain'] = jitsi_domain
             
-            logger.info(f"🎯 API: Returning classroom data with token to frontend")
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
