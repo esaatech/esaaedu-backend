@@ -1220,9 +1220,10 @@ class StudentScheduleView(APIView):
                 
                 for index, enrollment in enumerate(enrollments):
                     try:
-                        # Get classes for this course
+                        # Get classes for this course - only classes the student is enrolled in
                         classes = Class.objects.filter(
                             course=enrollment.course,
+                            students=request.user,  # Only classes where this student is enrolled
                             is_active=True
                         ).select_related('course')
                         
@@ -1437,9 +1438,11 @@ class DashboardOverview(APIView):
             )
             
             # Get all class events for enrolled courses in one query
+            # Only get events from classes the student is enrolled in (not all classes in the course)
             course_ids = [enrollment.course.id for enrollment in enrollments]
             class_events = ClassEvent.objects.filter(
-                class_instance__course_id__in=course_ids
+                class_instance__course_id__in=course_ids,
+                class_instance__students=student_profile.user  # Only classes where this student is enrolled
             ).select_related('class_instance', 'lesson', 'project', 'project_platform')
             
             return {
@@ -4717,8 +4720,10 @@ class StudentNextClassroomView(APIView):
             # Step 4: Get all upcoming/live events for enrolled classes
             try:
                 # Get all classes for enrolled courses
+                # Only get classes the student is enrolled in (not all classes in enrolled courses)
                 class_ids = Class.objects.filter(
                     course__in=[e.course for e in enrollments],
+                    students=request.user,  # Only classes where this student is enrolled
                     is_active=True
                 ).values_list('id', flat=True)
                 
@@ -5625,10 +5630,12 @@ class StudentClassroomClassesView(APIView):
                 {'bg': '#EC4899', 'border': '#DB2777', 'text': '#FFFFFF'},  # Pink
             ]
             
-            # Step 5: Get all classes from enrolled courses
+            # Step 5: Get only classes the student is enrolled in (not all classes from enrolled courses)
+            # Students enroll in specific classes, not all classes in a course
             enrolled_course_ids = enrollments.values_list('course_id', flat=True)
             classes = Class.objects.filter(
                 course_id__in=enrolled_course_ids,
+                students=request.user,  # Only classes where this student is enrolled
                 is_active=True
             ).select_related('course')
             
