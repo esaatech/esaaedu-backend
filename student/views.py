@@ -1243,6 +1243,13 @@ class StudentScheduleView(APIView):
                                     schedule_events = []
                                     for event in events:
                                         try:
+                                            # Get lesson_id - check both direct relationship and any alternative fields
+                                            lesson_id = None
+                                            if hasattr(event, 'lesson') and event.lesson:
+                                                lesson_id = str(event.lesson.id)
+                                            elif hasattr(event, 'lesson_id') and event.lesson_id:
+                                                lesson_id = str(event.lesson_id)
+                                            
                                             schedule_event = {
                                                 'id': str(event.id),
                                                 'title': event.title,
@@ -1250,6 +1257,7 @@ class StudentScheduleView(APIView):
                                                 'end': event.end_time.isoformat(),
                                                 'description': event.description or '',
                                                 'event_type': event.event_type,
+                                                'lesson_id': lesson_id,
                                                 'meeting_platform': event.meeting_platform,
                                                 'meeting_link': event.meeting_link,
                                                 'meeting_id': event.meeting_id,
@@ -1263,6 +1271,9 @@ class StudentScheduleView(APIView):
                                             all_event_dates.extend([event.start_time, event.end_time])
                                             
                                         except Exception as e:
+                                            print(f"⚠️ Error serializing event {event.id if hasattr(event, 'id') else 'unknown'}: {str(e)}")
+                                            import traceback
+                                            traceback.print_exc()
                                             continue
                                     
                                     # Add class with events
@@ -4970,10 +4981,6 @@ class CodeSnippetDetailView(APIView):
     
     def put(self, request, code_id):
         """Update a code snippet (full update)"""
-        print("=" * 80)
-        print("[PUT] CodeSnippetDetailView.put() CALLED")
-        print(f"[PUT] code_id: {code_id}")
-        print(f"[PUT] request.data: {request.data}")
         try:
             if request.user.role not in ['student', 'teacher']:
                 return Response(
@@ -4982,17 +4989,11 @@ class CodeSnippetDetailView(APIView):
                 )
             
             snippet = self.get_object(code_id, request.user)
-            print(f"[PUT] Retrieved snippet.id: {snippet.id}")
-            print(f"[PUT] Current snippet.language: {snippet.language}")
-            print(f"[PUT] Current snippet.css_file_url: {snippet.css_file_url}")
-            print(f"[PUT] Current snippet.title: {snippet.title}")
-            
             serializer = CodeSnippetCreateUpdateSerializer(snippet, data=request.data)
             
             if serializer.is_valid():
                 # Check if this is a CSS file update - if so, upload to GCP
                 language = serializer.validated_data.get('language', snippet.language).lower()
-                print(f"[PUT] New language from serializer: {language}")
                 css_file_url = None
                 
                 # Determine if we need to update CSS in GCP
@@ -5000,51 +5001,50 @@ class CodeSnippetDetailView(APIView):
                 if language == 'css':
                     needs_css_upload = True  # Full update always includes code
                 
-                print(f"[PUT] needs_css_upload: {needs_css_upload}")
-                
                 if needs_css_upload:
                     # Import CSS upload utility
-                    from .css_upload_utils import upload_css_to_gcp, delete_css_from_gcp
+                    from .css_upload_utils import upload_css_to_gcp, update_css_in_gcp
                     
                     css_content = serializer.validated_data.get('code', '')
                     title = serializer.validated_data.get('title', '')
-                    print(f"[PUT] css_content length: {len(css_content) if css_content else 0} chars")
-                    print(f"[PUT] title: {title}")
                     
-                    # Delete old GCP file if it exists
+                    # If CSS file already exists, update it in place (preserves URL)
+                    # Otherwise, create a new one
                     if snippet.css_file_url:
-                        print(f"[PUT] Calling delete_css_from_gcp() with: {snippet.css_file_url}")
-                        delete_css_from_gcp(snippet.css_file_url)
+                        # Update existing CSS file in GCP (preserves the same URL)
+                        css_file_url, saved_path = update_css_in_gcp(snippet.css_file_url, css_content)
+                        
+                        if css_file_url:
+                            # CSS updated successfully - URL remains the same
+                            pass
+                        else:
+                            # GCP update failed, try creating a new file as fallback
+                            import logging
+                            logger = logging.getLogger(__name__)
+                            logger.warning(f"Failed to update CSS in GCP, trying to create new file")
+                            css_file_url, saved_path = upload_css_to_gcp(css_content, title=title)
                     else:
-                        print(f"[PUT] No existing css_file_url to delete")
-                    
-                    # Upload new/updated CSS to GCP using snippet.id to keep URL consistent
-                    print(f"[PUT] Calling upload_css_to_gcp() with snippet.id: {snippet.id}, title: {title}")
-                    css_file_url, saved_path = upload_css_to_gcp(css_content, title=title, snippet_id=snippet.id)
-                    print(f"[PUT] upload_css_to_gcp() returned:")
-                    print(f"[PUT]   css_file_url: {css_file_url}")
-                    print(f"[PUT]   saved_path: {saved_path}")
+                        # No existing CSS file, create a new one
+                        css_file_url, saved_path = upload_css_to_gcp(css_content, title=title)
                     
                     if css_file_url:
-                        # CSS uploaded successfully - css_file_url will be set after save
+                        # CSS uploaded/updated successfully
                         pass
                     else:
-                        # GCP upload failed, but we'll still save to database
+                        # GCP upload/update failed, but we'll still save to database
                         import logging
                         logger = logging.getLogger(__name__)
-                        logger.warning(f"Failed to upload CSS to GCP for snippet update, but saving to database anyway")
+                        logger.warning(f"Failed to upload/update CSS to GCP for snippet update, but saving to database anyway")
                 
                 # Save the snippet
-                print(f"[PUT] Calling serializer.save()")
                 serializer.save()
-                print(f"[PUT] serializer.save() completed")
                 
-                # If CSS was uploaded, update the css_file_url field
+                # If CSS was uploaded/updated, update the css_file_url field
                 if needs_css_upload and css_file_url:
-                    print(f"[PUT] Updating snippet.css_file_url to: {css_file_url}")
-                    snippet.css_file_url = css_file_url
-                    snippet.save(update_fields=['css_file_url'])
-                    print(f"[PUT] snippet.save() completed, new css_file_url: {snippet.css_file_url}")
+                    # Only update if URL changed (new file created) or if it was None before
+                    if snippet.css_file_url != css_file_url or not snippet.css_file_url:
+                        snippet.css_file_url = css_file_url
+                        snippet.save(update_fields=['css_file_url'])
                 elif language != 'css' and snippet.css_file_url:
                     # Language changed away from CSS - delete GCP file and clear css_file_url
                     from .css_upload_utils import delete_css_from_gcp
@@ -5054,8 +5054,6 @@ class CodeSnippetDetailView(APIView):
                 
                 # Return full detail
                 detail_serializer = CodeSnippetDetailSerializer(snippet, context={'request': request})
-                print(f"[PUT] Returning response with css_file_url: {snippet.css_file_url}")
-                print("=" * 80)
                 return Response(detail_serializer.data, status=status.HTTP_200_OK)
             
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -5075,10 +5073,9 @@ class CodeSnippetDetailView(APIView):
     
     def patch(self, request, code_id):
         """Partially update a code snippet"""
-        print("=" * 80)
-        print("[PATCH] CodeSnippetDetailView.patch() CALLED")
-        print(f"[PATCH] code_id: {code_id}")
-        print(f"[PATCH] request.data: {request.data}")
+        print(f"[VIEWS PATCH] ===== PATCH METHOD CALLED =====")
+        print(f"[VIEWS PATCH] code_id: {code_id}")
+        print(f"[VIEWS PATCH] request.data: {request.data}")
         try:
             if request.user.role not in ['student', 'teacher']:
                 return Response(
@@ -5087,18 +5084,16 @@ class CodeSnippetDetailView(APIView):
                 )
             
             snippet = self.get_object(code_id, request.user)
-            print(f"[PATCH] Retrieved snippet.id: {snippet.id}")
-            print(f"[PATCH] Current snippet.language: {snippet.language}")
-            print(f"[PATCH] Current snippet.css_file_url: {snippet.css_file_url}")
-            print(f"[PATCH] Current snippet.title: {snippet.title}")
-            
+            print(f"[VIEWS PATCH] snippet.language: {snippet.language}")
+            print(f"[VIEWS PATCH] snippet.css_file_url: {snippet.css_file_url}")
             serializer = CodeSnippetCreateUpdateSerializer(snippet, data=request.data, partial=True)
             
             if serializer.is_valid():
                 # Check if this is a CSS file update - if so, upload to GCP
                 language = serializer.validated_data.get('language', snippet.language).lower()
-                print(f"[PATCH] New language from serializer: {language}")
                 css_file_url = None
+                print(f"[VIEWS PATCH] Language: {language}, snippet.language: {snippet.language}")
+                print(f"[VIEWS PATCH] serializer.validated_data keys: {list(serializer.validated_data.keys())}")
                 
                 # Determine if we need to update CSS in GCP
                 # Case 1: Language is being changed to CSS
@@ -5107,66 +5102,85 @@ class CodeSnippetDetailView(APIView):
                 if language == 'css':
                     if 'code' in serializer.validated_data or 'language' in serializer.validated_data:
                         needs_css_upload = True
-                
-                print(f"[PATCH] needs_css_upload: {needs_css_upload}")
-                print(f"[PATCH] 'code' in serializer.validated_data: {'code' in serializer.validated_data}")
-                print(f"[PATCH] 'language' in serializer.validated_data: {'language' in serializer.validated_data}")
+                        print(f"[VIEWS PATCH] needs_css_upload set to True because language is css and code/language in validated_data")
+                else:
+                    print(f"[VIEWS PATCH] needs_css_upload is False (language is {language})")
                 
                 if needs_css_upload:
+                    print(f"[VIEWS PATCH] needs_css_upload is True")
                     # Import CSS upload utility
-                    from .css_upload_utils import upload_css_to_gcp, delete_css_from_gcp
+                    from .css_upload_utils import upload_css_to_gcp, update_css_in_gcp
                     
                     css_content = serializer.validated_data.get('code', snippet.code)
                     title = serializer.validated_data.get('title', snippet.title)
-                    print(f"[PATCH] css_content length: {len(css_content) if css_content else 0} chars")
-                    print(f"[PATCH] title: {title}")
+                    print(f"[VIEWS PATCH] css_content length: {len(css_content) if css_content else 0}")
+                    print(f"[VIEWS PATCH] title: {title}")
+                    print(f"[VIEWS PATCH] snippet.css_file_url: {snippet.css_file_url}")
                     
-                    # Delete old GCP file if it exists
+                    # If CSS file already exists, update it in place (preserves URL)
+                    # Otherwise, create a new one
                     if snippet.css_file_url:
-                        print(f"[PATCH] Calling delete_css_from_gcp() with: {snippet.css_file_url}")
-                        delete_css_from_gcp(snippet.css_file_url)
+                        print(f"[VIEWS PATCH] css_file_url exists, calling update_css_in_gcp")
+                        # Update existing CSS file in GCP (preserves the same URL)
+                        css_file_url, saved_path = update_css_in_gcp(snippet.css_file_url, css_content)
+                        print(f"[VIEWS PATCH] update_css_in_gcp returned: css_file_url={css_file_url}, saved_path={saved_path}")
+                        
+                        if css_file_url:
+                            # CSS updated successfully - URL remains the same
+                            print(f"[VIEWS PATCH] CSS updated successfully, URL: {css_file_url}")
+                            pass
+                        else:
+                            # GCP update failed, try creating a new file as fallback
+                            print(f"[VIEWS PATCH] GCP update failed, trying to create new file")
+                            css_file_url, saved_path = upload_css_to_gcp(css_content, title=title)
+                            print(f"[VIEWS PATCH] upload_css_to_gcp returned: css_file_url={css_file_url}, saved_path={saved_path}")
                     else:
-                        print(f"[PATCH] No existing css_file_url to delete")
-                    
-                    # Upload new/updated CSS to GCP using snippet.id to keep URL consistent
-                    print(f"[PATCH] Calling upload_css_to_gcp() with snippet.id: {snippet.id}, title: {title}")
-                    css_file_url, saved_path = upload_css_to_gcp(css_content, title=title, snippet_id=snippet.id)
-                    print(f"[PATCH] upload_css_to_gcp() returned:")
-                    print(f"[PATCH]   css_file_url: {css_file_url}")
-                    print(f"[PATCH]   saved_path: {saved_path}")
+                        # No existing CSS file, create a new one
+                        print(f"[VIEWS PATCH] No css_file_url, creating new file")
+                        css_file_url, saved_path = upload_css_to_gcp(css_content, title=title)
+                        print(f"[VIEWS PATCH] upload_css_to_gcp returned: css_file_url={css_file_url}, saved_path={saved_path}")
                     
                     if css_file_url:
-                        # CSS uploaded successfully - css_file_url will be set after save
+                        # CSS uploaded/updated successfully
                         pass
                     else:
-                        # GCP upload failed, but we'll still save to database
+                        # GCP upload/update failed, but we'll still save to database
                         # Log warning but don't fail the request
                         import logging
                         logger = logging.getLogger(__name__)
-                        logger.warning(f"Failed to upload CSS to GCP for snippet update, but saving to database anyway")
+                        logger.warning(f"Failed to upload/update CSS to GCP for snippet update, but saving to database anyway")
                 
                 # Save the snippet
-                print(f"[PATCH] Calling serializer.save()")
                 serializer.save()
-                print(f"[PATCH] serializer.save() completed")
+                print(f"[VIEWS PATCH] After serializer.save(), snippet.css_file_url: {snippet.css_file_url}")
                 
-                # If CSS was uploaded, update the css_file_url field
+                # If CSS was uploaded/updated, update the css_file_url field
                 if needs_css_upload and css_file_url:
-                    print(f"[PATCH] Updating snippet.css_file_url to: {css_file_url}")
-                    snippet.css_file_url = css_file_url
-                    snippet.save(update_fields=['css_file_url'])
-                    print(f"[PATCH] snippet.save() completed, new css_file_url: {snippet.css_file_url}")
+                    print(f"[VIEWS PATCH] needs_css_upload=True, css_file_url={css_file_url}")
+                    print(f"[VIEWS PATCH] snippet.css_file_url before update: {snippet.css_file_url}")
+                    # Only update if URL changed (new file created) or if it was None before
+                    if snippet.css_file_url != css_file_url or not snippet.css_file_url:
+                        print(f"[VIEWS PATCH] URLs differ or css_file_url was None, updating database")
+                        snippet.css_file_url = css_file_url
+                        snippet.save(update_fields=['css_file_url'])
+                        print(f"[VIEWS PATCH] After save, snippet.css_file_url: {snippet.css_file_url}")
+                    else:
+                        print(f"[VIEWS PATCH] URLs are the same, no database update needed")
                 elif language != 'css' and snippet.css_file_url:
                     # Language changed away from CSS - delete GCP file and clear css_file_url
+                    print(f"[VIEWS PATCH] Language changed away from CSS, deleting GCP file")
                     from .css_upload_utils import delete_css_from_gcp
                     delete_css_from_gcp(snippet.css_file_url)
                     snippet.css_file_url = None
                     snippet.save(update_fields=['css_file_url'])
                 
+                # Refresh snippet from database to get latest values
+                snippet.refresh_from_db()
+                print(f"[VIEWS PATCH] After refresh_from_db(), snippet.css_file_url: {snippet.css_file_url}")
+                
                 # Return full detail
                 detail_serializer = CodeSnippetDetailSerializer(snippet, context={'request': request})
-                print(f"[PATCH] Returning response with css_file_url: {snippet.css_file_url}")
-                print("=" * 80)
+                print(f"[VIEWS PATCH] Returning response with css_file_url: {detail_serializer.data.get('css_file_url')}")
                 return Response(detail_serializer.data, status=status.HTTP_200_OK)
             
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -5528,3 +5542,211 @@ def admin_course_lessons(request, course_id):
             {'error': 'Failed to fetch lessons', 'details': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+class StudentClassroomClassesView(APIView):
+    """
+    Get all classes for student classroom page.
+    Returns classes categorized by status: in_progress, upcoming, and finished.
+    
+    GET /api/student/classroom/classes/
+    
+    Response:
+    {
+        "in_progress_classes": [
+            {
+                "id": "uuid",
+                "name": "Class Name",
+                "course_name": "Course Name",
+                "course_id": "uuid",
+                "color": "#3B82F6",
+                "current_event": {
+                    "id": "uuid",
+                    "title": "Event Title",
+                    "start": "2024-01-15T10:00:00Z",
+                    "end": "2024-01-15T11:30:00Z",
+                    "meeting_link": "https://...",
+                    "meeting_platform": "google-meet",
+                    "description": "..."
+                }
+            }
+        ],
+        "upcoming_classes": [...],
+        "finished_classes": [...],
+        "summary": {
+            "total_in_progress": 2,
+            "total_upcoming": 5,
+            "total_finished": 10
+        }
+    }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """Get all classes for the authenticated student"""
+        try:
+            # Step 1: Validate user is a student
+            if request.user.role != 'student':
+                return Response(
+                    {'error': 'Only students can access classroom classes'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Step 2: Get current time
+            now = timezone.now()
+            
+            # Step 3: Get all enrollments for this student
+            enrollments = EnrolledCourse.objects.filter(
+                student_profile__user=request.user,
+                status='active'
+            ).select_related('course', 'student_profile')
+            
+            if not enrollments.exists():
+                return Response({
+                    'in_progress_classes': [],
+                    'upcoming_classes': [],
+                    'finished_classes': [],
+                    'summary': {
+                        'total_in_progress': 0,
+                        'total_upcoming': 0,
+                        'total_finished': 0
+                    }
+                }, status=status.HTTP_200_OK)
+            
+            # Step 4: Color palette (same as StudentScheduleView)
+            color_palette = [
+                {'bg': '#3B82F6', 'border': '#2563EB', 'text': '#FFFFFF'},  # Blue
+                {'bg': '#10B981', 'border': '#059669', 'text': '#FFFFFF'},  # Green
+                {'bg': '#F59E0B', 'border': '#D97706', 'text': '#FFFFFF'},  # Amber
+                {'bg': '#EF4444', 'border': '#DC2626', 'text': '#FFFFFF'},  # Red
+                {'bg': '#8B5CF6', 'border': '#7C3AED', 'text': '#FFFFFF'},  # Purple
+                {'bg': '#06B6D4', 'border': '#0891B2', 'text': '#FFFFFF'},  # Cyan
+                {'bg': '#F97316', 'border': '#EA580C', 'text': '#FFFFFF'},  # Orange
+                {'bg': '#EC4899', 'border': '#DB2777', 'text': '#FFFFFF'},  # Pink
+            ]
+            
+            # Step 5: Get all classes from enrolled courses
+            enrolled_course_ids = enrollments.values_list('course_id', flat=True)
+            classes = Class.objects.filter(
+                course_id__in=enrolled_course_ids,
+                is_active=True
+            ).select_related('course')
+            
+            # Step 6: Get all events for these classes
+            class_ids = classes.values_list('id', flat=True)
+            events = ClassEvent.objects.filter(
+                class_instance_id__in=class_ids
+            ).order_by('start_time')
+            
+            # Step 7: Categorize classes by their events
+            in_progress_classes = []
+            upcoming_classes = []
+            finished_classes = []
+            
+            class_index = 0
+            for class_obj in classes:
+                class_events = [e for e in events if e.class_instance_id == class_obj.id]
+                
+                if not class_events:
+                    continue
+                
+                # Assign color based on index (same pattern as StudentScheduleView)
+                color_index = class_index % len(color_palette)
+                colors = color_palette[color_index]
+                class_index += 1
+                
+                # Find current/upcoming/finished events
+                current_event = None
+                upcoming_event = None
+                latest_finished_event = None
+                
+                for event in class_events:
+                    event_start = event.start_time
+                    event_end = event.end_time or event_start
+                    
+                    # Check if event is in progress
+                    if event_start <= now < event_end:
+                        current_event = event
+                        break
+                    # Check if event is upcoming
+                    elif event_start > now:
+                        if not upcoming_event or event_start < upcoming_event.start_time:
+                            upcoming_event = event
+                    # Check if event is finished
+                    elif event_end < now:
+                        if not latest_finished_event or event_end > (latest_finished_event.end_time or latest_finished_event.start_time):
+                            latest_finished_event = event
+                
+                # Build class data
+                class_data = {
+                    'id': str(class_obj.id),
+                    'name': class_obj.name,
+                    'course_name': class_obj.course.title,
+                    'course_id': str(class_obj.course.id),
+                    'color': colors['bg'],
+                }
+                
+                # Categorize class
+                if current_event:
+                    # Class has an event in progress
+                    class_data['current_event'] = self._serialize_event(current_event)
+                    in_progress_classes.append(class_data)
+                elif upcoming_event:
+                    # Class has upcoming events but none in progress
+                    class_data['next_event'] = self._serialize_event(upcoming_event)
+                    upcoming_classes.append(class_data)
+                elif latest_finished_event:
+                    # Class only has finished events
+                    class_data['last_event'] = self._serialize_event(latest_finished_event)
+                    finished_classes.append(class_data)
+            
+            # Step 8: Sort classes
+            # In progress: by start time (earliest first)
+            in_progress_classes.sort(
+                key=lambda x: x['current_event']['start'] if 'current_event' in x else ''
+            )
+            
+            # Upcoming: by next event start time (earliest first)
+            upcoming_classes.sort(
+                key=lambda x: x['next_event']['start'] if 'next_event' in x else ''
+            )
+            
+            # Finished: by last event end time (most recent first)
+            finished_classes.sort(
+                key=lambda x: x['last_event']['end'] if 'last_event' in x and x['last_event']['end'] else x['last_event']['start'] if 'last_event' in x else '',
+                reverse=True
+            )
+            
+            response_data = {
+                'in_progress_classes': in_progress_classes,
+                'upcoming_classes': upcoming_classes,
+                'finished_classes': finished_classes,
+                'summary': {
+                    'total_in_progress': len(in_progress_classes),
+                    'total_upcoming': len(upcoming_classes),
+                    'total_finished': len(finished_classes)
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to fetch classroom classes: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _serialize_event(self, event):
+        """Serialize a ClassEvent to dictionary"""
+        return {
+            'id': str(event.id),
+            'title': event.title,
+            'start': event.start_time.isoformat() if event.start_time else None,
+            'end': event.end_time.isoformat() if event.end_time else (event.start_time.isoformat() if event.start_time else None),
+            'description': event.description or '',
+            'event_type': event.event_type,
+            'meeting_platform': event.meeting_platform,
+            'meeting_link': event.meeting_link,
+            'meeting_id': event.meeting_id,
+            'meeting_password': event.meeting_password,
+        }

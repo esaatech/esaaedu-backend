@@ -520,6 +520,7 @@ class ScheduleEventSerializer(serializers.Serializer):
     end = serializers.DateTimeField()
     description = serializers.CharField(allow_blank=True)
     event_type = serializers.CharField()
+    lesson_id = serializers.CharField(allow_null=True, allow_blank=True, required=False)
     meeting_platform = serializers.CharField(allow_null=True, allow_blank=True)
     meeting_link = serializers.URLField(allow_null=True, allow_blank=True)
     meeting_id = serializers.CharField(allow_null=True, allow_blank=True)
