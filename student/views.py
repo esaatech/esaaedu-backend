@@ -5597,10 +5597,14 @@ class StudentClassroomClassesView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            # Step 2: Get current time
+            # Step 2: Get pagination parameters for finished classes
+            finished_offset = int(request.query_params.get('finished_offset', 0))
+            finished_limit = int(request.query_params.get('finished_limit', 5))
+            
+            # Step 3: Get current time
             now = timezone.now()
             
-            # Step 3: Get all enrollments for this student
+            # Step 4: Get all enrollments for this student
             enrollments = EnrolledCourse.objects.filter(
                 student_profile__user=request.user,
                 status='active'
@@ -5610,15 +5614,21 @@ class StudentClassroomClassesView(APIView):
                 return Response({
                     'in_progress_classes': [],
                     'upcoming_classes': [],
-                    'finished_classes': [],
+                    'finished_events': [],
                     'summary': {
                         'total_in_progress': 0,
                         'total_upcoming': 0,
                         'total_finished': 0
+                    },
+                    'finished_events_pagination': {
+                        'offset': finished_offset,
+                        'limit': finished_limit,
+                        'total_count': 0,
+                        'has_more': False
                     }
                 }, status=status.HTTP_200_OK)
             
-            # Step 4: Color palette (same as StudentScheduleView)
+            # Step 5: Color palette (same as StudentScheduleView)
             color_palette = [
                 {'bg': '#3B82F6', 'border': '#2563EB', 'text': '#FFFFFF'},  # Blue
                 {'bg': '#10B981', 'border': '#059669', 'text': '#FFFFFF'},  # Green
@@ -5630,7 +5640,7 @@ class StudentClassroomClassesView(APIView):
                 {'bg': '#EC4899', 'border': '#DB2777', 'text': '#FFFFFF'},  # Pink
             ]
             
-            # Step 5: Get only classes the student is enrolled in (not all classes from enrolled courses)
+            # Step 6: Get only classes the student is enrolled in (not all classes from enrolled courses)
             # Students enroll in specific classes, not all classes in a course
             enrolled_course_ids = enrollments.values_list('course_id', flat=True)
             classes = Class.objects.filter(
@@ -5639,17 +5649,20 @@ class StudentClassroomClassesView(APIView):
                 is_active=True
             ).select_related('course')
             
-            # Step 6: Get all events for these classes
+            # Step 7: Get all events for these classes
             class_ids = classes.values_list('id', flat=True)
             events = ClassEvent.objects.filter(
                 class_instance_id__in=class_ids
             ).order_by('start_time')
             
-            # Step 7: Categorize classes by their events
+            # Step 8: Categorize classes by their events (for in_progress and upcoming)
+            # Also build a map of class_id -> class_obj for event lookups
             in_progress_classes = []
             upcoming_classes = []
-            finished_classes = []
+            finished_events = []
             
+            # Create a map of class_id -> (class_obj, color_index) for quick lookups
+            class_map = {}
             class_index = 0
             for class_obj in classes:
                 class_events = [e for e in events if e.class_instance_id == class_obj.id]
@@ -5660,12 +5673,16 @@ class StudentClassroomClassesView(APIView):
                 # Assign color based on index (same pattern as StudentScheduleView)
                 color_index = class_index % len(color_palette)
                 colors = color_palette[color_index]
+                class_map[str(class_obj.id)] = {
+                    'class_obj': class_obj,
+                    'colors': colors,
+                    'events': class_events
+                }
                 class_index += 1
                 
-                # Find current/upcoming/finished events
+                # Find current/upcoming events for class categorization
                 current_event = None
                 upcoming_event = None
-                latest_finished_event = None
                 
                 for event in class_events:
                     event_start = event.start_time
@@ -5679,12 +5696,8 @@ class StudentClassroomClassesView(APIView):
                     elif event_start > now:
                         if not upcoming_event or event_start < upcoming_event.start_time:
                             upcoming_event = event
-                    # Check if event is finished
-                    elif event_end < now:
-                        if not latest_finished_event or event_end > (latest_finished_event.end_time or latest_finished_event.start_time):
-                            latest_finished_event = event
                 
-                # Build class data
+                # Build class data for in_progress and upcoming
                 class_data = {
                     'id': str(class_obj.id),
                     'name': class_obj.name,
@@ -5693,7 +5706,7 @@ class StudentClassroomClassesView(APIView):
                     'color': colors['bg'],
                 }
                 
-                # Categorize class
+                # Categorize class (only for in_progress and upcoming)
                 if current_event:
                     # Class has an event in progress
                     class_data['current_event'] = self._serialize_event(current_event)
@@ -5702,12 +5715,42 @@ class StudentClassroomClassesView(APIView):
                     # Class has upcoming events but none in progress
                     class_data['next_event'] = self._serialize_event(upcoming_event)
                     upcoming_classes.append(class_data)
-                elif latest_finished_event:
-                    # Class only has finished events
-                    class_data['last_event'] = self._serialize_event(latest_finished_event)
-                    finished_classes.append(class_data)
             
-            # Step 8: Sort classes
+            # Step 8b: Build finished_events list from all past events
+            for event in events:
+                event_start = event.start_time
+                event_end = event.end_time or event_start
+                
+                # Only include finished events
+                if event_end < now:
+                    class_id = str(event.class_instance_id)
+                    if class_id in class_map:
+                        class_info = class_map[class_id]
+                        class_obj = class_info['class_obj']
+                        colors = class_info['colors']
+                        
+                        # Build event entry with class/course context
+                        event_entry = {
+                            'event_id': str(event.id),
+                            'event_title': event.title,
+                            'event_start': event.start_time.isoformat() if event.start_time else None,
+                            'event_end': event_end.isoformat() if event_end else None,
+                            'event_description': event.description or '',
+                            'event_type': event.event_type,
+                            'meeting_platform': event.meeting_platform,
+                            'meeting_link': event.meeting_link,
+                            'meeting_id': event.meeting_id,
+                            'meeting_password': event.meeting_password,
+                            'class_id': class_id,
+                            'class_name': class_obj.name,
+                            'course_id': str(class_obj.course.id),
+                            'course_name': class_obj.course.title,
+                            'color': colors['bg'],
+                            'lesson_id': str(event.lesson.id) if event.lesson else None,
+                        }
+                        finished_events.append(event_entry)
+            
+            # Step 9: Sort classes and events
             # In progress: by start time (earliest first)
             in_progress_classes.sort(
                 key=lambda x: x['current_event']['start'] if 'current_event' in x else ''
@@ -5718,20 +5761,33 @@ class StudentClassroomClassesView(APIView):
                 key=lambda x: x['next_event']['start'] if 'next_event' in x else ''
             )
             
-            # Finished: by last event end time (most recent first)
-            finished_classes.sort(
-                key=lambda x: x['last_event']['end'] if 'last_event' in x and x['last_event']['end'] else x['last_event']['start'] if 'last_event' in x else '',
+            # Finished events: by event_end time (most recent first)
+            finished_events.sort(
+                key=lambda x: x['event_end'] if x['event_end'] else x['event_start'] if x['event_start'] else '',
                 reverse=True
             )
             
+            # Step 10: Store total count before pagination
+            total_finished_count = len(finished_events)
+            
+            # Step 11: Apply pagination to finished events
+            paginated_finished_events = finished_events[finished_offset:finished_offset + finished_limit]
+            
+            # Step 12: Build response with pagination metadata
             response_data = {
                 'in_progress_classes': in_progress_classes,
                 'upcoming_classes': upcoming_classes,
-                'finished_classes': finished_classes,
+                'finished_events': paginated_finished_events,
                 'summary': {
                     'total_in_progress': len(in_progress_classes),
                     'total_upcoming': len(upcoming_classes),
-                    'total_finished': len(finished_classes)
+                    'total_finished': total_finished_count
+                },
+                'finished_events_pagination': {
+                    'offset': finished_offset,
+                    'limit': finished_limit,
+                    'total_count': total_finished_count,
+                    'has_more': (finished_offset + finished_limit) < total_finished_count
                 }
             }
             
