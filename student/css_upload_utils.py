@@ -214,6 +214,152 @@ def upload_css_to_gcp(css_content, title=None, snippet_id=None):
         return None, None
 
 
+def update_css_in_gcp(css_file_url, css_content):
+    """
+    Update an existing CSS file in Google Cloud Storage at the given URL.
+    
+    This function updates the CSS content at the exact URL path, preserving the same URL.
+    It uses the GCS client directly to ensure the file is overwritten rather than creating
+    a new file. This is critical for maintaining consistent URLs across updates.
+    
+    Args:
+        css_file_url: The existing GCS URL of the CSS file to update
+        css_content: The new CSS code content as a string
+    
+    Returns:
+        tuple: (file_url: str, saved_path: str) or (None, None) on error
+        - file_url: The same URL as the input (since we're updating in place)
+        - saved_path: The storage path in GCS
+    
+    Example:
+        >>> css_code = "h1 { color: red; }"
+        >>> url, path = update_css_in_gcp("https://storage.googleapis.com/bucket/css-files/uuid-styles.css", css_code)
+        >>> print(url)  # Same URL as input
+    """
+    print("=" * 80)
+    print("[update_css_in_gcp] FUNCTION CALLED")
+    print(f"[update_css_in_gcp] css_file_url parameter: {css_file_url}")
+    print(f"[update_css_in_gcp] css_content length: {len(css_content) if css_content else 0} chars")
+    
+    # Validate inputs
+    if not css_file_url:
+        print("[update_css_in_gcp] ERROR: No css_file_url provided")
+        logger.warning("Attempted to update CSS file without providing URL")
+        return None, None
+    
+    if not css_content or not css_content.strip():
+        print("[update_css_in_gcp] ERROR: Empty CSS content")
+        logger.warning("Attempted to update CSS file with empty content")
+        return None, None
+    
+    # Check if GCS is configured
+    if not hasattr(settings, 'GS_BUCKET_NAME') or not settings.GS_BUCKET_NAME:
+        print("[update_css_in_gcp] ERROR: GCS not configured")
+        logger.error("Google Cloud Storage is not configured. GS_BUCKET_NAME not set.")
+        return None, None
+    
+    # Check if GCS client is available (required for overwrite)
+    if not GCS_CLIENT_AVAILABLE:
+        print("[update_css_in_gcp] ERROR: GCS client not available")
+        logger.error("GCS client not available. Cannot update file without overwrite capability.")
+        return None, None
+    
+    try:
+        # Extract the storage path from the URL (same logic as delete_css_from_gcp)
+        # URL format: https://storage.googleapis.com/bucket-name/css-files/uuid-filename.css
+        # or: /media/css-files/uuid-filename.css
+        if 'storage.googleapis.com' in css_file_url:
+            print("[update_css_in_gcp] URL contains 'storage.googleapis.com'")
+            # Extract path after bucket name
+            parts = css_file_url.split('/')
+            print(f"[update_css_in_gcp] URL parts: {parts}")
+            try:
+                # Find 'css-files' in the URL and get everything after it
+                css_files_index = parts.index('css-files')
+                file_path = '/'.join(parts[css_files_index:])
+                print(f"[update_css_in_gcp] Found 'css-files' at index {css_files_index}")
+            except ValueError:
+                print("[update_css_in_gcp] 'css-files' not found in URL parts, using fallback")
+                # Fallback: try to extract from end of URL
+                file_path = css_file_url.split('/css-files/')[-1]
+                if file_path:
+                    file_path = f"css-files/{file_path}"
+                else:
+                    print(f"[update_css_in_gcp] ERROR: Could not extract path from CSS URL")
+                    logger.warning(f"Could not extract path from CSS URL: {css_file_url}")
+                    return None, None
+        else:
+            print("[update_css_in_gcp] URL does not contain 'storage.googleapis.com', treating as relative path")
+            # Assume it's a relative path
+            file_path = css_file_url.lstrip('/')
+        
+        print(f"[update_css_in_gcp] Extracted file_path: {file_path}")
+        
+        # Create ContentFile from CSS content
+        css_file = ContentFile(css_content.encode('utf-8'))
+        css_file.name = file_path.split('/')[-1]  # Use filename from path
+        
+        # Use GCS client directly to ensure overwrite (same pattern as upload_css_to_gcp)
+        print(f"[update_css_in_gcp] Using GCS client directly for overwrite")
+        try:
+            # Get GCS client
+            if hasattr(settings, 'GS_CREDENTIALS') and settings.GS_CREDENTIALS:
+                if isinstance(settings.GS_CREDENTIALS, str):
+                    # Path to credentials file
+                    client = storage.Client.from_service_account_json(
+                        settings.GS_CREDENTIALS,
+                        project=settings.GS_PROJECT_ID
+                    )
+                else:
+                    # Credentials object
+                    client = storage.Client(
+                        credentials=settings.GS_CREDENTIALS,
+                        project=settings.GS_PROJECT_ID
+                    )
+            else:
+                # Use default credentials
+                client = storage.Client(project=settings.GS_PROJECT_ID)
+            
+            bucket = client.bucket(settings.GS_BUCKET_NAME)
+            blob = bucket.blob(file_path)
+            
+            # Set cache-control to prevent caching
+            blob.cache_control = 'no-cache, no-store, must-revalidate'
+            blob.content_type = 'text/css'
+            
+            # Upload with overwrite
+            css_file.seek(0)  # Reset file pointer
+            blob.upload_from_file(css_file, content_type='text/css')
+            
+            # Make it publicly readable
+            blob.make_public()
+            
+            saved_path = file_path
+            file_url = blob.public_url
+            print(f"[update_css_in_gcp] GCS client upload successful")
+            print(f"[update_css_in_gcp] Cache-control set to: no-cache, no-store, must-revalidate")
+            print(f"[update_css_in_gcp] Updated file at path: {saved_path}")
+            print(f"[update_css_in_gcp] File URL (preserved): {file_url}")
+            print("=" * 80)
+            
+            logger.info(f"CSS file updated successfully in GCS: {saved_path}")
+            logger.info(f"CSS file URL (preserved): {file_url}")
+            
+            return file_url, saved_path
+            
+        except Exception as e:
+            print(f"[update_css_in_gcp] ERROR: GCS client upload failed: {e}")
+            logger.error(f"Error updating CSS file in GCS: {e}", exc_info=True)
+            print("=" * 80)
+            return None, None
+            
+    except Exception as e:
+        print(f"[update_css_in_gcp] EXCEPTION: {e}")
+        logger.error(f"Error updating CSS file in GCS: {e}", exc_info=True)
+        print("=" * 80)
+        return None, None
+
+
 def delete_css_from_gcp(css_file_url):
     """
     Delete a CSS file from Google Cloud Storage given its URL.

@@ -38,3 +38,7 @@ Django REST API backend for the Little Learners Tech educational platform.
 - `/api/courses/` - Course management
 - `/api/lessons/` - Lesson content
 - `/api/quizzes/` - Quiz system
+
+## Documentation
+
+- [CSS File Upload to Google Cloud Storage](student/docs/CSS_FILE_UPLOAD.md) - Documentation for the CSS file upload system, including URL consistency, caching prevention, and GCS integration
