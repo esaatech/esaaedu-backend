@@ -12,8 +12,12 @@ from django.db import models
 from django.db.models import Q, Count, Avg
 from datetime import datetime, timedelta
 import uuid
+import logging
 
 from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback, Conversation, Message, CodeSnippet
+from teacher.utils import FileUploadService
+
+logger = logging.getLogger(__name__)
 from courses.models import Class, ClassEvent, Course, Lesson, Quiz, QuizAttempt, Question, Assignment, AssignmentSubmission, Classroom, ProjectSubmission, CourseAssessmentSubmission, CourseAssessment
 from settings.models import UserDashboardSettings
 from .serializers import (
@@ -5813,3 +5817,136 @@ class StudentClassroomClassesView(APIView):
             'meeting_id': event.meeting_id,
             'meeting_password': event.meeting_password,
         }
+
+
+class StudentFileUploadView(APIView):
+    """
+    API view for students to upload files to Google Cloud Storage.
+    Handles images, videos, audio, documents, and other file types.
+    Uses the shared FileUploadService utility for consistent behavior with teacher uploads.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        """
+        Upload any file type to GCS with appropriate processing.
+        
+        Expected request:
+        - file: File object (any type)
+        - path: Optional string - Storage path in GCS (defaults to 'files/')
+               Must be alphanumeric with underscores/hyphens only
+        
+        Returns:
+        - file_url: GCS URL for the uploaded file
+        - file_size: Size in bytes
+        - file_size_mb: Size in MB
+        - file_extension: File extension
+        - mime_type: MIME type
+        - file_type: Detected file type (image, video, audio, document, other)
+        - original_filename: Original filename
+        - thumbnail_url: GCS URL for thumbnail (only for images)
+        """
+        try:
+            # Check if user is a student
+            if request.user.role != 'student':
+                return Response(
+                    {'error': 'Only students can upload files'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Get uploaded file
+            uploaded_file = request.FILES.get('file')
+            if not uploaded_file:
+                return Response(
+                    {'error': 'No file provided'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Get optional path parameter (defaults to 'files')
+            storage_path = request.data.get('path', 'files')
+            
+            # Use FileUploadService to handle the upload
+            try:
+                result = FileUploadService.upload_file(uploaded_file, storage_path)
+                return Response(result, status=status.HTTP_201_CREATED)
+            except ValueError as e:
+                # Validation errors (file size, extension, etc.)
+                return Response(
+                    {'error': str(e)},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            except Exception as e:
+                # Processing/upload errors
+                logger.error(f"Error processing/uploading file: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return Response(
+                    {'error': f'Failed to process/upload file: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in file upload: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Error during file upload: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class StudentFileDeleteView(APIView):
+    """
+    API view for students to delete files from Google Cloud Storage.
+    Uses the shared FileUploadService utility for consistent behavior with teacher deletions.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request):
+        """
+        Delete a file from GCS by URL.
+        For images, also deletes the associated thumbnail.
+        
+        Expected request body:
+        - file_url: GCS URL of the file to delete
+        
+        Returns:
+        - message: Success message
+        """
+        try:
+            # Check if user is a student
+            if request.user.role != 'student':
+                return Response(
+                    {'error': 'Only students can delete files'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            file_url = request.data.get('file_url')
+            if not file_url:
+                return Response(
+                    {'error': 'file_url is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Use FileUploadService to handle the deletion
+            try:
+                result = FileUploadService.delete_file(file_url)
+                return Response(
+                    {'message': result['message']},
+                    status=status.HTTP_200_OK
+                )
+            except Exception as e:
+                logger.error(f"Error deleting file: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return Response(
+                    {'error': f'Failed to delete file: {str(e)}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in file delete: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Error during file deletion: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

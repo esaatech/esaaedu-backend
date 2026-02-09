@@ -66,6 +66,10 @@ urlpatterns = [
     path('code-snippets/<uuid:code_id>/', views.CodeSnippetDetailView.as_view(), name='code_snippet_detail'),
     path('code-snippets/share/<str:share_token>/', views.CodeSnippetShareView.as_view(), name='code_snippet_share'),
     
+    # File Upload URLs
+    path('files/upload/', views.StudentFileUploadView.as_view(), name='student_file_upload'),
+    path('files/delete/', views.StudentFileDeleteView.as_view(), name='student_file_delete'),
+    
     # Admin endpoints for enrollment form
     path('admin/courses/<uuid:course_id>/classes/', views.admin_course_classes, name='admin_course_classes'),
     path('admin/courses/<uuid:course_id>/lessons/', views.admin_course_lessons, name='admin_course_lessons'),

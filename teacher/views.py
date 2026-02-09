@@ -36,6 +36,7 @@ from ai.video_transcription_service import VideoTranscriptionService
 from ai.gemini_quiz_service import GeminiQuizService
 from ai.gemini_assignment_service import GeminiAssignmentService
 from courses.serializers import VideoMaterialSerializer, VideoMaterialCreateSerializer, VideoMaterialTranscribeSerializer, CourseAssessmentGradingSerializer, CourseAssessmentSubmissionResponseSerializer
+from .utils import FileUploadService
 
 
 class TeacherProfileAPIView(APIView):
@@ -3950,51 +3951,21 @@ class AllFileUploadView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Get file metadata
-            original_filename = uploaded_file.name
-            file_extension = original_filename.split('.')[-1].lower() if '.' in original_filename else ''
-            mime_type = uploaded_file.content_type or 'application/octet-stream'
+            # Get optional path parameter (defaults to 'files')
+            storage_path = request.data.get('path', 'files')
             
-            # Detect file type
-            file_type = self._detect_file_type(mime_type, file_extension)
-            
-            # Get size limits based on file type
-            max_size = self._get_max_size(file_type)
-            
-            # Validate file size
-            if uploaded_file.size > max_size:
+            # Use FileUploadService to handle the upload
+            try:
+                result = FileUploadService.upload_file(uploaded_file, storage_path)
+                return Response(result, status=status.HTTP_201_CREATED)
+            except ValueError as e:
+                # Validation errors (file size, extension, etc.)
                 return Response(
-                    {'error': f'File size exceeds maximum allowed size of {max_size / (1024 * 1024)}MB. File size: {round(uploaded_file.size / (1024 * 1024), 2)}MB'},
+                    {'error': str(e)},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-
-            # Check if GCS is configured
-            from django.core.files.storage import default_storage
-            from django.conf import settings
-            from django.core.files.base import ContentFile
-            import uuid
-            import re
-            
-            if not hasattr(settings, 'GS_BUCKET_NAME') or not settings.GS_BUCKET_NAME:
-                return Response(
-                    {'error': 'Google Cloud Storage is not configured. Please set GCS_BUCKET_NAME and GCS_PROJECT_ID environment variables.'},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-            
-            try:
-                # Get optional path parameter (defaults to 'files/')
-                storage_path = request.data.get('path', 'files')
-                # Validate path to prevent path traversal attacks (only alphanumeric, underscore, hyphen)
-                if not re.match(r'^[a-zA-Z0-9_-]+$', storage_path):
-                    storage_path = 'files'  # Fallback to default if invalid
-                
-                # Process based on file type
-                if file_type == 'image':
-                    return self._handle_image_upload(uploaded_file, storage_path, original_filename, file_extension, mime_type)
-                else:
-                    return self._handle_other_file_upload(uploaded_file, storage_path, original_filename, file_extension, mime_type, file_type)
-                    
             except Exception as e:
+                # Processing/upload errors
                 logger.error(f"Error processing/uploading file: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
@@ -4008,208 +3979,6 @@ class AllFileUploadView(APIView):
             logger.error(f"Error in file upload: {e}\n{traceback.format_exc()}")
             return Response(
                 {'error': f'Error during file upload: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    def _detect_file_type(self, mime_type: str, file_extension: str) -> str:
-        """Detect file type from MIME type and extension."""
-        if mime_type.startswith('image/'):
-            return 'image'
-        elif mime_type.startswith('video/'):
-            return 'video'
-        elif mime_type.startswith('audio/'):
-            return 'audio'
-        elif mime_type == 'application/pdf' or file_extension == 'pdf':
-            return 'document'
-        elif 'document' in mime_type or 'word' in mime_type or 'excel' in mime_type or 'powerpoint' in mime_type:
-            return 'document'
-        elif file_extension in ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'rtf']:
-            return 'document'
-        else:
-            return 'other'
-
-    def _get_max_size(self, file_type: str) -> int:
-        """Get maximum file size in bytes based on file type."""
-        size_limits = {
-            'image': 10 * 1024 * 1024,  # 10MB
-            'video': 500 * 1024 * 1024,  # 500MB
-            'audio': 100 * 1024 * 1024,  # 100MB
-            'document': 50 * 1024 * 1024,  # 50MB
-            'other': 50 * 1024 * 1024,  # 50MB
-        }
-        return size_limits.get(file_type, 50 * 1024 * 1024)
-
-    def _handle_image_upload(self, uploaded_file, storage_path: str, original_filename: str, file_extension: str, mime_type: str):
-        """Handle image upload with compression and thumbnail generation."""
-        from PIL import Image
-        from io import BytesIO
-        from django.core.files.storage import default_storage
-        from django.core.files.base import ContentFile
-        from django.conf import settings
-        import uuid
-        import re
-        
-        # Validate image extension
-        allowed_extensions = ['jpg', 'jpeg', 'png', 'webp', 'gif']
-        if file_extension not in allowed_extensions:
-            return Response(
-                {'error': f'Image extension "{file_extension}" not allowed. Allowed extensions: {", ".join(allowed_extensions)}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            # Process image with Pillow
-            img = Image.open(uploaded_file)
-            
-            # Convert RGBA/LA/P to RGB if needed
-            if img.mode in ('RGBA', 'LA', 'P'):
-                # Create white background for transparent images
-                background = Image.new('RGB', img.size, (255, 255, 255))
-                if img.mode == 'P':
-                    img = img.convert('RGBA')
-                if img.mode == 'RGBA':
-                    background.paste(img, mask=img.split()[-1])
-                else:
-                    background.paste(img)
-                img = background
-            elif img.mode != 'RGB':
-                img = img.convert('RGB')
-            
-            # Resize full image to max 1920x1920 (maintains aspect ratio)
-            max_size_full = (1920, 1920)
-            img.thumbnail(max_size_full, Image.Resampling.LANCZOS)
-            
-            # Compress and save full image
-            full_output = BytesIO()
-            img.save(
-                full_output,
-                format='JPEG',
-                quality=85,
-                optimize=True,
-                progressive=True
-            )
-            full_output.seek(0)
-            
-            # Generate thumbnail (400x400)
-            img_thumb = img.copy()
-            img_thumb.thumbnail((400, 400), Image.Resampling.LANCZOS)
-            
-            # Compress and save thumbnail
-            thumb_output = BytesIO()
-            img_thumb.save(
-                thumb_output,
-                format='JPEG',
-                quality=85,
-                optimize=True,
-                progressive=True
-            )
-            thumb_output.seek(0)
-            
-            # Generate unique filenames
-            unique_id = uuid.uuid4()
-            base_name = original_filename.rsplit('.', 1)[0] if '.' in original_filename else 'image'
-            # Sanitize base name
-            base_name = ''.join(c for c in base_name if c.isalnum() or c in (' ', '-', '_')).strip()[:50]
-            
-            full_filename = f"{unique_id}-{base_name}.jpg"
-            thumb_filename = f"{unique_id}-{base_name}-thumb.jpg"
-            
-            full_storage_path = f"{storage_path}/images/{full_filename}"
-            thumb_storage_path = f"{storage_path}/images/thumbnails/{thumb_filename}"
-            
-            # Upload full image to GCS
-            full_file = ContentFile(full_output.getvalue())
-            saved_full_path = default_storage.save(full_storage_path, full_file)
-            full_url = default_storage.url(saved_full_path)
-            if not full_url.startswith('http'):
-                full_url = f"https://storage.googleapis.com/{settings.GS_BUCKET_NAME}/{saved_full_path}"
-            
-            # Upload thumbnail to GCS
-            thumb_file = ContentFile(thumb_output.getvalue())
-            saved_thumb_path = default_storage.save(thumb_storage_path, thumb_file)
-            thumb_url = default_storage.url(saved_thumb_path)
-            if not thumb_url.startswith('http'):
-                thumb_url = f"https://storage.googleapis.com/{settings.GS_BUCKET_NAME}/{saved_thumb_path}"
-            
-            # Get compressed file sizes
-            full_size = len(full_output.getvalue())
-            
-            logger.info(f"Image uploaded successfully: {saved_full_path}, thumbnail: {saved_thumb_path}")
-            
-            # Return success response
-            return Response({
-                'file_url': full_url,
-                'thumbnail_url': thumb_url,
-                'file_size': full_size,
-                'file_size_mb': round(full_size / (1024 * 1024), 2),
-                'file_extension': 'jpg',
-                'mime_type': 'image/jpeg',
-                'file_type': 'image',
-                'original_filename': original_filename,
-            }, status=status.HTTP_201_CREATED)
-            
-        except Exception as e:
-            logger.error(f"Error processing image: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return Response(
-                {'error': f'Failed to process image: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-    def _handle_other_file_upload(self, uploaded_file, storage_path: str, original_filename: str, file_extension: str, mime_type: str, file_type: str):
-        """Handle non-image file upload (videos, audio, documents, etc.)."""
-        from django.core.files.storage import default_storage
-        from django.conf import settings
-        import uuid
-        import re
-        
-        # Generate unique filename
-        unique_id = uuid.uuid4()
-        # Sanitize filename
-        safe_filename = ''.join(c for c in original_filename if c.isalnum() or c in (' ', '-', '_', '.')).strip()[:100]
-        unique_filename = f"{unique_id}-{safe_filename}"
-        
-        # Organize by file type in storage
-        type_folder_map = {
-            'video': 'videos',
-            'audio': 'audio',
-            'document': 'documents',
-            'other': 'other'
-        }
-        type_folder = type_folder_map.get(file_type, 'other')
-        
-        file_storage_path = f"{storage_path}/{type_folder}/{unique_filename}"
-        
-        try:
-            # Upload file to GCS
-            saved_path = default_storage.save(file_storage_path, uploaded_file)
-            
-            # Get file URL from GCS
-            file_url = default_storage.url(saved_path)
-            # Ensure full URL format for GCS
-            if not file_url.startswith('http'):
-                file_url = f"https://storage.googleapis.com/{settings.GS_BUCKET_NAME}/{saved_path}"
-            
-            logger.info(f"File uploaded successfully: {saved_path}")
-            
-            # Return success response
-            return Response({
-                'file_url': file_url,
-                'file_size': uploaded_file.size,
-                'file_size_mb': round(uploaded_file.size / (1024 * 1024), 2),
-                'file_extension': file_extension,
-                'mime_type': mime_type,
-                'file_type': file_type,
-                'original_filename': original_filename,
-            }, status=status.HTTP_201_CREATED)
-            
-        except Exception as e:
-            logger.error(f"Error uploading file: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return Response(
-                {'error': f'Failed to upload file: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
