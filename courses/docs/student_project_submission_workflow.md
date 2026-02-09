@@ -256,3 +256,4 @@ No database migrations required. This feature uses existing ClassEvent model fie
 5. **Draft Saving**: Enhanced draft saving for unscheduled projects (currently disabled)
 
 
+
