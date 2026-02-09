@@ -326,7 +326,7 @@ class TutorXBlockListView(APIView):
                 id__in=blocks_to_delete
             )
             
-            # Delete images from GCS before deleting blocks
+            # Delete images from GCS before deleting blocks (including thumbnails)
             for block in blocks_to_delete_objs:
                 if block.block_type == 'image' and block.content:
                     try:
@@ -339,9 +339,10 @@ class TutorXBlockListView(APIView):
                         else:
                             file_path = unquote(parsed_url.path.strip('/'))
                         
-                        if default_storage.exists(file_path):
-                            default_storage.delete(file_path)
-                            logger.info(f"✅ Deleted image from GCS when deleting block: {file_path}")
+                        # Delete both main image and thumbnail
+                        main_deleted, thumb_deleted = delete_image_and_thumbnail(file_path)
+                        if main_deleted or thumb_deleted:
+                            logger.info(f"✅ Deleted image and thumbnail from GCS when deleting block: {file_path}")
                     except Exception as e:
                         logger.error(f"❌ Failed to delete image from GCS when deleting block: {e}")
             
@@ -358,7 +359,7 @@ class TutorXBlockListView(APIView):
                     old_block = existing_blocks_by_id[block_id]
                     old_image_url = old_block.content or old_block.metadata.get('image_url', '')
                     
-                    # If image URL changed, delete old image from GCS
+                    # If image URL changed, delete old image and thumbnail from GCS
                     if old_image_url and old_image_url != new_image_url:
                         try:
                             from urllib.parse import urlparse, unquote
@@ -369,9 +370,10 @@ class TutorXBlockListView(APIView):
                             else:
                                 file_path = unquote(parsed_url.path.strip('/'))
                             
-                            if default_storage.exists(file_path):
-                                default_storage.delete(file_path)
-                                logger.info(f"✅ Deleted old image from GCS when replacing: {file_path}")
+                            # Delete both main image and thumbnail
+                            main_deleted, thumb_deleted = delete_image_and_thumbnail(file_path)
+                            if main_deleted or thumb_deleted:
+                                logger.info(f"✅ Deleted old image and thumbnail from GCS when replacing: {file_path}")
                         except Exception as e:
                             logger.error(f"❌ Failed to delete old image from GCS when replacing: {e}")
         
@@ -608,7 +610,7 @@ class TutorXBlockDetailView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        # Delete image from GCS if it's an image block
+        # Delete image and thumbnail from GCS if it's an image block
         if block.block_type == 'image' and block.content:
             try:
                 from urllib.parse import urlparse, unquote
@@ -619,9 +621,10 @@ class TutorXBlockDetailView(APIView):
                 else:
                     file_path = unquote(parsed_url.path.strip('/'))
                 
-                if default_storage.exists(file_path):
-                    default_storage.delete(file_path)
-                    logger.info(f"✅ Deleted image from GCS when deleting block: {file_path}")
+                # Delete both main image and thumbnail
+                main_deleted, thumb_deleted = delete_image_and_thumbnail(file_path)
+                if main_deleted or thumb_deleted:
+                    logger.info(f"✅ Deleted image and thumbnail from GCS when deleting block: {file_path}")
             except Exception as e:
                 logger.error(f"❌ Failed to delete image from GCS when deleting block: {e}")
         
@@ -792,16 +795,89 @@ class TutorXImageUploadView(APIView):
             )
 
 
+def delete_image_and_thumbnail(file_path: str) -> tuple[bool, bool]:
+    """
+    Helper function to delete both the main image and its thumbnail from GCS.
+    
+    Args:
+        file_path: The GCS path to the main image file
+        
+    Returns:
+        Tuple of (main_image_deleted, thumbnail_deleted)
+    """
+    import os
+    from pathlib import Path
+    
+    main_deleted = False
+    thumb_deleted = False
+    
+    # Delete main image
+    if default_storage.exists(file_path):
+        try:
+            default_storage.delete(file_path)
+            main_deleted = True
+            logger.info(f"✅ Deleted main image from GCS: {file_path}")
+        except Exception as e:
+            logger.error(f"❌ Failed to delete main image {file_path}: {e}")
+    
+    # Derive thumbnail path from main image path
+    # Pattern 1: {storage_path}/{uuid}-{base_name}.jpg -> {storage_path}/thumbnails/{uuid}-{base_name}-thumb.jpg
+    # Pattern 2: {storage_path}/images/{uuid}-{base_name}.jpg -> {storage_path}/images/thumbnails/{uuid}-{base_name}-thumb.jpg
+    try:
+        path_obj = Path(file_path)
+        filename = path_obj.name  # e.g., "abc123-image.jpg"
+        directory = path_obj.parent  # e.g., "assignment_images" or "assignment_files/images"
+        
+        # Extract UUID and base name from filename
+        # Format: {uuid}-{base_name}.jpg
+        if '-' in filename and filename.endswith('.jpg'):
+            # Remove .jpg extension
+            name_without_ext = filename[:-4]
+            # Split by last dash to separate UUID from base name
+            parts = name_without_ext.rsplit('-', 1)
+            if len(parts) == 2:
+                uuid_part = parts[0]
+                base_name = parts[1]
+                
+                # Construct thumbnail filename
+                thumb_filename = f"{uuid_part}-{base_name}-thumb.jpg"
+                
+                # Determine thumbnail directory based on main image directory
+                if str(directory).endswith('/images') or 'images' in str(directory):
+                    # Pattern 2: images are in a subdirectory, thumbnails are in images/thumbnails/
+                    thumb_dir = directory / 'thumbnails'
+                else:
+                    # Pattern 1: thumbnails are in a thumbnails/ subdirectory at the same level
+                    thumb_dir = directory / 'thumbnails'
+                
+                thumb_path = str(thumb_dir / thumb_filename)
+                
+                # Delete thumbnail
+                if default_storage.exists(thumb_path):
+                    try:
+                        default_storage.delete(thumb_path)
+                        thumb_deleted = True
+                        logger.info(f"✅ Deleted thumbnail from GCS: {thumb_path}")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to delete thumbnail {thumb_path}: {e}")
+                else:
+                    logger.debug(f"⚠️ Thumbnail not found (may not exist): {thumb_path}")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not derive thumbnail path from {file_path}: {e}")
+    
+    return (main_deleted, thumb_deleted)
+
+
 class TutorXImageDeleteView(APIView):
     """
     API view for deleting images from GCS.
-    Extracts the file path from the GCS URL and deletes it.
+    Extracts the file path from the GCS URL and deletes both the main image and its thumbnail.
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def delete(self, request):
         """
-        Delete an image from GCS by URL.
+        Delete an image from GCS by URL (deletes both main image and thumbnail).
         
         Expected request body:
         - image_url: GCS URL of the image to delete
@@ -850,14 +926,21 @@ class TutorXImageDeleteView(APIView):
                     file_path = parsed_url.path.strip('/')
                     file_path = unquote(file_path)
                 
-                logger.info(f"🗑️ Deleting TutorX image from GCS: {file_path} (from URL: {image_url})")
+                logger.info(f"🗑️ Deleting TutorX image and thumbnail from GCS: {file_path} (from URL: {image_url})")
                 
-                # Delete from GCS
-                if default_storage.exists(file_path):
-                    default_storage.delete(file_path)
-                    logger.info(f"✅ Successfully deleted TutorX image from GCS: {file_path}")
+                # Delete both main image and thumbnail
+                main_deleted, thumb_deleted = delete_image_and_thumbnail(file_path)
+                
+                if main_deleted or thumb_deleted:
+                    messages = []
+                    if main_deleted:
+                        messages.append("main image")
+                    if thumb_deleted:
+                        messages.append("thumbnail")
+                    message = f"Successfully deleted {', '.join(messages)}"
+                    logger.info(f"✅ {message}")
                     return Response(
-                        {'message': 'Image deleted successfully'},
+                        {'message': message},
                         status=status.HTTP_200_OK
                     )
                 else:

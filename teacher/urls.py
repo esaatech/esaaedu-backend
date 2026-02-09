@@ -60,6 +60,9 @@ urlpatterns = [
     # Course Image Upload URLs
     path('course-images/upload/', views.CourseImageUploadView.as_view(), name='course_image_upload'),
     
+    # All File Upload URLs (generic endpoint for all file types)
+    path('files/upload/', views.AllFileUploadView.as_view(), name='all_file_upload'),
+    
     # Messaging URLs
     path('students/<int:student_id>/conversations/', views.StudentConversationsListView.as_view(), name='student_conversations'),
     path('conversations/<uuid:conversation_id>/messages/', views.ConversationMessagesView.as_view(), name='conversation_messages'),
