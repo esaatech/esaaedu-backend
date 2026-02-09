@@ -255,3 +255,4 @@ No database migrations required. This feature uses existing ClassEvent model fie
 4. **Multiple Submissions**: Allow re-submission if teacher returns project
 5. **Draft Saving**: Enhanced draft saving for unscheduled projects (currently disabled)
 
+

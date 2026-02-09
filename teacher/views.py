@@ -3730,6 +3730,8 @@ class CourseImageUploadView(APIView):
         
         Expected request:
         - image: Image file (JPEG, PNG, WebP)
+        - path: Optional string - Storage path in GCS (defaults to 'course_images')
+               Must be alphanumeric with underscores/hyphens only (e.g., 'assignment_images')
         
         Returns:
         - image_url: GCS URL for full-size compressed image
@@ -3837,6 +3839,13 @@ class CourseImageUploadView(APIView):
                 )
                 thumb_output.seek(0)
                 
+                # Get optional path parameter (defaults to 'course_images' for backward compatibility)
+                import re
+                storage_path = request.data.get('path', 'course_images')
+                # Validate path to prevent path traversal attacks (only alphanumeric, underscore, hyphen)
+                if not re.match(r'^[a-zA-Z0-9_-]+$', storage_path):
+                    storage_path = 'course_images'  # Fallback to default if invalid
+                
                 # Generate unique filenames
                 unique_id = uuid.uuid4()
                 base_name = original_filename.rsplit('.', 1)[0] if '.' in original_filename else 'image'
@@ -3846,8 +3855,8 @@ class CourseImageUploadView(APIView):
                 full_filename = f"{unique_id}-{base_name}.jpg"
                 thumb_filename = f"{unique_id}-{base_name}-thumb.jpg"
                 
-                full_storage_path = f"course_images/{full_filename}"
-                thumb_storage_path = f"course_images/thumbnails/{thumb_filename}"
+                full_storage_path = f"{storage_path}/{full_filename}"
+                thumb_storage_path = f"{storage_path}/thumbnails/{thumb_filename}"
                 
                 # Upload full image to GCS
                 full_file = ContentFile(full_output.getvalue())
