@@ -2484,9 +2484,28 @@ class BookPageNestedSerializer(serializers.ModelSerializer):
         fields = ['title', 'content', 'is_required']
     
     def validate_content(self, value):
-        """Validate content is not empty"""
+        """Validate content is not empty. Accepts both HTML and BlockNote JSON formats."""
         if not value or not value.strip():
             raise serializers.ValidationError("Page content cannot be empty")
+        
+        # Check if it's BlockNote JSON format (starts with [ or {)
+        trimmed = value.strip()
+        if trimmed.startswith('[') or trimmed.startswith('{'):
+            try:
+                import json
+                parsed = json.loads(value)
+                # Basic validation: should be an array or object with type field
+                if isinstance(parsed, list) and len(parsed) > 0:
+                    # Valid BlockNote JSON array
+                    return value
+                elif isinstance(parsed, dict) and 'type' in parsed:
+                    # Valid BlockNote JSON object
+                    return value
+            except json.JSONDecodeError:
+                # Invalid JSON, treat as HTML/plain text (backward compatibility)
+                pass
+        
+        # HTML or plain text format (backward compatibility)
         return value
 
 
@@ -2548,9 +2567,28 @@ class BookPageCreateSerializer(serializers.ModelSerializer):
         ]
     
     def validate_content(self, value):
-        """Validate content is not empty"""
+        """Validate content is not empty. Accepts both HTML and BlockNote JSON formats."""
         if not value or not value.strip():
             raise serializers.ValidationError("Page content cannot be empty")
+        
+        # Check if it's BlockNote JSON format (starts with [ or {)
+        trimmed = value.strip()
+        if trimmed.startswith('[') or trimmed.startswith('{'):
+            try:
+                import json
+                parsed = json.loads(value)
+                # Basic validation: should be an array or object with type field
+                if isinstance(parsed, list) and len(parsed) > 0:
+                    # Valid BlockNote JSON array
+                    return value
+                elif isinstance(parsed, dict) and 'type' in parsed:
+                    # Valid BlockNote JSON object
+                    return value
+            except json.JSONDecodeError:
+                # Invalid JSON, treat as HTML/plain text (backward compatibility)
+                pass
+        
+        # HTML or plain text format (backward compatibility)
         return value
     
     def create(self, validated_data):
@@ -2586,9 +2624,29 @@ class BookPageUpdateSerializer(serializers.ModelSerializer):
         }
     
     def validate_content(self, value):
-        """Validate content is not empty if provided"""
+        """Validate content is not empty if provided. Accepts both HTML and BlockNote JSON formats."""
         if value is not None and not value.strip():
             raise serializers.ValidationError("Page content cannot be empty")
+        
+        # Check if it's BlockNote JSON format (starts with [ or {)
+        if value:
+            trimmed = value.strip()
+            if trimmed.startswith('[') or trimmed.startswith('{'):
+                try:
+                    import json
+                    parsed = json.loads(value)
+                    # Basic validation: should be an array or object with type field
+                    if isinstance(parsed, list) and len(parsed) > 0:
+                        # Valid BlockNote JSON array
+                        return value
+                    elif isinstance(parsed, dict) and 'type' in parsed:
+                        # Valid BlockNote JSON object
+                        return value
+                except json.JSONDecodeError:
+                    # Invalid JSON, treat as HTML/plain text (backward compatibility)
+                    pass
+        
+        # HTML or plain text format (backward compatibility)
         return value
 
 
