@@ -119,3 +119,4 @@ This promotes code reusability and maintainability. See `teacher/README.md` for 
 - Frontend: `docs/blocknote-implementation.md` - Student essay answer implementation
 - Frontend: `src/docs/components/assignment-components.md` - Assignment component documentation
 
+
