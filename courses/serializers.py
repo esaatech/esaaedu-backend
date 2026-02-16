@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, ProjectSubmission, BookPage, VideoMaterial, DocumentMaterial, AudioVideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
+from .models import Course, Lesson, LessonMaterial, Module, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, ProjectSubmission, BookPage, VideoMaterial, DocumentMaterial, AudioVideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
 
 User = get_user_model()
 
@@ -173,21 +173,27 @@ class LessonMaterialSerializer(serializers.ModelSerializer):
 class LessonListSerializer(serializers.ModelSerializer):
     """
     Lightweight serializer for lesson list (first API call)
-    Returns minimal lesson data for the course page
-    
-    Status is determined directly from StudentLessonProgress records,
-    not from enrollment metadata. This makes it robust against lesson reordering
-    and new lesson additions.
+    Returns minimal lesson data for the course page.
+    Includes module_id and module_title for teacher course management.
     """
     status = serializers.SerializerMethodField()
+    module_id = serializers.SerializerMethodField()
+    module_title = serializers.SerializerMethodField()
     
     class Meta:
         model = Lesson
         fields = [
-            'id', 'title', 'description', 'type', 'duration', 'order', 
+            'id', 'title', 'description', 'type', 'duration', 'order',
+            'module_id', 'module_title',
             'status', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']
+    
+    def get_module_id(self, obj):
+        return obj.module_id if obj.module_id else None
+    
+    def get_module_title(self, obj):
+        return obj.module.title if obj.module_id else None
     
     def get_status(self, obj):
         """
@@ -231,7 +237,8 @@ class LessonListSerializer(serializers.ModelSerializer):
 class LessonDetailSerializer(serializers.ModelSerializer):
     """
     Comprehensive serializer for individual lesson details (second API call)
-    Returns full lesson data including materials, quiz, assignments, and class events
+    Returns full lesson data including materials, quiz, assignments, and class events.
+    Includes module_id and module_title for teacher course management.
     """
     materials = serializers.SerializerMethodField()
     quiz = serializers.SerializerMethodField()
@@ -242,17 +249,26 @@ class LessonDetailSerializer(serializers.ModelSerializer):
     course_title = serializers.CharField(source='course.title', read_only=True)
     prerequisites = serializers.SerializerMethodField()
     is_material_available = serializers.SerializerMethodField()
+    module_id = serializers.SerializerMethodField()
+    module_title = serializers.SerializerMethodField()
     
     class Meta:
         model = Lesson
         fields = [
             'id', 'title', 'description', 'type', 'duration', 'order',
+            'module_id', 'module_title',
             'text_content', 'video_url', 'audio_url', 'live_class_date', 
             'live_class_status', 'content', 'materials', 'prerequisites',
             'quiz', 'assignment', 'has_assignment', 'class_event', 'teacher_name', 'course_title',
             'is_material_available', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_module_id(self, obj):
+        return obj.module_id if obj.module_id else None
+    
+    def get_module_title(self, obj):
+        return obj.module.title if obj.module_id else None
     
     def get_quiz(self, obj):
         """Get pre-computed quiz data from context"""
@@ -606,14 +622,27 @@ class EnrolledStudentSerializer(serializers.ModelSerializer):
 
 
 
+# ===== MODULE SERIALIZER =====
+
+class ModuleSerializer(serializers.ModelSerializer):
+    """
+    Serializer for module (course grouping). Used in course list/detail and for module CRUD.
+    """
+    class Meta:
+        model = Module
+        fields = ['id', 'title', 'description', 'order']
+
+
 class CourseListSerializer(serializers.ModelSerializer):
     """
-    Serializer for course list view (minimal data for performance)
+    Serializer for course list view (minimal data for performance).
+    Includes modules for teacher course management.
     """
     teacher_name = serializers.CharField(source='teacher.get_full_name', read_only=True)
     total_lessons = serializers.ReadOnlyField()
     enrolled_students_count = serializers.SerializerMethodField()
     active_students_count = serializers.SerializerMethodField()
+    modules = ModuleSerializer(many=True, read_only=True)
     
     class Meta:
         model = Course
@@ -622,7 +651,7 @@ class CourseListSerializer(serializers.ModelSerializer):
             'level', 'required_computer_skills_level', 'price', 'featured', 'popular', 'color', 'icon',
             'max_students', 'schedule', 'certificate', 'status',
             'teacher_name', 'total_lessons', 'enrolled_students_count', 'active_students_count',
-            'created_at', 'updated_at'
+            'modules', 'created_at', 'updated_at'
         ]
     
     def get_enrolled_students_count(self, obj):
@@ -658,6 +687,9 @@ class CourseDetailSerializer(serializers.ModelSerializer):
     enrolled_students = serializers.SerializerMethodField()
     enrollment_stats = serializers.SerializerMethodField()
     
+    # Modules for teacher course management (when manage is clicked)
+    modules = ModuleSerializer(many=True, read_only=True)
+    
     class Meta:
         model = Course
         fields = [
@@ -677,6 +709,9 @@ class CourseDetailSerializer(serializers.ModelSerializer):
             
             # Reviews and ratings
             'reviews', 'average_rating', 'review_count',
+            
+            # Modules (for teacher manage view)
+            'modules',
             
             # Computed fields
             'total_lessons', 'total_duration_minutes', 'enrolled_students_count',
@@ -1008,15 +1043,32 @@ class LessonCreateUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating and updating lessons
     Handles TutorX blocks when lesson type is 'tutorx'
+    Accepts optional module_id to assign lesson to a module (must belong to same course).
     """
+    module_id = serializers.IntegerField(required=False, allow_null=True)
+
     class Meta:
         model = Lesson
         fields = [
             'title', 'description', 'type', 'duration', 'order', 'content',
             'text_content', 'video_url', 'audio_url', 'live_class_date', 
-            'live_class_status'
+            'live_class_status', 'module_id'
         ]
-    
+
+    def validate_module_id(self, value):
+        if value is None:
+            return value
+        course = self.context.get('course')
+        if self.instance:
+            course = course or (self.instance.course if self.instance else None)
+        if not course:
+            return value
+        if not Module.objects.filter(id=value, course=course).exists():
+            raise serializers.ValidationError(
+                "Module does not exist or does not belong to this course."
+            )
+        return value
+
     def validate_title(self, value):
         if not value.strip():
             raise serializers.ValidationError("Lesson title cannot be empty")

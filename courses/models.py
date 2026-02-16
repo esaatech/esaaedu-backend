@@ -318,6 +318,30 @@ class Course(models.Model):
 # No need for custom save method - single table approach
 
 
+class Module(models.Model):
+    """
+    Module groups lessons within a course. Optional: lessons can have module=None.
+    """
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name='modules'
+    )
+    title = models.CharField(max_length=200, help_text="Module title")
+    description = models.TextField(blank=True, help_text="Optional module description")
+    order = models.PositiveIntegerField(help_text="Order of this module within the course")
+
+    class Meta:
+        ordering = ['course', 'order']
+        unique_together = ['course', 'order']
+        indexes = [
+            models.Index(fields=['course', 'order']),
+        ]
+
+    def __str__(self):
+        return f"{self.course.title} - Module {self.order}: {self.title}"
+
+
 class Lesson(models.Model):
     """
     Individual lesson within a course
@@ -332,6 +356,14 @@ class Lesson(models.Model):
     # Basic Information
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='lessons')
+    module = models.ForeignKey(
+        Module,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='lessons',
+        help_text="Optional module this lesson belongs to. If module is deleted, lesson stays in course with module=None."
+    )
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True, null=True)
     order = models.IntegerField(help_text="Lesson sequence within the course")

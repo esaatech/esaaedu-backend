@@ -47,6 +47,8 @@ urlpatterns = [
     path('teacher/classes/', views.teacher_classes, name='teacher_classes'),
     path('teacher/classes/<uuid:class_id>/', views.teacher_class_detail, name='teacher_class_detail'),
     path('teacher/courses/<uuid:course_id>/students/', views.course_enrolled_students, name='course_enrolled_students'),
+    path('teacher/courses/<uuid:course_id>/modules/', views.ModuleListCreateView.as_view(), name='module_list_create'),
+    path('teacher/courses/<uuid:course_id>/modules/<int:module_id>/', views.ModuleDetailView.as_view(), name='module_detail'),
     
     # Teacher student management
     path('teacher/students/', views.teacher_students, name='teacher_students'),

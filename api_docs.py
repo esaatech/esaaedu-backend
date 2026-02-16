@@ -171,14 +171,70 @@ def api_documentation(request):
                     "url": "/api/courses/teacher/",
                     "description": "List all courses created by authenticated teacher",
                     "authentication": "Required (Teacher role)",
-                    "response": "Array of CourseListSerializer data"
+                    "response": "Array of CourseListSerializer data (each course includes modules array: [{ id, title, description, order }])"
                 },
                 "course_detail": {
                     "method": "GET",
                     "url": "/api/courses/teacher/{course_id}/",
-                    "description": "Get detailed course information",
+                    "description": "Get detailed course information (when managing a course)",
                     "authentication": "Required (Teacher role)",
-                    "response": "CourseDetailSerializer data"
+                    "response": "CourseDetailSerializer data (includes modules array: [{ id, title, description, order }])"
+                },
+                "course_modules": {
+                    "base_url": "/api/courses/teacher/courses/{course_id}/modules/",
+                    "description": "Module CRUD - group lessons within a course. Teacher only, must own the course.",
+                    "authentication": "Required (Teacher role)",
+                    "methods": {
+                        "GET": {
+                            "url": "/api/courses/teacher/courses/{course_id}/modules/",
+                            "description": "List all modules for the course",
+                            "path_parameters": {"course_id": "uuid (required)"},
+                            "response": "Array of { id, title, description, order }"
+                        },
+                        "POST": {
+                            "url": "/api/courses/teacher/courses/{course_id}/modules/",
+                            "description": "Create a new module",
+                            "path_parameters": {"course_id": "uuid (required)"},
+                            "request_body": {
+                                "title": "string (required)",
+                                "description": "string (optional)",
+                                "order": "integer (optional, defaults to max+1)"
+                            },
+                            "response": "ModuleSerializer data (id, title, description, order), 201"
+                        },
+                        "GET_one": {
+                            "url": "/api/courses/teacher/courses/{course_id}/modules/{module_id}/",
+                            "description": "Get one module",
+                            "path_parameters": {"course_id": "uuid", "module_id": "integer"}
+                        },
+                        "PUT": {
+                            "url": "/api/courses/teacher/courses/{course_id}/modules/{module_id}/",
+                            "description": "Update a module",
+                            "path_parameters": {"course_id": "uuid", "module_id": "integer"},
+                            "request_body": {"title": "string (optional)", "description": "string (optional)", "order": "integer (optional)"}
+                        },
+                        "DELETE": {
+                            "url": "/api/courses/teacher/courses/{course_id}/modules/{module_id}/",
+                            "description": "Delete a module. Lessons in that module get module=null (remain in course)."
+                        }
+                    }
+                },
+                "course_lessons": {
+                    "description": "Lesson list and create for a course. Each lesson can include module_id and module_title.",
+                    "GET": {
+                        "url": "/api/courses/{course_id}/lessons/",
+                        "description": "List lessons for course (LessonListSerializer: id, title, description, type, duration, order, module_id, module_title, status, created_at)"
+                    },
+                    "POST": {
+                        "url": "/api/courses/{course_id}/lessons/",
+                        "description": "Create a lesson. Optional module_id to assign to a module (must belong to same course)."
+                    }
+                },
+                "lesson_detail": {
+                    "description": "Get/update/delete a single lesson. PUT accepts optional module_id.",
+                    "GET": {"url": "/api/courses/lessons/{lesson_id}/", "response": "LessonDetailSerializer (includes module_id, module_title)"},
+                    "PUT": {"url": "/api/courses/lessons/{lesson_id}/", "request_body": "module_id (optional, integer or null)"},
+                    "DELETE": {"url": "/api/courses/lessons/{lesson_id}/"}
                 },
                 "class_events": {
                     "base_url": "/api/courses/classes/{class_id}/events/",
@@ -219,12 +275,14 @@ def api_documentation(request):
                                 ],
                                 "available_lessons": [
                                     {
-                                        "id": "integer",
+                                        "id": "uuid",
                                         "title": "string",
                                         "description": "string",
                                         "type": "text|video|audio|live",
                                         "duration": "integer",
                                         "order": "integer",
+                                        "module_id": "integer|null (optional, module this lesson belongs to)",
+                                        "module_title": "string|null (optional)",
                                         "status": "string",
                                         "created_at": "datetime"
                                     }
@@ -2292,14 +2350,22 @@ def class_events_contract(request):
                 "updated_at": "datetime"
             },
             "Lesson": {
-                "id": "integer",
+                "id": "uuid",
                 "title": "string",
                 "description": "string",
                 "type": "text|video|audio|live",
                 "duration": "integer",
                 "order": "integer",
+                "module_id": "integer|null (optional)",
+                "module_title": "string|null (optional)",
                 "status": "string",
                 "created_at": "datetime"
+            },
+            "Module": {
+                "id": "integer",
+                "title": "string",
+                "description": "string",
+                "order": "integer"
             },
             "Project": {
                 "id": "integer",

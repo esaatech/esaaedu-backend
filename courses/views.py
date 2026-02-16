@@ -13,7 +13,7 @@ from django.conf import settings
 import jwt
 from jwt.exceptions import InvalidKeyError
 import logging
-from .models import Course, Lesson, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission, DocumentMaterial, DocumentMaterial, Project, ProjectSubmission, SubmissionType
+from .models import Course, Lesson, Module, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission, DocumentMaterial, Project, ProjectSubmission, SubmissionType
 
 logger = logging.getLogger(__name__)
 from student.models import EnrolledCourse
@@ -26,7 +26,7 @@ from .serializers import (
     LessonReorderSerializer, ProjectReorderSerializer, QuizListSerializer, QuizDetailSerializer,
     QuizCreateUpdateSerializer, QuestionListSerializer, QuestionDetailSerializer,
     QuestionCreateUpdateSerializer, NoteSerializer, NoteCreateSerializer,
-
+    ModuleSerializer,
     ClassListSerializer, ClassDetailSerializer, ClassCreateUpdateSerializer,
     StudentBasicSerializer, TeacherStudentDetailSerializer, TeacherStudentSummarySerializer,
     CourseWithLessonsSerializer, LessonMaterialSerializer,
@@ -519,7 +519,7 @@ def teacher_courses(request):
             from django.db.models import Count, Q
             from student.models import EnrolledCourse
             
-            # Get courses with enrollment counts
+            # Get courses with enrollment counts and modules (for teacher course management)
             courses = Course.objects.filter(teacher=request.user).annotate(
                 enrolled_count=Count(
                     'student_enrollments',
@@ -530,7 +530,7 @@ def teacher_courses(request):
                     filter=Q(student_enrollments__status='active'),
                     distinct=True
                 )
-            ).order_by('-created_at')
+            ).prefetch_related('modules').order_by('-created_at')
             
             serializer = CourseListSerializer(courses, many=True, context={'request': request})
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -928,9 +928,9 @@ def teacher_course_detail(request, course_id):
             status=status.HTTP_403_FORBIDDEN
         )
     
-    # Get the course and verify teacher ownership
+    # Get the course (with modules prefetched for GET) and verify teacher ownership
     try:
-        course = get_object_or_404(Course, id=course_id)
+        course = get_object_or_404(Course.objects.prefetch_related('modules'), id=course_id)
     except Course.DoesNotExist:
         return Response(
             {'error': 'Course not found'},
@@ -1008,6 +1008,124 @@ def teacher_course_detail(request, course_id):
             )
 
 
+# ===== MODULE CRUD (TEACHER) =====
+
+class ModuleListCreateView(APIView):
+    """
+    GET: List all modules for a course (teacher only).
+    POST: Create a new module for the course (teacher only).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_course_and_validate(self, request, course_id):
+        course = get_object_or_404(Course, id=course_id)
+        if request.user.role != 'teacher':
+            raise PermissionError('Only teachers can access this endpoint')
+        if course.teacher != request.user:
+            raise PermissionError('Only the course teacher can manage modules')
+        return course
+
+    def get(self, request, course_id):
+        try:
+            course = self.get_course_and_validate(request, course_id)
+            modules = course.modules.order_by('order')
+            serializer = ModuleSerializer(modules, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except PermissionError as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch modules', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def post(self, request, course_id):
+        try:
+            course = self.get_course_and_validate(request, course_id)
+            serializer = ModuleSerializer(data=request.data)
+            if serializer.is_valid():
+                if 'order' not in serializer.validated_data:
+                    max_order = course.modules.aggregate(
+                        max_order=models.Max('order')
+                    )['max_order'] or 0
+                    serializer.validated_data['order'] = max_order + 1
+                module = serializer.save(course=course)
+                return Response(ModuleSerializer(module).data, status=status.HTTP_201_CREATED)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except PermissionError as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to create module', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class ModuleDetailView(APIView):
+    """
+    GET: Get one module. PUT/PATCH: Update module. DELETE: Delete module (lessons get module=None).
+    Teacher only, must own the course.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_module_and_validate(self, request, course_id, module_id):
+        course = get_object_or_404(Course, id=course_id)
+        if request.user.role != 'teacher':
+            raise PermissionError('Only teachers can access this endpoint')
+        if course.teacher != request.user:
+            raise PermissionError('Only the course teacher can manage modules')
+        module = get_object_or_404(Module, id=module_id, course=course)
+        return module
+
+    def get(self, request, course_id, module_id):
+        try:
+            module = self.get_module_and_validate(request, course_id, module_id)
+            return Response(ModuleSerializer(module).data, status=status.HTTP_200_OK)
+        except PermissionError as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch module', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def put(self, request, course_id, module_id):
+        try:
+            module = self.get_module_and_validate(request, course_id, module_id)
+            serializer = ModuleSerializer(module, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return Response(ModuleSerializer(module).data, status=status.HTTP_200_OK)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except PermissionError as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to update module', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def patch(self, request, course_id, module_id):
+        return self.put(request, course_id, module_id)
+
+    def delete(self, request, course_id, module_id):
+        try:
+            module = self.get_module_and_validate(request, course_id, module_id)
+            module_title = module.title
+            module.delete()  # Lessons get module=None via SET_NULL
+            return Response(
+                {'message': f'Module "{module_title}" deleted successfully'},
+                status=status.HTTP_200_OK
+            )
+        except PermissionError as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to delete module', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 # ===== LESSON MANAGEMENT ENDPOINTS =====
 
 @api_view(['GET', 'POST'])
@@ -1046,7 +1164,10 @@ def course_lessons(request, course_id):
     
     elif request.method == 'POST':
         try:
-            serializer = LessonCreateUpdateSerializer(data=request.data)
+            serializer = LessonCreateUpdateSerializer(
+                data=request.data,
+                context={'request': request, 'course': course}
+            )
             if serializer.is_valid():
                 # Auto-assign order if not provided
                 if 'order' not in serializer.validated_data:
@@ -1101,7 +1222,12 @@ def lesson_detail(request, lesson_id):
     
     elif request.method == 'PUT':
         try:
-            serializer = LessonCreateUpdateSerializer(lesson, data=request.data, partial=True)
+            serializer = LessonCreateUpdateSerializer(
+                lesson,
+                data=request.data,
+                partial=True,
+                context={'request': request, 'course': lesson.course}
+            )
             if serializer.is_valid():
                 lesson = serializer.save()
                 response_serializer = LessonDetailSerializer(lesson)

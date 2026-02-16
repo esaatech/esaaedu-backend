@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib import messages
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from .models import Course, Lesson, LessonMaterial, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, SubmissionType, Note, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
+from .models import Course, Lesson, LessonMaterial, Module, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, SubmissionType, Note, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
 from .views import delete_course_with_cleanup
 
 
@@ -241,16 +241,31 @@ class CourseAdmin(admin.ModelAdmin):
             raise Exception(result.get('error', 'Failed to delete course'))
 
 
+@admin.register(Module)
+class ModuleAdmin(admin.ModelAdmin):
+    list_display = ['title', 'course', 'order']
+    list_filter = ['course__category']
+    search_fields = ['title', 'description', 'course__title']
+    readonly_fields = ['id']
+    ordering = ['course', 'order']
+
+    fieldsets = (
+        (None, {
+            'fields': ('course', 'title', 'description', 'order')
+        }),
+    )
+
+
 @admin.register(Lesson)
 class LessonAdmin(admin.ModelAdmin):
-    list_display = ['title', 'course', 'order', 'type', 'duration', 'created_at']
+    list_display = ['title', 'course', 'module', 'order', 'type', 'duration', 'created_at']
     list_filter = ['type', 'course__category', 'created_at']
     search_fields = ['title', 'description', 'course__title']
     readonly_fields = ['id', 'created_at', 'updated_at']
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('course', 'title', 'description', 'order', 'duration')
+            'fields': ('course', 'module', 'title', 'description', 'order', 'duration')
         }),
         ('Lesson Content', {
             'fields': ('type', 'text_content', 'video_url', 'audio_url', 'live_class_date', 'live_class_status', 'content')
