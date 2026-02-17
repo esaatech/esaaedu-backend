@@ -99,6 +99,47 @@ curl -X POST http://127.0.0.1:8000/api/blog/create/ \
 
 ---
 
+### My posts (authenticated, author-only)
+
+**GET** `/api/blog/mine/`
+
+Returns a list of the current user's posts (draft and published), ordered by `updated_at` (newest first). **Requires authentication** (Bearer token).
+
+**Response fields (per item):** Same as list plus:
+
+| Field         | Type   | Description        |
+|---------------|--------|--------------------|
+| `status`      | string | `draft` or `published` |
+| `updated_at`  | string | ISO 8601 datetime  |
+
+---
+
+**GET** `/api/blog/mine/<id>/`
+
+Returns a single post by primary key `id`. Allowed only if `post.author == request.user`. **Requires authentication.**
+
+**Response:** Same shape as **Get post by slug** (full post including `content`).
+
+---
+
+**PATCH** `/api/blog/mine/<id>/`
+
+Updates a post (title, content). Allowed only if `post.author == request.user`. **Always sets `status` to `draft`** so admin can review before republishing. **Requires authentication.**
+
+**Request body (JSON):** `title` (optional), `content` (optional). At least one field required.
+
+**Response:** Same shape as **Get post by slug** (updated post).
+
+---
+
+**DELETE** `/api/blog/mine/<id>/`
+
+Deletes a post. Allowed only if `post.author == request.user`. **Requires authentication.**
+
+**Response:** `204 No Content`.
+
+---
+
 ## Model (admin)
 
 - **Post**: `title`, `slug` (unique, can be auto from title), `content`, `author` (user), `status` (draft / published), `published_at`, timestamps.
@@ -111,6 +152,14 @@ curl -X POST http://127.0.0.1:8000/api/blog/create/ \
 
 - List: `.../api/blog/`
 - Create: `.../api/blog/create/`
-- Detail: `.../api/blog/<slug>/` (e.g. `.../api/blog/getting-started-with-coding`)
+- My list: `.../api/blog/mine/`
+- My detail/update/delete: `.../api/blog/mine/<id>/`
+- Public detail: `.../api/blog/<slug>/` (e.g. `.../api/blog/getting-started-with-coding`)
 
 Slugs are URL-safe and derived from the title; they remain stable if the title changes (unless you change the slug in admin).
+
+---
+
+## File uploads (images in post content)
+
+Images and other files embedded in post content (BlockNote) are uploaded by the frontend via the **teacher file upload** API (`/api/teacher/files/upload/`) with the storage path **`blog_files`**. If the backend restricts allowed upload paths, ensure `blog_files` is permitted so that blog post images upload successfully.

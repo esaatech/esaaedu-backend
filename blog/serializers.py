@@ -50,3 +50,30 @@ class PostCreateSerializer(serializers.ModelSerializer):
             status=Post.Status.DRAFT,
             **validated_data,
         )
+
+
+class PostMyListSerializer(serializers.ModelSerializer):
+    """List serializer for current user's posts (includes status)."""
+    author = PostAuthorSerializer(read_only=True)
+    excerpt = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Post
+        fields = ['id', 'title', 'slug', 'excerpt', 'status', 'published_at', 'updated_at', 'author']
+
+    def get_excerpt(self, obj):
+        if not obj.content:
+            return ''
+        max_length = 160
+        if len(obj.content) <= max_length:
+            return obj.content
+        return obj.content[:max_length].rsplit(' ', 1)[0] + '…'
+
+
+class PostUpdateSerializer(serializers.ModelSerializer):
+    """Write serializer for updating a post (title, content, excerpt)."""
+
+    class Meta:
+        model = Post
+        fields = ['title', 'content']
+        extra_kwargs = {'title': {'required': False}, 'content': {'required': False}}

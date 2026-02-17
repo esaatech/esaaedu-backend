@@ -1,10 +1,16 @@
-from rest_framework.generics import ListAPIView, RetrieveAPIView, CreateAPIView
+from rest_framework.generics import ListAPIView, RetrieveAPIView, CreateAPIView, RetrieveUpdateDestroyAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 
 from .models import Post
-from .serializers import PostListSerializer, PostDetailSerializer, PostCreateSerializer
+from .serializers import (
+    PostListSerializer,
+    PostDetailSerializer,
+    PostCreateSerializer,
+    PostMyListSerializer,
+    PostUpdateSerializer,
+)
 
 
 class PostListView(ListAPIView):
@@ -53,3 +59,40 @@ class PostCreateView(CreateAPIView):
             PostDetailSerializer(instance).data,
             status=status.HTTP_201_CREATED,
         )
+
+
+class MyPostListView(ListAPIView):
+    """
+    List current user's blog posts (draft and published).
+    GET /api/blog/mine/
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = PostMyListSerializer
+
+    def get_queryset(self):
+        return Post.objects.filter(author=self.request.user).order_by('-updated_at')
+
+
+class MyPostDetailView(RetrieveUpdateDestroyAPIView):
+    """
+    Retrieve, update, or delete a post owned by the current user.
+    GET /api/blog/mine/<id>/
+    PATCH /api/blog/mine/<id>/  (sets status to draft)
+    DELETE /api/blog/mine/<id>/
+    """
+    permission_classes = [IsAuthenticated]
+    lookup_url_kwarg = 'pk'
+    lookup_field = 'pk'
+
+    def get_queryset(self):
+        return Post.objects.filter(author=self.request.user)
+
+    def get_serializer_class(self):
+        if self.request.method in ('PUT', 'PATCH'):
+            return PostUpdateSerializer
+        return PostDetailSerializer
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        instance.status = Post.Status.DRAFT
+        instance.save(update_fields=['status', 'updated_at'])
