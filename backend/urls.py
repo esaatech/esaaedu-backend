@@ -37,6 +37,7 @@ urlpatterns = [
     path("api/home/", include('home.urls')),
     path("api/portfolio/", include('portfolio.urls')),
     path("api/tutorx/", include('tutorx.urls')),
+    path("api/blog/", include('blog.urls')),
     path("api/", include(router.urls)),
     
     # Public marketing program landing pages (simplified URL)

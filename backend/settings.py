@@ -77,7 +77,7 @@ INSTALLED_APPS = [
     "portfolio",
     "tutorx",
     "marketing",
-    
+    "blog",
 ]
 
 MIDDLEWARE = [
