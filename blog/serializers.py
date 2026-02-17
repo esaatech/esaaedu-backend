@@ -30,3 +30,23 @@ class PostDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Post
         fields = ['id', 'title', 'slug', 'content', 'author', 'published_at', 'created_at', 'updated_at']
+
+
+class PostCreateSerializer(serializers.ModelSerializer):
+    """Write serializer for creating a post (e.g. from book export)."""
+
+    class Meta:
+        model = Post
+        fields = ['title', 'content']
+        extra_kwargs = {'title': {'required': True}, 'content': {'required': True}}
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        user = request.user if request else None
+        if not user:
+            raise serializers.ValidationError('Authentication required')
+        return Post.objects.create(
+            author=user,
+            status=Post.Status.DRAFT,
+            **validated_data,
+        )
