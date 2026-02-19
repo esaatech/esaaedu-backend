@@ -2129,6 +2129,88 @@ class AssignmentGradingView(APIView):
             )
 
 
+class AssignmentReturnSubmissionView(APIView):
+    """
+    Return a submitted (not graded) assignment to the student as draft.
+    Student can then edit and resubmit. Clears any grading progress.
+    Only allowed when status is 'submitted' and is_graded is False.
+
+    POST: POST /api/teacher/assignments/{assignment_id}/grading/{submission_id}/return/
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, assignment_id, submission_id):
+        try:
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can return assignments to students'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            try:
+                assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
+                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                    return Response(
+                        {'error': 'Assignment not found or you do not have permission to access it'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except Assignment.DoesNotExist:
+                return Response(
+                    {'error': 'Assignment not found or you do not have permission to access it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            try:
+                submission = AssignmentSubmission.objects.get(
+                    id=submission_id,
+                    assignment=assignment
+                )
+            except AssignmentSubmission.DoesNotExist:
+                return Response(
+                    {'error': 'Submission not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            if submission.is_graded:
+                return Response(
+                    {'error': 'Cannot return an already graded assignment. Return is only for submitted work not yet graded.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if submission.status != 'submitted':
+                return Response(
+                    {'error': 'Can only return submissions that are submitted. Current status: {}'.format(submission.status)},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            submission.status = 'draft'
+            submission.is_graded = False
+            submission.is_teacher_draft = False
+            submission.points_earned = None
+            submission.points_possible = None
+            submission.percentage = None
+            submission.passed = False
+            submission.graded_at = None
+            submission.graded_by = None
+            submission.instructor_feedback = ''
+            submission.graded_questions = []
+            submission.save(update_fields=[
+                'status', 'is_graded', 'is_teacher_draft', 'points_earned', 'points_possible',
+                'percentage', 'passed', 'graded_at', 'graded_by', 'instructor_feedback', 'graded_questions'
+            ])
+
+            response_serializer = AssignmentSubmissionSerializer(submission)
+            return Response({
+                'submission': response_serializer.data,
+                'message': 'Assignment returned to student. They can edit and resubmit.'
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to return assignment to student: {}'.format(str(e))},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 class AssignmentAIGradingView(APIView):
     """
     AI-powered assignment grading endpoint.
