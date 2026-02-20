@@ -217,6 +217,30 @@ lesson = models.ForeignKey(
 
 ## API Endpoints
 
+### Blocks CRUD and Images
+
+**GET** `/api/tutorx/lessons/<lesson_id>/blocks/` — List all blocks for a TutorX lesson. Permission: course teacher or enrolled student.
+
+**PUT** `/api/tutorx/lessons/<lesson_id>/blocks/` — Bulk create/update/delete blocks. Permission: course teacher only.
+
+The PUT endpoint accepts two formats:
+
+1. **JSON** (`Content-Type: application/json`): Body `{ "blocks": [ ... ] }`. Backend updates blocks only; no image upload/delete.
+2. **Multipart** (`Content-Type: multipart/form-data`): Used by the frontend for every save. Form fields:
+   - `blocks`: JSON string — array of block objects. New image blocks use placeholder `content` and `metadata.image_url` = `"__pending__<blockId>"`.
+   - `deleted_image_urls`: JSON string — array of GCS URLs to delete.
+   - `image_<blockId>`: one file per new image (key = block id).
+
+Processing for multipart: (1) Upload each `image_<blockId>` file to GCS (folder `tutorx-images`) via the same logic as the image upload view; (2) In the parsed `blocks` array, replace each `__pending__<blockId>` with the uploaded image URL; (3) Delete from GCS every URL in `deleted_image_urls`; (4) Persist blocks (create/update/delete); (5) Return `{ "blocks": [...] }`. This single-request flow ensures no orphaned images (if the request fails, nothing is committed).
+
+**POST** `/api/tutorx/images/upload/` — Upload a single image to GCS (`tutorx-images/`). Used by clients that do not use the multipart blocks PUT. Request: `multipart/form-data` with `image` (file).
+
+**DELETE** `/api/tutorx/images/delete/` — Delete an image from GCS by URL. Request body: `{ "image_url": "..." }`. Used by clients that do not use the multipart blocks PUT.
+
+See `tutorx/API_REFERENCE.md` for full request/response details.
+
+**Frontend (single-request save)**: The React app sends multipart PUT for every TutorX save: `saveTutorXBlocksWithImages(lessonId, { blocks, pendingImages, deletedImageUrls })`. New images stay as blob URLs in the editor until save; one PUT sends blocks (with `__pending__<blockId>` for new images), `image_<blockId>` files, and `deleted_image_urls`. After success, the parent may call `onSave()` (e.g. `mutate.lessons()` in Course Management) to refresh the lessons list. See the frontend repo docs: `tutorx-block-save-architecture.md`, `blocknote-implementation.md`.
+
 ### Block Actions
 
 **Endpoint**: `POST /api/tutorx/blocks/<action_type>/`

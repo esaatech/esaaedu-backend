@@ -28,14 +28,58 @@ from django.conf import settings
 from PIL import Image as PILImage
 from io import BytesIO
 import uuid
-from django.core.files.storage import default_storage
-from django.core.files.base import ContentFile
-from django.conf import settings
-from PIL import Image
-from io import BytesIO
-import uuid
+import json
 
 logger = logging.getLogger(__name__)
+
+# Placeholder prefix for pending images in multipart save (frontend sends __pending__<blockId>)
+PENDING_IMAGE_PREFIX = "__pending__"
+
+
+def upload_tutorx_image_file_to_gcs(uploaded_file) -> str:
+    """
+    Process and upload a TutorX image file to GCS (tutorx-images/).
+    Reused by TutorXImageUploadView and by the multipart blocks PUT.
+    Returns the public URL of the saved image.
+    """
+    original_filename = uploaded_file.name
+    file_extension = original_filename.split('.')[-1].lower() if '.' in original_filename else ''
+    allowed_extensions = ['jpg', 'jpeg', 'png', 'webp', 'gif']
+    if file_extension not in allowed_extensions:
+        raise ValueError(f'Image extension "{file_extension}" not allowed. Allowed: {", ".join(allowed_extensions)}')
+    max_size = 10 * 1024 * 1024  # 10MB
+    if uploaded_file.size > max_size:
+        raise ValueError(f'Image size exceeds 10MB (got {round(uploaded_file.size / (1024 * 1024), 2)}MB)')
+    if not hasattr(settings, 'GS_BUCKET_NAME') or not settings.GS_BUCKET_NAME:
+        raise RuntimeError('Google Cloud Storage is not configured.')
+    img = PILImage.open(uploaded_file)
+    if img.mode in ('RGBA', 'LA', 'P'):
+        background = PILImage.new('RGB', img.size, (255, 255, 255))
+        if img.mode == 'P':
+            img = img.convert('RGBA')
+        if img.mode == 'RGBA':
+            background.paste(img, mask=img.split()[-1])
+        else:
+            background.paste(img)
+        img = background
+    elif img.mode != 'RGB':
+        img = img.convert('RGB')
+    max_size_full = (1920, 1920)
+    img.thumbnail(max_size_full, PILImage.Resampling.LANCZOS)
+    output = BytesIO()
+    img.save(output, format='JPEG', quality=85, optimize=True, progressive=True)
+    output.seek(0)
+    unique_id = uuid.uuid4()
+    base_name = original_filename.rsplit('.', 1)[0] if '.' in original_filename else 'image'
+    base_name = ''.join(c for c in base_name if c.isalnum() or c in (' ', '-', '_')).strip()[:50]
+    filename = f"{unique_id}-{base_name}.jpg"
+    storage_path = f"tutorx-images/{filename}"
+    file_content = ContentFile(output.getvalue())
+    saved_path = default_storage.save(storage_path, file_content)
+    file_url = default_storage.url(saved_path)
+    if not file_url.startswith('http'):
+        file_url = f"https://storage.googleapis.com/{settings.GS_BUCKET_NAME}/{saved_path}"
+    return file_url
 
 
 class BlockActionView(APIView):
@@ -221,7 +265,10 @@ class TutorXBlockListView(APIView):
     
     @transaction.atomic
     def put(self, request, lesson_id):
-        """Bulk update blocks - handles create, update, and delete"""
+        """Bulk update blocks - handles create, update, and delete.
+        Accepts JSON body { blocks } or multipart/form-data with blocks, deleted_image_urls, and image_<blockId> files.
+        When multipart: uploads images to GCS, injects URLs into blocks, deletes removed images, then persists blocks.
+        """
         lesson = get_object_or_404(Lesson, id=lesson_id)
         
         # Check permission
@@ -237,7 +284,72 @@ class TutorXBlockListView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        blocks_data = request.data.get('blocks', [])
+        # Detect multipart (single-request save with images)
+        is_multipart = (
+            request.content_type
+            and 'multipart/form-data' in request.content_type
+        ) or bool(request.FILES)
+        
+        if is_multipart:
+            try:
+                blocks_raw = request.data.get('blocks') or request.POST.get('blocks', '[]')
+                if isinstance(blocks_raw, str):
+                    blocks_data = json.loads(blocks_raw)
+                else:
+                    blocks_data = list(blocks_raw)
+                deleted_raw = request.data.get('deleted_image_urls') or request.POST.get('deleted_image_urls', '[]')
+                if isinstance(deleted_raw, str):
+                    deleted_image_urls = json.loads(deleted_raw)
+                else:
+                    deleted_image_urls = list(deleted_raw) if deleted_raw else []
+            except (json.JSONDecodeError, TypeError) as e:
+                return Response(
+                    {'error': f'Invalid blocks or deleted_image_urls JSON: {e}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            uploaded_urls = {}  # block_id -> GCS URL
+            try:
+                for key in list(request.FILES.keys()):
+                    if key.startswith('image_'):
+                        block_id = key[6:]  # len('image_') == 6
+                        if not block_id:
+                            continue
+                        file_obj = request.FILES[key]
+                        url = upload_tutorx_image_file_to_gcs(file_obj)
+                        uploaded_urls[block_id] = url
+                for block in blocks_data:
+                    block_id = block.get('id')
+                    content = block.get('content', '') or ''
+                    meta = block.get('metadata') or {}
+                    image_url = meta.get('image_url', '') or content
+                    placeholder = f"{PENDING_IMAGE_PREFIX}{block_id}"
+                    if block_id and (content == placeholder or image_url == placeholder) and block_id in uploaded_urls:
+                        url = uploaded_urls[block_id]
+                        block['content'] = url
+                        if 'metadata' not in block:
+                            block['metadata'] = {}
+                        block['metadata']['image_url'] = url
+                for image_url in deleted_image_urls:
+                    if not image_url or not isinstance(image_url, str):
+                        continue
+                    try:
+                        from urllib.parse import urlparse, unquote
+                        parsed_url = urlparse(image_url)
+                        path_parts = parsed_url.path.strip('/').split('/', 1)
+                        if len(path_parts) > 1:
+                            file_path = unquote(path_parts[1])
+                        else:
+                            file_path = unquote(parsed_url.path.strip('/'))
+                        delete_image_and_thumbnail(file_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete image from GCS {image_url}: {e}")
+            except ValueError as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            except RuntimeError as e:
+                return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        else:
+            blocks_data = request.data.get('blocks', [])
+        
         if not isinstance(blocks_data, list):
             return Response(
                 {'error': 'blocks must be a list'},
