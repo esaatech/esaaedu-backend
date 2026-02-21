@@ -621,7 +621,11 @@ class EnrolledCourse(models.Model):
         """
         Recalculate enrollment fields from StudentLessonProgress records (single source of truth).
         This ensures consistency between progress records and enrollment metadata.
+        Refreshes total_lessons_count from the course and reverts to active when new lessons exist.
         """
+        # Refresh total from current course (teacher may have added/removed lessons)
+        self.total_lessons_count = self.course.lessons.count()
+
         # Get all progress records for this enrollment
         progress_records = StudentLessonProgress.objects.filter(
             enrollment=self
@@ -684,6 +688,11 @@ class EnrolledCourse(models.Model):
                 print(f"   - Course: {self.course.title if self.course else 'Unknown'}")
         else:
             self.progress_percentage = 0.0
+
+        # If course was marked completed but teacher added more lessons, revert to active
+        if self.status == 'completed' and self.completed_lessons_count < self.total_lessons_count:
+            self.status = 'active'
+            self.completion_date = None
 
 
 class StudentAttendance(models.Model):

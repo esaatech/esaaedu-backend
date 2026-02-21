@@ -3534,14 +3534,14 @@ def student_course_lessons(request, course_id):
         print(f"🔍 DEBUG: Calculated actual_completed_count: {actual_completed_count}")
         print(f"🔍 DEBUG: Enrollment.completed_lessons_count before sync: {enrollment.completed_lessons_count}")
         
-        # Sync enrollment object with calculated values to keep database in sync
-        # This ensures consistency across all endpoints
-        enrollment._recalculate_from_progress_records()
-        enrollment.save()
-        
-        print(f"🔍 DEBUG: Enrollment.completed_lessons_count after sync: {enrollment.completed_lessons_count}")
-        print(f"🔍 DEBUG: Enrollment.current_lesson after sync: {enrollment.current_lesson.title if enrollment.current_lesson else None}")
-        
+        # Sync enrollment only when stored total doesn't match current course lesson count
+        current_total = course.lessons.count()
+        if enrollment.total_lessons_count != current_total:
+            enrollment._recalculate_from_progress_records()
+            enrollment.save()
+            print(f"🔍 DEBUG: Enrollment synced (total was {current_total}). completed_lessons_count after sync: {enrollment.completed_lessons_count}")
+            print(f"🔍 DEBUG: Enrollment.current_lesson after sync: {enrollment.current_lesson.title if enrollment.current_lesson else None}")
+
         # Use the serializer with progress map in context
         serializer = CourseWithLessonsSerializer(
             course, 

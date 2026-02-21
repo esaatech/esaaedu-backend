@@ -217,6 +217,31 @@ class CourseWithLessonsSerializer(serializers.ModelSerializer):
 
 ---
 
+## Enrollment total sync (stale total / completed status fix)
+
+When a teacher adds or removes lessons after a student has enrolled, `enrollment.total_lessons_count` can become stale. That leads to wrong progress (e.g. 100% when the course now has more lessons) and the enrollment staying `status='completed'` even though new lessons exist.
+
+### Approach: conditional sync on course open
+
+- **Trigger:** When the student opens the course, the `student_course_lessons` view runs.
+- **Check:** Compare `enrollment.total_lessons_count` to `course.lessons.count()`. If they differ, run a full recalc and save; otherwise do nothing.
+- **Overhead when no mismatch:** One integer comparison and one `course.lessons.count()` query. No recalc, no DB write.
+- **When mismatch:** Call `enrollment._recalculate_from_progress_records()` then `enrollment.save()`.
+
+### What `_recalculate_from_progress_records()` does (when called)
+
+1. **Refresh total:** Sets `self.total_lessons_count = self.course.lessons.count()` so the enrollment uses the current lesson count.
+2. Recomputes `completed_lessons_count` from `StudentLessonProgress` and `current_lesson` from progress order.
+3. Sets `status='completed'` only when there is no next lesson (all current lessons completed).
+4. **Un-complete when course grows:** If `status == 'completed'` but `completed_lessons_count < total_lessons_count` (e.g. teacher added lessons), sets `status = 'active'` and `completion_date = None`.
+
+**Locations:**
+
+- **View:** `courses/views.py` – `student_course_lessons`: conditional around `_recalculate_from_progress_records()` and `save()`.
+- **Model:** `student/models.py` – `EnrolledCourse._recalculate_from_progress_records()`: refresh total at start; un-complete block at end.
+
+---
+
 ## Alternative Approaches Considered
 
 ### ❌ Option 1: Database Annotation
