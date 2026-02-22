@@ -20,7 +20,14 @@ urlpatterns = [
     
     # Schedule
     path('schedule/', views.StudentScheduleView.as_view(), name='student_schedule'),
-    
+
+    # Course overview (intro, enrollment, reviews) – student must be enrolled
+    path('courses/<uuid:course_id>/overview/', views.StudentCourseOverviewView.as_view(), name='student_course_overview'),
+    # Student enrollment status (pause / drop)
+    path('enrolled-courses/<uuid:enrollment_id>/status/', views.StudentEnrollmentStatusView.as_view(), name='student_enrollment_status'),
+    # Student submit course review (admin must verify before it appears)
+    path('courses/<uuid:course_id>/reviews/', views.StudentCourseReviewCreateView.as_view(), name='student_course_review_create'),
+
     # Next Classroom
     path('classroom/next/', views.StudentNextClassroomView.as_view(), name='student_next_classroom'),
     

@@ -21,9 +21,10 @@ logger = logging.getLogger(__name__)
 from courses.models import Class, ClassEvent, Course, Lesson, Quiz, QuizAttempt, Question, Assignment, AssignmentSubmission, Classroom, ProjectSubmission, CourseAssessmentSubmission, CourseAssessment
 from settings.models import UserDashboardSettings
 from .serializers import (
-    EnrolledCourseListSerializer, 
-    EnrolledCourseDetailSerializer, 
+    EnrolledCourseListSerializer,
+    EnrolledCourseDetailSerializer,
     EnrolledCourseCreateUpdateSerializer,
+    StudentCourseOverviewSerializer,
     QuizQuestionFeedbackDetailSerializer,
     QuizQuestionFeedbackCreateUpdateSerializer,
     QuizAttemptFeedbackDetailSerializer,
@@ -1164,12 +1165,198 @@ class TeacherStudentRecord(APIView):
         }
 
 
+class StudentCourseOverviewView(APIView):
+    """
+    GET: Student course overview (read-only intro + enrollment + reviews).
+    Called after the main course/lessons response so the main view stays fast.
+    Student must be authenticated and enrolled (active, completed, or paused).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, course_id):
+        try:
+            if getattr(request.user, 'role', None) != 'student':
+                return Response(
+                    {'error': 'Only students can access course overview'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            student_profile = getattr(request.user, 'student_profile', None)
+            if not student_profile:
+                return Response(
+                    {'error': 'Student profile not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            course = get_object_or_404(
+                Course.objects.prefetch_related('reviews'),
+                id=course_id
+            )
+            enrollment = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                course=course,
+                status__in=['active', 'completed', 'paused']
+            ).first()
+            if not enrollment:
+                return Response(
+                    {'error': 'You must be enrolled in this course to view its overview'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            serializer = StudentCourseOverviewSerializer(
+                course,
+                context={'enrollment': enrollment}
+            )
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Course.DoesNotExist:
+            return Response(
+                {'error': 'Course not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.exception("Student course overview error")
+            return Response(
+                {'error': 'Failed to fetch course overview', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class StudentEnrollmentStatusView(APIView):
+    """
+    PATCH: Student updates their own enrollment status to paused or dropped.
+    Student must be authenticated and the enrollment must belong to them.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, enrollment_id):
+        try:
+            if getattr(request.user, 'role', None) != 'student':
+                return Response(
+                    {'error': 'Only students can update their enrollment status'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            student_profile = getattr(request.user, 'student_profile', None)
+            if not student_profile:
+                return Response(
+                    {'error': 'Student profile not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            enrollment = get_object_or_404(
+                EnrolledCourse,
+                id=enrollment_id,
+                student_profile=student_profile
+            )
+            new_status = request.data.get('status')
+            if new_status not in ('paused', 'dropped'):
+                return Response(
+                    {'error': 'Only "paused" or "dropped" status is allowed'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            enrollment.status = new_status
+            enrollment.save(update_fields=['status'])
+            return Response(
+                {'message': f'Enrollment status updated to {new_status}', 'status': enrollment.status},
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.exception("Student enrollment status update error")
+            return Response(
+                {'error': 'Failed to update enrollment status', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class StudentCourseReviewCreateView(APIView):
+    """
+    POST: Student submits a course review. Student must be authenticated and enrolled.
+    Review is created with is_verified=False; admin approves before it appears in "What Students Say".
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, course_id):
+        try:
+            if getattr(request.user, 'role', None) != 'student':
+                return Response(
+                    {'error': 'Only students can submit course reviews'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            student_profile = getattr(request.user, 'student_profile', None)
+            if not student_profile:
+                return Response(
+                    {'error': 'Student profile not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            course = get_object_or_404(Course, id=course_id)
+            enrollment = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                course=course,
+                status__in=['active', 'completed', 'paused']
+            ).first()
+            if not enrollment:
+                return Response(
+                    {'error': 'You must be enrolled in this course to submit a review'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            rating = request.data.get('rating')
+            review_text = request.data.get('review_text', '').strip()
+            if rating is None:
+                return Response(
+                    {'error': 'rating is required (1-5)'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                rating = int(rating)
+            except (TypeError, ValueError):
+                rating = None
+            if rating not in (1, 2, 3, 4, 5):
+                return Response(
+                    {'error': 'rating must be an integer between 1 and 5'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if not review_text:
+                return Response(
+                    {'error': 'review_text is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            student_name = request.user.get_full_name() or request.user.email or 'Student'
+            student_age = request.data.get('student_age')
+            if student_age is not None:
+                try:
+                    student_age = int(student_age)
+                    if student_age < 5 or student_age > 18:
+                        student_age = None
+                except (TypeError, ValueError):
+                    student_age = None
+            parent_name = request.data.get('parent_name', '').strip() or ''
+            review = CourseReview.objects.create(
+                course=course,
+                student_name=student_name,
+                student_age=student_age,
+                parent_name=parent_name,
+                rating=rating,
+                review_text=review_text,
+                is_verified=False,
+                is_featured=False,
+            )
+            from courses.serializers import CourseReviewSerializer
+            serializer = CourseReviewSerializer(review)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except Course.DoesNotExist:
+            return Response(
+                {'error': 'Course not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.exception("Student course review create error")
+            return Response(
+                {'error': 'Failed to submit review', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 class StudentScheduleView(APIView):
     """
     Get student's complete schedule with all enrolled courses, classes, and events
     """
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get(self, request):
         """
         GET: Retrieve student's complete schedule

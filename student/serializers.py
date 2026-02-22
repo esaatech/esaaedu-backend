@@ -916,3 +916,44 @@ class CodeSnippetShareSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
+
+# ===== STUDENT COURSE OVERVIEW (read-only intro + enrollment + reviews) =====
+
+class StudentCourseOverviewSerializer(serializers.Serializer):
+    """
+    Response shape for GET /api/student/courses/<course_id>/overview/.
+    Student must be authenticated and enrolled (active, completed, or paused).
+    """
+    introduction = serializers.SerializerMethodField()
+    enrollment = serializers.SerializerMethodField()
+    reviews = serializers.SerializerMethodField()
+
+    def get_introduction(self, obj):
+        """Course intro fields (read-only). obj is the Course instance."""
+        return {
+            'title': obj.title,
+            'overview': obj.overview or '',
+            'learning_objectives': obj.learning_objectives or [],
+            'prerequisites_text': obj.prerequisites_text or '',
+            'duration_weeks': obj.duration_weeks,
+            'duration': getattr(obj, 'duration', None) or '',
+            'sessions_per_week': obj.sessions_per_week,
+            'total_projects': obj.total_projects,
+            'value_propositions': obj.value_propositions or [],
+        }
+
+    def get_enrollment(self, obj):
+        """Current enrollment for this student. From context."""
+        enrollment = self.context.get('enrollment')
+        if not enrollment:
+            return None
+        return {
+            'id': str(enrollment.id),
+            'status': enrollment.status,
+        }
+
+    def get_reviews(self, obj):
+        """Course reviews for "What Students Say". Only verified (admin-approved) reviews."""
+        from courses.serializers import CourseReviewSerializer
+        return CourseReviewSerializer(obj.reviews.filter(is_verified=True), many=True).data
+
