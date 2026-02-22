@@ -18,7 +18,7 @@ from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQue
 from teacher.utils import FileUploadService
 
 logger = logging.getLogger(__name__)
-from courses.models import Class, ClassEvent, Course, Lesson, Quiz, QuizAttempt, Question, Assignment, AssignmentSubmission, Classroom, ProjectSubmission, CourseAssessmentSubmission, CourseAssessment
+from courses.models import Class, ClassEvent, Course, Lesson, Quiz, QuizAttempt, Question, Assignment, AssignmentSubmission, Classroom, ProjectSubmission, CourseAssessmentSubmission, CourseAssessment, CourseReview
 from settings.models import UserDashboardSettings
 from .serializers import (
     EnrolledCourseListSerializer,
@@ -1200,9 +1200,13 @@ class StudentCourseOverviewView(APIView):
                     {'error': 'You must be enrolled in this course to view its overview'},
                     status=status.HTTP_403_FORBIDDEN
                 )
+            student_name = request.user.get_full_name() or request.user.email or ''
+            my_review = CourseReview.objects.filter(
+                course=course, student_name=student_name
+            ).first() if student_name else None
             serializer = StudentCourseOverviewSerializer(
                 course,
-                context={'enrollment': enrollment}
+                context={'enrollment': enrollment, 'my_review': my_review}
             )
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Course.DoesNotExist:
@@ -1325,6 +1329,19 @@ class StudentCourseReviewCreateView(APIView):
                 except (TypeError, ValueError):
                     student_age = None
             parent_name = request.data.get('parent_name', '').strip() or ''
+            from courses.serializers import CourseReviewSerializer
+            existing = CourseReview.objects.filter(
+                course=course, student_name=student_name
+            ).first()
+            if existing:
+                existing.rating = rating
+                existing.review_text = review_text
+                existing.student_age = student_age
+                existing.parent_name = parent_name
+                existing.is_verified = False
+                existing.save(update_fields=['rating', 'review_text', 'student_age', 'parent_name', 'is_verified'])
+                serializer = CourseReviewSerializer(existing)
+                return Response(serializer.data, status=status.HTTP_200_OK)
             review = CourseReview.objects.create(
                 course=course,
                 student_name=student_name,
@@ -1335,7 +1352,6 @@ class StudentCourseReviewCreateView(APIView):
                 is_verified=False,
                 is_featured=False,
             )
-            from courses.serializers import CourseReviewSerializer
             serializer = CourseReviewSerializer(review)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         except Course.DoesNotExist:

@@ -927,6 +927,7 @@ class StudentCourseOverviewSerializer(serializers.Serializer):
     introduction = serializers.SerializerMethodField()
     enrollment = serializers.SerializerMethodField()
     reviews = serializers.SerializerMethodField()
+    my_review = serializers.SerializerMethodField()
 
     def get_introduction(self, obj):
         """Course intro fields (read-only). obj is the Course instance."""
@@ -956,4 +957,12 @@ class StudentCourseOverviewSerializer(serializers.Serializer):
         """Course reviews for "What Students Say". Only verified (admin-approved) reviews."""
         from courses.serializers import CourseReviewSerializer
         return CourseReviewSerializer(obj.reviews.filter(is_verified=True), many=True).data
+
+    def get_my_review(self, obj):
+        """Current student's review for this course (if any), so frontend can show Update and pre-fill."""
+        from courses.serializers import CourseReviewSerializer
+        my_review = self.context.get('my_review')
+        if my_review is None:
+            return None
+        return CourseReviewSerializer(my_review).data
 
