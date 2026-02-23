@@ -19,6 +19,8 @@ from .serializers import (
     SimplifyResponseSerializer,
     SummarizeResponseSerializer,
     GenerateQuestionsResponseSerializer,
+    StudentAskRequestSerializer,
+    StudentAskResponseSerializer,
 )
 from settings.models import UserTutorXInstruction
 from courses.models import Lesson
@@ -502,6 +504,64 @@ class TutorXBlockListView(APIView):
             })
         
         return Response({'blocks': blocks_data}, status=status.HTTP_200_OK)
+
+
+class TutorXLessonAskView(APIView):
+    """
+    POST: Student Ask AI - send sentence-based context + question, get AI answer.
+    Same permission as GET blocks: teacher or enrolled student.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, lesson_id):
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+        if lesson.type != 'tutorx':
+            return Response(
+                {'error': 'This lesson is not a TutorX lesson'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        is_teacher = lesson.course.teacher == request.user
+        is_student = False
+        if not is_teacher and hasattr(request.user, 'student_profile'):
+            from student.models import EnrolledCourse
+            is_student = EnrolledCourse.objects.filter(
+                student_profile=request.user.student_profile,
+                course=lesson.course,
+                status__in=['active', 'completed']
+            ).exists()
+        if not is_teacher and not is_student:
+            return Response(
+                {'error': 'Only the course teacher or enrolled students can access this lesson'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        serializer = StudentAskRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        data = serializer.validated_data
+        try:
+            service = TutorXAIService()
+            result = service.ask_student(
+                lesson_title=data['lesson_title'],
+                current_sentence=data['current_sentence'],
+                selected_text=data['selected_text'],
+                question=data['question'],
+                context_before=data.get('context_before') or '',
+                action_type=data.get('action_type'),
+                temperature=0.7,
+                max_tokens=None,
+            )
+            response_serializer = StudentAskResponseSerializer(data=result)
+            if response_serializer.is_valid():
+                return Response(response_serializer.validated_data, status=status.HTTP_200_OK)
+            return Response(result, status=status.HTTP_200_OK)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Error in TutorXLessonAskView: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to get answer', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class TutorXBlockCreateView(APIView):

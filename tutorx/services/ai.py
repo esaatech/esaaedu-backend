@@ -551,3 +551,66 @@ class TutorXAIService:
             logger.error(f"Error in generate_questions: {e}", exc_info=True)
             raise
 
+    def ask_student(
+        self,
+        lesson_title: str,
+        current_sentence: str,
+        selected_text: str,
+        question: str,
+        context_before: Optional[str] = None,
+        action_type: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Student Ask AI: answer a student's question using sentence-based context.
+        Does not use block_content; builds prompt from lesson_title, context_before,
+        current_sentence, selected_text, and question.
+
+        Returns:
+            Dictionary with 'answer' and 'model'.
+        """
+        valid_action_types = [
+            'explain_more', 'give_examples', 'simplify', 'summarize', 'generate_questions'
+        ]
+        if action_type and action_type in valid_action_types:
+            system_instruction = self._get_system_instruction(action_type)
+        else:
+            system_instruction = (
+                "You are a helpful tutor. Answer the student's question clearly and concisely "
+                "based only on the given context. Be educational and supportive."
+            )
+
+        parts = [
+            f"Lesson: {lesson_title}",
+            "",
+            "Current sentence (from the lesson):",
+            current_sentence,
+            "",
+            "Selected text (what the student highlighted):",
+            selected_text,
+            "",
+            "Student's question:",
+            question,
+        ]
+        if context_before and context_before.strip():
+            parts.insert(2, "Context (previous sentences):")
+            parts.insert(3, context_before.strip())
+            parts.insert(4, "")
+        prompt = "\n".join(parts)
+
+        try:
+            response = self.gemini_service.generate(
+                system_instruction=system_instruction,
+                prompt=prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return {
+                'answer': response['raw'],
+                'model': response.get('model'),
+            }
+        except Exception as e:
+            logger.error(f"Error in ask_student: {e}", exc_info=True)
+            raise
+

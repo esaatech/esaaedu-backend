@@ -14,6 +14,7 @@ urlpatterns = [
     
     # Block CRUD operations (must come before action routes to avoid conflicts)
     path('lessons/<uuid:lesson_id>/blocks/', views.TutorXBlockListView.as_view(), name='tutorx-block-list'),
+    path('lessons/<uuid:lesson_id>/ask/', views.TutorXLessonAskView.as_view(), name='tutorx-lesson-ask'),
     path('blocks/', views.TutorXBlockCreateView.as_view(), name='tutorx-block-create'),  # POST to create
     path('blocks/<uuid:block_id>/', views.TutorXBlockDetailView.as_view(), name='tutorx-block-detail'),  # GET, PUT, DELETE
     

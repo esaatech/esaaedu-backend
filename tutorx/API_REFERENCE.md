@@ -41,6 +41,45 @@ List all blocks for a TutorX lesson.
 
 ---
 
+### POST /api/tutorx/lessons/{lesson_id}/ask/
+
+Student Ask AI: send a question about selected text in a TutorX lesson. The frontend sends sentence-level context (lesson title, optional context_before, current_sentence, selected_text, question, optional action_type) to control token usage. Used for the first message and for follow-up questions in the same conversation (each request is independent; no conversation history is sent).
+
+**Path Parameters**: `lesson_id` (UUID)
+
+**Request Body** (JSON):
+```json
+{
+  "lesson_title": "string (required)",
+  "context_before": "string (optional, up to 2 sentences before current)",
+  "current_sentence": "string (required, full sentence containing selection)",
+  "selected_text": "string (required)",
+  "question": "string (required)",
+  "action_type": "string (optional, e.g. explain_more, simplify, define, custom)"
+}
+```
+
+**Response** (200 OK):
+```json
+{
+  "answer": "Markdown-formatted explanation...",
+  "model": "gemini-1.5-flash"
+}
+```
+
+**Permission**: Course teacher or enrolled student. Lesson must exist and have `type == 'tutorx'`.
+
+**Status Codes**:
+- `200 OK`: Success
+- `400 Bad Request`: Invalid request body
+- `403 Forbidden`: User is not teacher or enrolled student
+- `404 Not Found`: Lesson not found
+- `500 Internal Server Error`: AI/service error
+
+**Implementation**: `tutorx/views.py` → `TutorXLessonAskView`, `tutorx/serializers.py` → `StudentAskRequestSerializer` / `StudentAskResponseSerializer`, `tutorx/services/ai.py` → `TutorXAIService.ask_student()`. See `tutorx/STUDENT_ASK_AI.md`.
+
+---
+
 ### PUT /api/tutorx/lessons/{lesson_id}/blocks/
 
 Bulk create/update/delete blocks. Accepts **two request formats**.

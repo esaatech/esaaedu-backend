@@ -88,3 +88,50 @@ class GenerateQuestionsResponseSerializer(serializers.Serializer):
     )
     model = serializers.CharField()
 
+
+# --- Student Ask AI (sentence-based context) ---
+
+ACTION_TYPE_CHOICES = [
+    'explain_more', 'give_examples', 'simplify', 'summarize', 'generate_questions', 'custom'
+]
+
+
+class StudentAskRequestSerializer(serializers.Serializer):
+    """Request body for POST /api/tutorx/lessons/<lesson_id>/ask/"""
+    lesson_title = serializers.CharField(required=True, allow_blank=False)
+    context_before = serializers.CharField(required=False, allow_blank=True, default='')
+    current_sentence = serializers.CharField(required=True, allow_blank=False)
+    selected_text = serializers.CharField(required=True, allow_blank=False)
+    question = serializers.CharField(required=True, allow_blank=False)
+    action_type = serializers.ChoiceField(
+        choices=ACTION_TYPE_CHOICES,
+        required=False,
+        allow_null=True
+    )
+
+    def validate_lesson_title(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("lesson_title cannot be empty")
+        return value.strip()
+
+    def validate_current_sentence(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("current_sentence cannot be empty")
+        return value.strip()
+
+    def validate_selected_text(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("selected_text cannot be empty")
+        return value.strip()
+
+    def validate_question(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("question cannot be empty")
+        return value.strip()
+
+
+class StudentAskResponseSerializer(serializers.Serializer):
+    """Response for POST /api/tutorx/lessons/<lesson_id>/ask/"""
+    answer = serializers.CharField()
+    model = serializers.CharField(required=False, allow_null=True)
+
