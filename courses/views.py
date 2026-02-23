@@ -1153,7 +1153,7 @@ def course_lessons(request, course_id):
     
     if request.method == 'GET':
         try:
-            lessons = course.lessons.all().order_by('order')
+            lessons = course.lessons.select_related('module').order_by('order')
             serializer = LessonListSerializer(lessons, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
@@ -1300,8 +1300,8 @@ def reorder_lessons(request, course_id):
                 lesson.order = new_order
                 lesson.save()
             
-            # Return updated lessons
-            lessons = course.lessons.all().order_by('order')
+            # Return updated lessons (include module for master side)
+            lessons = course.lessons.select_related('module').order_by('order')
             response_serializer = LessonListSerializer(lessons, many=True)
             return Response(response_serializer.data, status=status.HTTP_200_OK)
         

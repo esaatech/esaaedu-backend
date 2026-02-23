@@ -220,10 +220,10 @@ def api_documentation(request):
                     }
                 },
                 "course_lessons": {
-                    "description": "Lesson list and create for a course. Each lesson can include module_id and module_title.",
+                    "description": "Lesson list and create for a course. Each lesson includes module_id, module_title, and module (object or null) for teacher/master side.",
                     "GET": {
                         "url": "/api/courses/{course_id}/lessons/",
-                        "description": "List lessons for course (LessonListSerializer: id, title, description, type, duration, order, module_id, module_title, status, created_at)"
+                        "description": "List lessons for course (LessonListSerializer: id, title, description, type, duration, order, module_id, module_title, module {id, title, order} or null, text_content, video_url, audio_url, live_class_*, content, created_at, updated_at). Use module_id/module to show lessons per module in the UI."
                     },
                     "POST": {
                         "url": "/api/courses/{course_id}/lessons/",

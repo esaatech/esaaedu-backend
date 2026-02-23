@@ -190,11 +190,12 @@ class LessonListSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
     
     def get_module_id(self, obj):
-        return obj.module_id if obj.module_id else None
-    
+        return getattr(obj, 'module_id', None) or None
+
     def get_module_title(self, obj):
-        return obj.module.title if obj.module_id else None
-    
+        module = getattr(obj, 'module', None)
+        return (module.title if module else None) or None
+
     def get_status(self, obj):
         """
         Get lesson status directly from StudentLessonProgress records.
@@ -1026,17 +1027,36 @@ class FeaturedCoursesSerializer(serializers.Serializer):
 
 class LessonListSerializer(serializers.ModelSerializer):
     """
-    Serializer for lesson list view (for course management)
+    Serializer for lesson list view (for course management).
+    Includes module_id, module_title, and module for master/teacher side.
     """
+    module_id = serializers.SerializerMethodField()
+    module_title = serializers.SerializerMethodField()
+    module = serializers.SerializerMethodField()
+
     class Meta:
         model = Lesson
         fields = [
             'id', 'title', 'description', 'type', 'duration', 'order',
-            'text_content', 'video_url', 'audio_url', 'live_class_date', 
+            'module_id', 'module_title', 'module',
+            'text_content', 'video_url', 'audio_url', 'live_class_date',
             'live_class_status', 'content',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_module_id(self, obj):
+        return getattr(obj, 'module_id', None) or None
+
+    def get_module_title(self, obj):
+        module = getattr(obj, 'module', None)
+        return (module.title if module else None) or None
+
+    def get_module(self, obj):
+        module = getattr(obj, 'module', None)
+        if module is None:
+            return None
+        return {'id': module.id, 'title': module.title, 'order': module.order}
 
 
 class LessonCreateUpdateSerializer(serializers.ModelSerializer):
