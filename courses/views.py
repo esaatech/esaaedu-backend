@@ -3446,8 +3446,19 @@ def student_course_lessons(request, course_id):
     Uses StudentLessonProgress records as the single source of truth for lesson status.
     """
     try:
-        # Get the course with lessons and current lesson details
-        course = get_object_or_404(Course, id=course_id)
+        from django.db.models import Prefetch
+
+        # Get the course with lessons (and module) and modules prefetched to avoid N+1
+        course = get_object_or_404(
+            Course.objects.prefetch_related(
+                Prefetch(
+                    'lessons',
+                    queryset=Lesson.objects.select_related('module').order_by('order'),
+                ),
+                Prefetch('modules', queryset=Module.objects.order_by('order')),
+            ),
+            id=course_id,
+        )
         
         # Check if student is enrolled
         if not request.user.is_authenticated:

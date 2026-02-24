@@ -190,7 +190,11 @@ class LessonListSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
     
     def get_module_id(self, obj):
-        return getattr(obj, 'module_id', None) or None
+        mid = getattr(obj, 'module_id', None)
+        if mid is not None:
+            return mid
+        module = getattr(obj, 'module', None)
+        return module.id if module else None
 
     def get_module_title(self, obj):
         module = getattr(obj, 'module', None)
@@ -331,6 +335,7 @@ class CourseWithLessonsSerializer(serializers.ModelSerializer):
     lessons = LessonListSerializer(many=True, read_only=True)
     current_lesson = serializers.SerializerMethodField()
     enrollment_info = serializers.SerializerMethodField()
+    modules = serializers.SerializerMethodField()
     teacher_name = serializers.CharField(source='teacher.get_full_name', read_only=True)
     enrolled_students_count = serializers.ReadOnlyField()
     total_lessons = serializers.ReadOnlyField()
@@ -344,9 +349,17 @@ class CourseWithLessonsSerializer(serializers.ModelSerializer):
             'total_projects', 'value_propositions', 'featured', 'popular',
             'color', 'icon', 'image', 'max_students', 'schedule', 'certificate',
             'status', 'teacher_name', 'enrolled_students_count', 'total_lessons',
-            'lessons', 'current_lesson', 'enrollment_info', 'created_at'
+            'lessons', 'current_lesson', 'enrollment_info', 'modules', 'created_at'
         ]
         read_only_fields = ['id', 'created_at', 'enrolled_students_count', 'total_lessons']
+    
+    def get_modules(self, obj):
+        """Return ordered list of modules for the student course view (read-only)."""
+        modules_qs = obj.modules.all()
+        return [
+            {'id': m.id, 'title': m.title, 'order': m.order}
+            for m in sorted(modules_qs, key=lambda m: m.order)
+        ]
     
     def get_current_lesson(self, obj):
         """
