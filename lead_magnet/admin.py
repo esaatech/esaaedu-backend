@@ -7,7 +7,9 @@ import logging
 import os
 from django.contrib import admin
 from django import forms
+from django.utils.safestring import mark_safe
 from django.core.files.storage import default_storage
+from django.conf import settings
 
 from .models import LeadMagnet, LeadMagnetSubmission
 
@@ -45,12 +47,16 @@ class LeadMagnetAdmin(admin.ModelAdmin):
     list_display = ["title", "slug", "is_active", "created_at"]
     list_filter = ["is_active"]
     search_fields = ["title", "slug", "description"]
-    readonly_fields = ["created_at", "updated_at", "pdf_file_name", "pdf_url", "preview_image_name", "preview_image_url"]
+    readonly_fields = [
+        "created_at", "updated_at",
+        "pdf_file_name", "pdf_url", "preview_image_name", "preview_image_url",
+        "guide_url_display",
+    ]
     prepopulated_fields = {"slug": ("title",)}
 
     fieldsets = (
         (None, {
-            "fields": ("slug", "title", "description", "benefits", "is_active"),
+            "fields": ("slug", "title", "guide_url_display", "description", "benefits", "is_active"),
         }),
         ("Files (upload to GCP)", {
             "description": "Upload PDF and preview image. They are saved to GCP at lead_magnets/{slug}/guide.pdf and lead_magnets/{slug}/preview.jpg",
@@ -66,6 +72,27 @@ class LeadMagnetAdmin(admin.ModelAdmin):
 
     def get_form(self, request, obj=None, **kwargs):
         return super().get_form(request, obj, **kwargs)
+
+    def guide_url_display(self, obj):
+        """Show the full guide URL (using the saved slug) with a Copy button. Shown after save."""
+        if not obj or not getattr(obj, "pk", None) or not obj.slug:
+            return mark_safe(
+                '<span style="color:#999;">Save the lead magnet first to see the guide URL.</span>'
+            )
+        base = getattr(settings, "LEAD_MAGNET_GUIDE_BASE_URL", "https://www.sbtyacademy.com").rstrip("/")
+        url = f"{base}/guide/{obj.slug}"
+        field_id = f"guide-url-field-{obj.pk}"
+        return mark_safe(
+            '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+            f'<input type="text" readonly value="{url}" id="{field_id}" '
+            'style="flex:1;min-width:280px;max-width:480px;padding:6px 10px;font-family:monospace;">'
+            f'<button type="button" class="button" onclick="var i=document.getElementById(\'{field_id}\');'
+            'navigator.clipboard.writeText(i.value);this.textContent=\'Copied!\';'
+            'setTimeout(function(){this.textContent=\'Copy\';}.bind(this),1500);">Copy</button>'
+            '</div>'
+        )
+
+    guide_url_display.short_description = "Guide URL"
 
     def save_model(self, request, obj, form, change):
         slug = (form.cleaned_data.get("slug") or getattr(obj, "slug", "") or "").strip()

@@ -565,3 +565,6 @@ BREVO_LIST_ID = config('BREVO_LIST_ID', default=None, cast=lambda v: int(v) if v
 BREVO_WELCOME_TEMPLATE_ID = config('BREVO_WELCOME_TEMPLATE_ID', default=None, cast=lambda v: int(v) if v else None)
 BREVO_SENDER_EMAIL = config('BREVO_SENDER_EMAIL', default='')
 BREVO_SENDER_NAME = config('BREVO_SENDER_NAME', default='Little Learners Tech')
+
+# Lead magnet – frontend guide page base URL (full guide URL = LEAD_MAGNET_GUIDE_BASE_URL/guide/<slug>/)
+LEAD_MAGNET_GUIDE_BASE_URL = config('LEAD_MAGNET_GUIDE_BASE_URL', default='https://www.sbtyacademy.com')

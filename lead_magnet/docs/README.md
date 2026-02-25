@@ -16,7 +16,7 @@ Base path: **`/api/lead-magnet/`**. All endpoints are public (`AllowAny`).
 
 **`GET /api/lead-magnet/<slug>/`**
 
-Returns public data for an active lead magnet.
+Returns public data for an active lead magnet. Includes **guide_url**: the full frontend URL for this guide (uses the saved slug), e.g. `https://www.sbtyacademy.com/guide/30-steam-activities`.
 
 **Response** (200):
 
@@ -25,7 +25,8 @@ Returns public data for an active lead magnet.
   "title": "Guide Title",
   "description": "Guide description text.",
   "benefits": ["Benefit 1", "Benefit 2"],
-  "preview_image_url": "https://storage.googleapis.com/..."
+  "preview_image_url": "https://storage.googleapis.com/...",
+  "guide_url": "https://www.sbtyacademy.com/guide/30-steam-activities"
 }
 ```
 
@@ -68,7 +69,7 @@ Returns public data for an active lead magnet.
 
 ## Django Admin
 
-- **Lead magnets** (`/admin/lead_magnet/leadmagnet/`): Add/edit guides. Set slug, title, description, benefits; upload PDF and preview image (saved to GCP); set optional `brevo_list_id` and `is_active`. Paths and URLs are filled automatically after upload.
+- **Lead magnets** (`/admin/lead_magnet/leadmagnet/`): Add/edit guides. Set slug, title, description, benefits; upload PDF and preview image (saved to GCP); set optional `brevo_list_id` and `is_active`. After save, **Guide URL** shows the full frontend link (e.g. `https://www.sbtyacademy.com/guide/30-steam-activities`) with a **Copy** button. Paths and URLs are filled automatically after upload.
 - **Submissions** (`/admin/lead_magnet/leadmagnetsubmission/`): View submissions per guide.
 
 Deleting a `LeadMagnet` removes its PDF and preview files from GCP before deleting the record.
@@ -84,6 +85,7 @@ In `.env` or `backend/settings.py` (via `config()`):
 | `BREVO_SENDER_NAME` | From name (default: "Little Learners Tech"). |
 | `BREVO_LIST_ID` | Default list ID if a guide has no `brevo_list_id`. |
 | `BREVO_WELCOME_TEMPLATE_ID` | Optional Brevo template ID for welcome email (params: `FIRSTNAME`, `PDF_URL`, `GUIDE_TITLE`). |
+| `LEAD_MAGNET_GUIDE_BASE_URL` | Base URL for the frontend guide page (default: `https://www.sbtyacademy.com`). Full guide URL = `{base}/guide/{slug}`. |
 
 GCP uses existing backend config: `GCS_BUCKET_NAME`, `GCS_PROJECT_ID`, and credentials (e.g. `GOOGLE_APPLICATION_CREDENTIALS`).
 

@@ -1,15 +1,26 @@
 """
 Serializers for lead magnet API.
 """
+from django.conf import settings
 from rest_framework import serializers
 from .models import LeadMagnet, LeadMagnetSubmission
 
 
+def get_guide_url(slug):
+    base = getattr(settings, "LEAD_MAGNET_GUIDE_BASE_URL", "https://www.sbtyacademy.com").rstrip("/")
+    return f"{base}/guide/{slug}"
+
+
 class LeadMagnetPublicSerializer(serializers.ModelSerializer):
     """Public guide data for GET /api/lead-magnet/<slug>/"""
+    guide_url = serializers.SerializerMethodField()
+
     class Meta:
         model = LeadMagnet
-        fields = ["title", "description", "benefits", "preview_image_url"]
+        fields = ["title", "description", "benefits", "preview_image_url", "guide_url"]
+
+    def get_guide_url(self, obj):
+        return get_guide_url(obj.slug)
 
 
 class LeadMagnetSubmitSerializer(serializers.Serializer):
