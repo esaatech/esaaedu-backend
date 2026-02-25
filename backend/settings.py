@@ -78,6 +78,7 @@ INSTALLED_APPS = [
     "tutorx",
     "marketing",
     "blog",
+    "lead_magnet",
 ]
 
 MIDDLEWARE = [
@@ -557,3 +558,10 @@ JITSI_KID = config('JITSI_KID', default='')  # Key ID for JaaS
 JITSI_TOKEN_ALGORITHM = config('JITSI_TOKEN_ALGORITHM', default='RS256')
 # Token expiry in hours (default: 2 hours)
 JITSI_TOKEN_EXPIRY_HOURS = config('JITSI_TOKEN_EXPIRY_HOURS', default=2, cast=int)
+
+# Brevo (Sendinblue) - Lead magnet emails and lists
+BREVO_API_KEY = config('BREVO_API_KEY', default='')
+BREVO_LIST_ID = config('BREVO_LIST_ID', default=None, cast=lambda v: int(v) if v else None)
+BREVO_WELCOME_TEMPLATE_ID = config('BREVO_WELCOME_TEMPLATE_ID', default=None, cast=lambda v: int(v) if v else None)
+BREVO_SENDER_EMAIL = config('BREVO_SENDER_EMAIL', default='')
+BREVO_SENDER_NAME = config('BREVO_SENDER_NAME', default='Little Learners Tech')
