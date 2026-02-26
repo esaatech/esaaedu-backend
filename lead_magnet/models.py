@@ -35,6 +35,15 @@ class LeadMagnet(models.Model):
         blank=True,
         help_text="Brevo list ID to add contacts to on submission.",
     )
+    brevo_template_id = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Brevo transactional template ID for the welcome email (e.g. 1 for 30-steam-activities). If set, the template is used instead of the default HTML.",
+    )
+    email_only_delivery = models.BooleanField(
+        default=False,
+        help_text="If checked, frontend should use a different button label (e.g. 'Send me the guide') and not open/download the PDF after submit; guide is sent by email only.",
+    )
     is_active = models.BooleanField(default=True)
 
     created_at = models.DateTimeField(auto_now_add=True)

@@ -17,7 +17,7 @@ class LeadMagnetPublicSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = LeadMagnet
-        fields = ["title", "description", "benefits", "preview_image_url", "guide_url"]
+        fields = ["title", "description", "benefits", "preview_image_url", "guide_url", "email_only_delivery"]
 
     def get_guide_url(self, obj):
         return get_guide_url(obj.slug)

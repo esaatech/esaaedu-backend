@@ -163,6 +163,23 @@ jupyter = ["ipython (>=7.8.0)", "tokenize-rt (>=3.2.0)"]
 uvloop = ["uvloop (>=0.15.2)"]
 
 [[package]]
+name = "brevo-python"
+version = "4.0.5"
+description = ""
+optional = false
+python-versions = "<4.0,>=3.8"
+files = [
+    {file = "brevo_python-4.0.5-py3-none-any.whl", hash = "sha256:0c8875d3521b6b1ec0e5beb31e3ca7bcb3cebb1008f07139038d7d3be2b4214a"},
+    {file = "brevo_python-4.0.5.tar.gz", hash = "sha256:6646fa4dcb3477fd73f92fe795ac3ff57ea1875c1f23d8cb7e47b7df4dbc59b9"},
+]
+
+[package.dependencies]
+httpx = ">=0.21.2"
+pydantic = ">=1.9.2"
+pydantic-core = ">=2.18.2"
+typing_extensions = ">=4.0.0"
+
+[[package]]
 name = "cachecontrol"
 version = "0.14.3"
 description = "httplib2 caching for requests"
@@ -2873,4 +2890,4 @@ testing = ["coverage[toml]", "zope.event", "zope.testing"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.15"
-content-hash = "fa63ef104c98a5a00297c7177adf9fc309466fa29d9f5040423ef6c561fcd254"
+content-hash = "49e314ecfd865a8622217103c9b3061497741264bc363989a8023d9c8e757460"

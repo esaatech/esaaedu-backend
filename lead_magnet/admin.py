@@ -37,6 +37,8 @@ class LeadMagnetAdminForm(forms.ModelForm):
             "description",
             "benefits",
             "brevo_list_id",
+            "brevo_template_id",
+            "email_only_delivery",
             "is_active",
         ]
 
@@ -44,7 +46,7 @@ class LeadMagnetAdminForm(forms.ModelForm):
 @admin.register(LeadMagnet)
 class LeadMagnetAdmin(admin.ModelAdmin):
     form = LeadMagnetAdminForm
-    list_display = ["title", "slug", "is_active", "created_at"]
+    list_display = ["title", "slug", "guide_url_copy", "is_active", "created_at"]
     list_filter = ["is_active"]
     search_fields = ["title", "slug", "description"]
     readonly_fields = [
@@ -56,14 +58,15 @@ class LeadMagnetAdmin(admin.ModelAdmin):
 
     fieldsets = (
         (None, {
-            "fields": ("slug", "title", "guide_url_display", "description", "benefits", "is_active"),
+            "fields": ("slug", "title", "guide_url_display", "description", "benefits", "email_only_delivery", "is_active"),
         }),
         ("Files (upload to GCP)", {
             "description": "Upload PDF and preview image. They are saved to GCP at lead_magnets/{slug}/guide.pdf and lead_magnets/{slug}/preview.jpg",
             "fields": ("pdf_upload", "preview_upload", "pdf_file_name", "pdf_url", "preview_image_name", "preview_image_url"),
         }),
         ("Brevo", {
-            "fields": ("brevo_list_id",),
+            "fields": ("brevo_list_id", "brevo_template_id"),
+            "description": "List ID: add contacts to this list. Template ID: use this Brevo transactional template for the welcome email (e.g. 1 for 30-steam-activities). Leave template blank to use BREVO_WELCOME_TEMPLATE_ID from .env, or to send the default HTML.",
         }),
         ("Timestamps", {
             "fields": ("created_at", "updated_at"),
@@ -93,6 +96,26 @@ class LeadMagnetAdmin(admin.ModelAdmin):
         )
 
     guide_url_display.short_description = "Guide URL"
+
+    def guide_url_copy(self, obj):
+        """Changelist: show guide URL with Copy button so you don't have to open the record."""
+        if not obj or not getattr(obj, "pk", None) or not obj.slug:
+            return "—"
+        base = getattr(settings, "LEAD_MAGNET_GUIDE_BASE_URL", "https://www.sbtyacademy.com").rstrip("/")
+        url = f"{base}/guide/{obj.slug}"
+        field_id = f"list-guide-url-{obj.pk}"
+        return mark_safe(
+            '<div style="display:flex;align-items:center;gap:4px;max-width:320px;">'
+            f'<input type="text" readonly value="{url}" id="{field_id}" '
+            'style="flex:1;min-width:0;padding:4px 6px;font-size:12px;font-family:monospace;">'
+            f'<button type="button" class="button" style="padding:4px 8px;white-space:nowrap;" '
+            f'onclick="var i=document.getElementById(\'{field_id}\');'
+            'navigator.clipboard.writeText(i.value);this.textContent=\'Copied!\';'
+            'setTimeout(function(){this.textContent=\'Copy\';}.bind(this),1500);">Copy</button>'
+            '</div>'
+        )
+
+    guide_url_copy.short_description = "Guide URL"
 
     def save_model(self, request, obj, form, change):
         slug = (form.cleaned_data.get("slug") or getattr(obj, "slug", "") or "").strip()
