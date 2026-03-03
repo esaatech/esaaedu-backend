@@ -1460,6 +1460,15 @@ class AssignmentSubmission(models.Model):
         help_text="Individual question grades and feedback - list of {question_id, points_earned, points_possible, teacher_feedback/feedback, correct_answer (optional), is_correct (optional)}"
     )
     
+    # Return feedback: when teacher returns a submitted (not graded) assignment to student as draft,
+    # optional per-question feedback so student can improve before resubmitting.
+    return_feedback = models.JSONField(
+        default=None,
+        null=True,
+        blank=True,
+        help_text="When status is draft: optional feedback from teacher when they returned the submission. List of {question_id, feedback}."
+    )
+    
     # Grading History
     grading_history = models.JSONField(
         default=list,

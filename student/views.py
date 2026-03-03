@@ -3520,6 +3520,8 @@ class AssignmentSubmissionView(APIView):
                 submission.answers = merged_answers
                 submission.status = 'draft' if is_draft else 'submitted'
                 submission.submitted_at = timezone.now()
+                if not is_draft:
+                    submission.return_feedback = None  # clear return feedback when student resubmits
                 submission.save()
             
             # Assignment submission completed successfully
@@ -3545,6 +3547,36 @@ class AssignmentSubmissionView(APIView):
                 {'error': f'Failed to submit assignment: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+def _submission_has_return_feedback(submission):
+    """True when submission is draft and has return_feedback from teacher."""
+    if submission.status != 'draft':
+        return False
+    rf = getattr(submission, 'return_feedback', None)
+    return bool(rf and isinstance(rf, list) and len(rf) > 0)
+
+
+def _attach_return_feedback_to_questions(questions_data, return_feedback):
+    """Add feedback and has_feedback to each question from return_feedback list. Returns new list."""
+    if not return_feedback or not isinstance(return_feedback, list):
+        return questions_data
+    lookup = {}
+    for item in return_feedback:
+        if not isinstance(item, dict):
+            continue
+        qid = item.get('question_id')
+        if qid is None:
+            continue
+        lookup[str(qid)] = item.get('feedback') or item.get('teacher_feedback') or ''
+    out = []
+    for q in questions_data:
+        q = dict(q)
+        fb = lookup.get(q.get('id') or '', '')
+        q['feedback'] = fb if fb else None
+        q['has_feedback'] = bool(fb)
+        out.append(q)
+    return out
 
 
 class AssignmentSubmissionDetailView(APIView):
@@ -3584,6 +3616,8 @@ class AssignmentSubmissionDetailView(APIView):
                     'content': question.content,
                     'explanation': question.explanation,
                 })
+            if _submission_has_return_feedback(submission):
+                questions_data = _attach_return_feedback_to_questions(questions_data, submission.return_feedback)
             
             # Build graded questions data
             graded_questions_data = []
@@ -3606,6 +3640,7 @@ class AssignmentSubmissionDetailView(APIView):
                 'is_graded': submission.is_graded,
                 'answers': submission.answers,
                 'graded_questions': graded_questions_data,
+                'return_feedback': getattr(submission, 'return_feedback', None),
                 'instructor_feedback': submission.instructor_feedback,
                 'feedback_response': submission.feedback_response,
                 'feedback_checked': submission.feedback_checked,

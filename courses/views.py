@@ -4591,6 +4591,13 @@ class StudentLessonDetailView(APIView):
                         'last_submission_passed': submissions[0].passed if submissions else None,
                         'submission': submission_data,  # Include the submission data
                     }
+                    if submissions:
+                        from student.views import _submission_has_return_feedback, _attach_return_feedback_to_questions
+                        latest = submissions[0]
+                        if _submission_has_return_feedback(latest):
+                            assignment_data['questions'] = _attach_return_feedback_to_questions(
+                                assignment_data['questions'], latest.return_feedback
+                            )
             except Exception as e:
                 pass
             

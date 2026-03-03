@@ -132,6 +132,14 @@ Files are organized in GCS as follows:
 
 ## API Endpoints
 
+### Assignment return (teacher)
+
+- **URL**: `/api/teacher/assignments/{assignment_id}/grading/{submission_id}/return/`
+- **Method**: POST
+- **Purpose**: Return a submitted (not graded) assignment to the student as draft; optionally include per-question feedback. Clears grading progress; student can edit and resubmit.
+- **Request body**: Optional `graded_questions`: list of `{ question_id, feedback }`. Stored as `return_feedback` on `AssignmentSubmission`.
+- **Docs**: See [courses/docs/assignment_return_and_feedback.md](../courses/docs/assignment_return_and_feedback.md) for model fields, endpoint behavior, and how student lesson attaches feedback to questions.
+
 ### File Upload (Teacher)
 - **URL**: `/api/teacher/files/upload/`
 - **Method**: POST

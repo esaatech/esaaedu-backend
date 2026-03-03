@@ -2182,6 +2182,26 @@ class AssignmentReturnSubmissionView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            # Optional: save return feedback (per-question) so student can see it when editing draft
+            valid_question_ids = set(str(q.id) for q in assignment.questions.all())
+            return_feedback = None
+            raw_graded_questions = request.data.get('graded_questions')
+            if raw_graded_questions and isinstance(raw_graded_questions, list):
+                return_feedback = []
+                for item in raw_graded_questions:
+                    if not isinstance(item, dict):
+                        continue
+                    qid = item.get('question_id')
+                    if qid is None:
+                        continue
+                    qid_str = str(qid)
+                    if qid_str not in valid_question_ids:
+                        continue
+                    feedback = item.get('feedback') or item.get('teacher_feedback') or ''
+                    return_feedback.append({'question_id': qid_str, 'feedback': feedback})
+                if not return_feedback:
+                    return_feedback = None
+
             submission.status = 'draft'
             submission.is_graded = False
             submission.is_teacher_draft = False
@@ -2193,9 +2213,10 @@ class AssignmentReturnSubmissionView(APIView):
             submission.graded_by = None
             submission.instructor_feedback = ''
             submission.graded_questions = []
+            submission.return_feedback = return_feedback
             submission.save(update_fields=[
                 'status', 'is_graded', 'is_teacher_draft', 'points_earned', 'points_possible',
-                'percentage', 'passed', 'graded_at', 'graded_by', 'instructor_feedback', 'graded_questions'
+                'percentage', 'passed', 'graded_at', 'graded_by', 'instructor_feedback', 'graded_questions', 'return_feedback'
             ])
 
             response_serializer = AssignmentSubmissionSerializer(submission)
