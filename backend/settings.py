@@ -561,8 +561,16 @@ JITSI_TOKEN_EXPIRY_HOURS = config('JITSI_TOKEN_EXPIRY_HOURS', default=2, cast=in
 
 # Brevo (Sendinblue) - Lead magnet emails and lists
 BREVO_API_KEY = config('BREVO_API_KEY', default='')
-BREVO_LIST_ID = config('BREVO_LIST_ID', default=None, cast=lambda v: int(v) if v else None)
-BREVO_WELCOME_TEMPLATE_ID = config('BREVO_WELCOME_TEMPLATE_ID', default=None, cast=lambda v: int(v) if v else None)
+def _int_or_none(v):
+    if not v:
+        return None
+    # Strip inline comments (e.g. "4 # comment") so .env values stay valid
+    v = str(v).split('#')[0].strip()
+    return int(v) if v else None
+
+
+BREVO_LIST_ID = config('BREVO_LIST_ID', default=None, cast=_int_or_none)
+BREVO_WELCOME_TEMPLATE_ID = config('BREVO_WELCOME_TEMPLATE_ID', default=None, cast=_int_or_none)
 BREVO_SENDER_EMAIL = config('BREVO_SENDER_EMAIL', default='')
 BREVO_SENDER_NAME = config('BREVO_SENDER_NAME', default='Little Learners Tech')
 

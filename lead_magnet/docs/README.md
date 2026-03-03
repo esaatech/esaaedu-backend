@@ -197,7 +197,7 @@ Deleting a `LeadMagnet` removes its PDF and preview files from GCP before deleti
    ```bash
    BREVO_API_KEY=xkeysib-your-key-here
    ```
-   Do not commit the key; keep it in `.env` (and ensure `.env` is in `.gitignore`).
+   Do not commit the key; keep it in `.env` (and ensure `.env` is in `.gitignore`). In `.env`, put comments on their own line—inline comments (e.g. `BREVO_LIST_ID=4 # comment`) can be read as part of the value and break integer parsing.
 
 3. **Optional** (for welcome emails): set `BREVO_SENDER_EMAIL` and, if you use a list, `BREVO_LIST_ID` or set `brevo_list_id` per guide in admin.
 
