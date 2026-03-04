@@ -797,7 +797,7 @@ class AssignmentQuestionAdmin(admin.ModelAdmin):
 
 @admin.register(AssignmentSubmission)
 class AssignmentSubmissionAdmin(admin.ModelAdmin):
-    list_display = ['student_name', 'assignment_title', 'attempt_number', 'status', 'points_earned', 'points_possible', 'percentage', 'passed', 'is_graded', 'is_teacher_draft', 'submitted_at']
+    list_display = ['student_name', 'assignment_title', 'attempt_number', 'status', 'return_for_revision_count', 'points_earned', 'points_possible', 'percentage', 'passed', 'is_graded', 'is_teacher_draft', 'submitted_at']
     list_filter = ['status', 'is_graded', 'is_teacher_draft', 'passed', 'attempt_number', 'assignment__assignment_type', 'submitted_at', 'graded_at']
     search_fields = ['student__email', 'student__first_name', 'student__last_name', 'assignment__title', 'assignment__lessons__title']
     readonly_fields = ['id', 'submitted_at', 'graded_at', 'percentage', 'passed']
@@ -812,7 +812,7 @@ class AssignmentSubmissionAdmin(admin.ModelAdmin):
             'fields': ('is_graded', 'is_teacher_draft', 'points_earned', 'points_possible', 'percentage', 'passed', 'graded_by', 'graded_at', 'graded_questions')
         }),
         ('Feedback', {
-            'fields': ('instructor_feedback', 'feedback_checked', 'feedback_checked_at', 'feedback_response', 'return_feedback'),
+            'fields': ('instructor_feedback', 'feedback_checked', 'feedback_checked_at', 'feedback_response', 'return_feedback', 'return_for_revision_count'),
             'classes': ('collapse',)
         }),
         ('Metadata', {

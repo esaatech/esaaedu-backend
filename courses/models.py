@@ -1468,7 +1468,11 @@ class AssignmentSubmission(models.Model):
         blank=True,
         help_text="When status is draft: optional feedback from teacher when they returned the submission. List of {question_id, feedback}."
     )
-    
+    return_for_revision_count = models.IntegerField(
+        default=0,
+        help_text="Number of times this submission has been returned for revision (TutorX/auto). Used with assignment.max_attempts to cap returns."
+    )
+
     # Grading History
     grading_history = models.JSONField(
         default=list,

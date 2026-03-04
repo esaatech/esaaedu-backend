@@ -3527,14 +3527,33 @@ class AssignmentSubmissionView(APIView):
             # Assignment submission completed successfully
             # Note: Assignment completion tracking has been removed from UI
             # The fields remain in the model for potential future use
-            
+
+            # If this assignment is linked to a TutorX lesson, delegate to TutorX (Phase 2: no-op; Phase 3/4: autograde / return for revision)
+            has_tutorx_lesson = assignment.lessons.filter(type='tutorx').exists()
+            print(f"[TutorX] Assignment submit: assignment_id={assignment.id} submission_id={submission.id} is_draft={is_draft} has_tutorx_lesson={has_tutorx_lesson}")
+            if not is_draft and has_tutorx_lesson:
+                try:
+                    print(f"[TutorX] Delegating to handle_assignment_submission submission_id={submission.id}")
+                    from tutorx.services.assignment_submission import handle_assignment_submission
+                    handle_assignment_submission(submission)
+                    print(f"[TutorX] handle_assignment_submission returned submission_id={submission.id} status={submission.status} is_graded={submission.is_graded}")
+                except Exception as e:
+                    print(f"[TutorX] handle_assignment_submission FAILED submission_id={submission.id}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Do not fail the request; submission is already saved
+
+            # Re-read submission so response includes any updates from TutorX (e.g. graded or return_feedback)
+            submission.refresh_from_db()
+            print(f"[TutorX] After refresh: submission_id={submission.id} status={submission.status} is_graded={submission.is_graded}")
+
             # Return response
             response_serializer = AssignmentSubmissionResponseSerializer(submission)
             response_data = {
                 'submission': response_serializer.data,
                 'message': 'Draft saved successfully' if is_draft else 'Assignment submitted successfully'
             }
-            
+
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Assignment.DoesNotExist:

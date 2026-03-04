@@ -215,6 +215,12 @@ lesson = models.ForeignKey(
 }
 ```
 
+## TutorX assignment submission (autograde and return for revision)
+
+When a student submits an assignment linked to a TutorX lesson, the student submit view delegates to TutorX to **autograde** (using the same AI grading as the teacher) and either **mark graded** or **return for revision** (draft + per-question feedback). The number of returns is capped by **assignment.max_attempts**; after that, the submission is finalized as graded (pass or fail). See **[ASSIGNMENT_SUBMISSION.md](ASSIGNMENT_SUBMISSION.md)** for the full flow, `return_for_revision_count`, and admin tracing.
+
+---
+
 ## API Endpoints
 
 ### Blocks CRUD and Images

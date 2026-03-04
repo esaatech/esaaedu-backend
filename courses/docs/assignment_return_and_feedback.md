@@ -6,9 +6,15 @@ This document describes the backend support for **returning an assignment to the
 
 ### `return_feedback` (JSONField, nullable)
 
-- **When**: Set when a teacher **returns** a submitted (not yet graded) assignment to the student as draft.
+- **When**: Set when a teacher **returns** a submitted (not yet graded) assignment to the student as draft. Also set by **TutorX** when autograding returns a submission for revision (score below passing; see `tutorx/ASSIGNMENT_SUBMISSION.md`).
 - **Shape**: List of `{"question_id": "<uuid>", "feedback": "<string>"}`. Only entries with non-empty feedback need to be stored.
 - **Usage**: When the student loads the lesson (e.g. optimized lesson CBV), the backend attaches this feedback to each assignment question so the frontend can show it for all question types (essay, short answer, fill-in-the-blank, code, etc.).
+
+### `return_for_revision_count` (IntegerField, default 0)
+
+- **When**: Used by **TutorX** only. Incremented each time the TutorX handler returns the submission for revision (draft + return_feedback). Not set or changed by the teacher return endpoint.
+- **Purpose**: Together with **assignment.max_attempts**, caps how many times a submission can be returned. When `return_for_revision_count >= assignment.max_attempts`, the next TutorX submit is finalized as graded (pass or fail) with no further return.
+- **Admin**: Exposed in AssignmentSubmission list and detail (Feedback fieldset) for tracing.
 
 ### `graded_questions` (JSONField)
 
