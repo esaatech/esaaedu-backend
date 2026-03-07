@@ -2787,6 +2787,14 @@ class CourseAssessment(models.Model):
     # Basic Information
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='assessments')
+    module = models.ForeignKey(
+        Module,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assessments',
+        help_text='Module this test concludes (for scheduling: "test for this module").',
+    )
     assessment_type = models.CharField(max_length=10, choices=ASSESSMENT_TYPES)
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True)
