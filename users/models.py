@@ -5,6 +5,8 @@ from django.utils import timezone
 from decimal import Decimal
 from datetime import datetime, timedelta
 
+from .validators import validate_iana_timezone
+
 
 class User(AbstractUser):
     """
@@ -124,7 +126,8 @@ class StudentProfile(models.Model):
         max_length=63,
         blank=True,
         default='',
-        help_text='IANA timezone (e.g. Africa/Lagos, Asia/Shanghai). Used for scheduling and midnight checks.'
+        help_text='IANA timezone (e.g. Africa/Lagos, Asia/Shanghai). Used for scheduling and midnight checks.',
+        validators=[validate_iana_timezone],
     )
     
     # Performance Aggregates (denormalized for fast dashboard queries)

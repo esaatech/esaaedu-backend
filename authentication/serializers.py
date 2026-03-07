@@ -53,7 +53,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             'grade_level', 'date_of_birth', 'profile_image',
             'parent_email', 'parent_name', 'parent_phone', 'emergency_contact',
             'learning_goals', 'interests', 'notifications_enabled',
-            'email_notifications', 'age', 'created_at', 'updated_at'
+            'email_notifications', 'timezone', 'age', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at', 'age']
 

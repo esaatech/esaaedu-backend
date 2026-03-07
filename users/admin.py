@@ -1,6 +1,8 @@
+from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import User, TeacherProfile, StudentProfile
+from .validators import get_all_timezone_choices_cached
 
 # Lazy import for StudentWeeklyPerformance to avoid errors if migration hasn't been run
 try:
@@ -65,10 +67,35 @@ class TeacherProfileAdmin(admin.ModelAdmin):
     )
 
 
+class StudentProfileAdminForm(forms.ModelForm):
+    """Use a dropdown for timezone in admin (all IANA timezones)."""
+    timezone = forms.ChoiceField(
+        choices=get_all_timezone_choices_cached(),
+        required=False,
+        label='Timezone',
+    )
+
+    class Meta:
+        model = StudentProfile
+        fields = '__all__'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # If instance has a timezone not in the list (e.g. deprecated IANA name), include it
+        if self.instance and self.instance.pk and self.instance.timezone:
+            current = self.instance.timezone
+            choices = list(self.fields['timezone'].choices)
+            if not any(c[0] == current for c in choices if c[0]):
+                self.fields['timezone'].choices = [('', '---------'), (current, current)] + [
+                    c for c in choices if c[0]
+                ]
+
+
 @admin.register(StudentProfile)
 class StudentProfileAdmin(admin.ModelAdmin):
+    form = StudentProfileAdminForm
     list_display = [
-        'user', 'child_first_name', 'child_last_name', 'grade_level', 
+        'user', 'child_first_name', 'child_last_name', 'grade_level', 'timezone',
         'overall_quiz_average_score', 'overall_assignment_average_score', 
         'overall_average_score', 'age', 'created_at'
     ]
@@ -92,7 +119,7 @@ class StudentProfileAdmin(admin.ModelAdmin):
             'fields': ('parent_name', 'parent_email', 'parent_phone', 'emergency_contact')
         }),
         ('Learning & Preferences', {
-            'fields': ('learning_goals', 'interests', 'notifications_enabled', 'email_notifications')
+            'fields': ('learning_goals', 'interests', 'notifications_enabled', 'email_notifications', 'timezone')
         }),
         ('Performance Aggregates', {
             'fields': (
