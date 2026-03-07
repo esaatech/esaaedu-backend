@@ -12,12 +12,8 @@ urlpatterns = [
     # Action configs - list available actions (must come before block actions to avoid conflicts)
     path('action-configs/', views.TutorXActionConfigListView.as_view(), name='tutorx-action-config-list'),
     
-    # Block CRUD operations (must come before action routes to avoid conflicts)
-    path('lessons/<uuid:lesson_id>/blocks/', views.TutorXBlockListView.as_view(), name='tutorx-block-list'),
+    path('lessons/<uuid:lesson_id>/content/', views.TutorXLessonContentView.as_view(), name='tutorx-lesson-content'),
     path('lessons/<uuid:lesson_id>/ask/', views.TutorXLessonAskView.as_view(), name='tutorx-lesson-ask'),
-    path('blocks/', views.TutorXBlockCreateView.as_view(), name='tutorx-block-create'),  # POST to create
-    path('blocks/<uuid:block_id>/', views.TutorXBlockDetailView.as_view(), name='tutorx-block-detail'),  # GET, PUT, DELETE
-    
     # Block actions - perform AI actions on blocks (must come after blocks/ to avoid conflicts)
     path('blocks/<str:action_type>/', views.BlockActionView.as_view(), name='block-action'),
     

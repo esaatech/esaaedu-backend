@@ -215,29 +215,25 @@ class BlockActionView(APIView):
             )
 
 
-class TutorXBlockListView(APIView):
+class TutorXLessonContentView(APIView):
     """
-    GET: List all blocks for a lesson
-    PUT: Bulk update blocks (create/update/delete)
+    GET: Return lesson.tutorx_content (BlockNote JSON string, same as book page content).
+    PUT: Save BlockNote JSON to lesson.tutorx_content. Multipart: content (JSON string),
+         deleted_image_urls (JSON array), image_<blockId> (files). Backend uploads images,
+         injects URLs into JSON, deletes removed images, saves final JSON.
+    Same flow as book/material: one field, one request with images.
     """
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get(self, request, lesson_id):
-        """Get all blocks for a lesson"""
         lesson = get_object_or_404(Lesson, id=lesson_id)
-        
-        # Verify lesson type is tutorx
         if lesson.type != 'tutorx':
             return Response(
                 {'error': 'This lesson is not a TutorX lesson'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        # Check permission - allow course teacher OR enrolled students
         is_teacher = lesson.course.teacher == request.user
         is_student = False
-        
-        # Check if user is an enrolled student
         if not is_teacher and hasattr(request.user, 'student_profile'):
             from student.models import EnrolledCourse
             is_student = EnrolledCourse.objects.filter(
@@ -245,265 +241,83 @@ class TutorXBlockListView(APIView):
                 course=lesson.course,
                 status__in=['active', 'completed']
             ).exists()
-        
         if not is_teacher and not is_student:
             return Response(
                 {'error': 'Only the course teacher or enrolled students can access this lesson'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        blocks = TutorXBlock.objects.filter(lesson=lesson).order_by('order')
-        blocks_data = []
-        for block in blocks:
-            blocks_data.append({
-                'id': str(block.id),
-                'block_type': block.block_type,
-                'content': block.content,
-                'order': block.order,
-                'metadata': block.metadata,
-            })
-        
-        return Response({'blocks': blocks_data}, status=status.HTTP_200_OK)
-    
+        content = getattr(lesson, 'tutorx_content', '') or ''
+        return Response({'content': content}, status=status.HTTP_200_OK)
+
     @transaction.atomic
     def put(self, request, lesson_id):
-        """Bulk update blocks - handles create, update, and delete.
-        Accepts JSON body { blocks } or multipart/form-data with blocks, deleted_image_urls, and image_<blockId> files.
-        When multipart: uploads images to GCS, injects URLs into blocks, deletes removed images, then persists blocks.
-        """
         lesson = get_object_or_404(Lesson, id=lesson_id)
-        
-        # Check permission
         if lesson.course.teacher != request.user:
             return Response(
-                {'error': 'Only the course teacher can update blocks'},
+                {'error': 'Only the course teacher can update content'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
         if lesson.type != 'tutorx':
             return Response(
                 {'error': 'This lesson is not a TutorX lesson'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        # Detect multipart (single-request save with images)
-        is_multipart = (
-            request.content_type
-            and 'multipart/form-data' in request.content_type
-        ) or bool(request.FILES)
-        
-        if is_multipart:
-            try:
-                blocks_raw = request.data.get('blocks') or request.POST.get('blocks', '[]')
-                if isinstance(blocks_raw, str):
-                    blocks_data = json.loads(blocks_raw)
-                else:
-                    blocks_data = list(blocks_raw)
-                deleted_raw = request.data.get('deleted_image_urls') or request.POST.get('deleted_image_urls', '[]')
-                if isinstance(deleted_raw, str):
-                    deleted_image_urls = json.loads(deleted_raw)
-                else:
-                    deleted_image_urls = list(deleted_raw) if deleted_raw else []
-            except (json.JSONDecodeError, TypeError) as e:
-                return Response(
-                    {'error': f'Invalid blocks or deleted_image_urls JSON: {e}'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            uploaded_urls = {}  # block_id -> GCS URL
-            try:
-                for key in list(request.FILES.keys()):
-                    if key.startswith('image_'):
-                        block_id = key[6:]  # len('image_') == 6
-                        if not block_id:
-                            continue
-                        file_obj = request.FILES[key]
-                        url = upload_tutorx_image_file_to_gcs(file_obj)
-                        uploaded_urls[block_id] = url
-                for block in blocks_data:
-                    block_id = block.get('id')
-                    content = block.get('content', '') or ''
-                    meta = block.get('metadata') or {}
-                    image_url = meta.get('image_url', '') or content
-                    placeholder = f"{PENDING_IMAGE_PREFIX}{block_id}"
-                    if block_id and (content == placeholder or image_url == placeholder) and block_id in uploaded_urls:
-                        url = uploaded_urls[block_id]
-                        block['content'] = url
-                        if 'metadata' not in block:
-                            block['metadata'] = {}
-                        block['metadata']['image_url'] = url
-                for image_url in deleted_image_urls:
-                    if not image_url or not isinstance(image_url, str):
-                        continue
-                    try:
-                        from urllib.parse import urlparse, unquote
-                        parsed_url = urlparse(image_url)
-                        path_parts = parsed_url.path.strip('/').split('/', 1)
-                        if len(path_parts) > 1:
-                            file_path = unquote(path_parts[1])
-                        else:
-                            file_path = unquote(parsed_url.path.strip('/'))
-                        delete_image_and_thumbnail(file_path)
-                    except Exception as e:
-                        logger.warning(f"Failed to delete image from GCS {image_url}: {e}")
-            except ValueError as e:
-                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-            except RuntimeError as e:
-                return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        else:
-            blocks_data = request.data.get('blocks', [])
-        
-        if not isinstance(blocks_data, list):
+        content_raw = request.data.get('content') or request.POST.get('content', '[]')
+        if isinstance(content_raw, list):
+            content_raw = json.dumps(content_raw)
+        deleted_raw = request.data.get('deleted_image_urls') or request.POST.get('deleted_image_urls', '[]')
+        try:
+            deleted_image_urls = json.loads(deleted_raw) if isinstance(deleted_raw, str) else list(deleted_raw) or []
+        except (json.JSONDecodeError, TypeError):
+            deleted_image_urls = []
+        try:
+            blocks = json.loads(content_raw) if isinstance(content_raw, str) else content_raw
+            if not isinstance(blocks, list):
+                blocks = []
+        except (json.JSONDecodeError, TypeError):
             return Response(
-                {'error': 'blocks must be a list'},
+                {'error': 'Invalid content JSON'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        # Get existing blocks - index by both ID and order
-        existing_blocks_by_id = {str(block.id): block for block in TutorXBlock.objects.filter(lesson=lesson)}
-        existing_blocks_by_order = {block.order: block for block in TutorXBlock.objects.filter(lesson=lesson)}
-        incoming_block_ids = set()
-        
-        # First pass: Temporarily move blocks that will have order conflicts
-        # This prevents unique constraint violations when updating orders
-        max_order = max([b.get('order', 0) for b in blocks_data] + [0])
-        temp_order_start = max_order + 1000  # Use high numbers to avoid conflicts
-        
-        for block_data in blocks_data:
-            block_id = block_data.get('id')
-            new_order = block_data.get('order')
-            
-            if not block_id or not new_order:
+        uploaded_urls = {}
+        for key in list(request.FILES.keys()):
+            if key.startswith('image_'):
+                block_id = key[6:]
+                if not block_id:
+                    continue
+                try:
+                    url = upload_tutorx_image_file_to_gcs(request.FILES[key])
+                    uploaded_urls[block_id] = url
+                except (ValueError, RuntimeError) as e:
+                    return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        for image_url in deleted_image_urls:
+            if not image_url or not isinstance(image_url, str):
                 continue
-                
-            # If this block exists and wants to move to an order occupied by a different block
-            if block_id in existing_blocks_by_id:
-                existing_block = existing_blocks_by_id[block_id]
-                if new_order in existing_blocks_by_order:
-                    conflicting_block = existing_blocks_by_order[new_order]
-                    # If the block at this order is different from the one we're updating
-                    if str(conflicting_block.id) != block_id:
-                        # Temporarily move the conflicting block to a high order
-                        temp_order = temp_order_start + len([b for b in existing_blocks_by_order.values() if b.order >= temp_order_start])
-                        conflicting_block.order = temp_order
-                        conflicting_block.save()
-                        # Update mappings
-                        del existing_blocks_by_order[new_order]
-                        existing_blocks_by_order[temp_order] = conflicting_block
-        
-        # Refresh order mapping after temporary moves
-        existing_blocks_by_order = {block.order: block for block in TutorXBlock.objects.filter(lesson=lesson)}
-        
-        # Second pass: Process all blocks (update by ID, create new, or update by order)
-        for block_data in blocks_data:
-            block_id = block_data.get('id')
-            block_type = block_data.get('block_type')
-            content = block_data.get('content', '')
-            order = block_data.get('order')
-            metadata = block_data.get('metadata', {})
-            
-            if not block_type or not order:
-                continue
-            
-            block_to_update = None
-            
-            # Try to match by ID first (this handles most cases including order changes)
-            if block_id and block_id in existing_blocks_by_id:
-                block_to_update = existing_blocks_by_id[block_id]
-            # If not matched by ID, try to match by order (for blocks without IDs)
-            elif order in existing_blocks_by_order:
-                block_to_update = existing_blocks_by_order[order]
-            
-            if block_to_update:
-                # Update existing block
-                block_to_update.block_type = block_type
-                block_to_update.content = content
-                block_to_update.order = order
-                block_to_update.metadata = metadata
-                block_to_update.save()
-                incoming_block_ids.add(str(block_to_update.id))
-            else:
-                # Create new block (no existing block at this order)
-                new_block = TutorXBlock.objects.create(
-                    lesson=lesson,
-                    block_type=block_type,
-                    content=content,
-                    order=order,
-                    metadata=metadata
-                )
-                incoming_block_ids.add(str(new_block.id))
-        
-        # Delete blocks not in the request and cleanup their images from GCS
-        blocks_to_delete = set(existing_blocks_by_id.keys()) - incoming_block_ids
-        if blocks_to_delete:
-            blocks_to_delete_objs = TutorXBlock.objects.filter(
-                lesson=lesson,
-                id__in=blocks_to_delete
-            )
-            
-            # Delete images from GCS before deleting blocks (including thumbnails)
-            for block in blocks_to_delete_objs:
-                if block.block_type == 'image' and block.content:
-                    try:
-                        # Extract file path from GCS URL
-                        from urllib.parse import urlparse, unquote
-                        parsed_url = urlparse(block.content)
-                        path_parts = parsed_url.path.strip('/').split('/', 1)
-                        if len(path_parts) > 1:
-                            file_path = unquote(path_parts[1])
-                        else:
-                            file_path = unquote(parsed_url.path.strip('/'))
-                        
-                        # Delete both main image and thumbnail
-                        main_deleted, thumb_deleted = delete_image_and_thumbnail(file_path)
-                        if main_deleted or thumb_deleted:
-                            logger.info(f"✅ Deleted image and thumbnail from GCS when deleting block: {file_path}")
-                    except Exception as e:
-                        logger.error(f"❌ Failed to delete image from GCS when deleting block: {e}")
-            
-            # Now delete the blocks
-            blocks_to_delete_objs.delete()
-        
-        # Handle image replacement: if an image block's URL changed, delete old image
-        for block_data in blocks_data:
-            if block_data.get('block_type') == 'image':
-                block_id = block_data.get('id')
-                new_image_url = block_data.get('content', '') or block_data.get('metadata', {}).get('image_url', '')
-                
-                if block_id and block_id in existing_blocks_by_id:
-                    old_block = existing_blocks_by_id[block_id]
-                    old_image_url = old_block.content or old_block.metadata.get('image_url', '')
-                    
-                    # If image URL changed, delete old image and thumbnail from GCS
-                    if old_image_url and old_image_url != new_image_url:
-                        try:
-                            from urllib.parse import urlparse, unquote
-                            parsed_url = urlparse(old_image_url)
-                            path_parts = parsed_url.path.strip('/').split('/', 1)
-                            if len(path_parts) > 1:
-                                file_path = unquote(path_parts[1])
-                            else:
-                                file_path = unquote(parsed_url.path.strip('/'))
-                            
-                            # Delete both main image and thumbnail
-                            main_deleted, thumb_deleted = delete_image_and_thumbnail(file_path)
-                            if main_deleted or thumb_deleted:
-                                logger.info(f"✅ Deleted old image and thumbnail from GCS when replacing: {file_path}")
-                        except Exception as e:
-                            logger.error(f"❌ Failed to delete old image from GCS when replacing: {e}")
-        
-        # Return updated blocks
-        blocks = TutorXBlock.objects.filter(lesson=lesson).order_by('order')
-        blocks_data = []
-        for block in blocks:
-            blocks_data.append({
-                'id': str(block.id),
-                'block_type': block.block_type,
-                'content': block.content,
-                'order': block.order,
-                'metadata': block.metadata,
-            })
-        
-        return Response({'blocks': blocks_data}, status=status.HTTP_200_OK)
+            try:
+                from urllib.parse import urlparse, unquote
+                parsed_url = urlparse(image_url)
+                path_parts = parsed_url.path.strip('/').split('/', 1)
+                file_path = unquote(path_parts[1]) if len(path_parts) > 1 else unquote(parsed_url.path.strip('/'))
+                delete_image_and_thumbnail(file_path)
+            except Exception as e:
+                logger.warning(f"Failed to delete image from GCS {image_url}: {e}")
+        placeholder_prefix = PENDING_IMAGE_PREFIX
+
+        def inject_urls_into_blocks(block_list):
+            for b in block_list:
+                if b.get('type') == 'image' and isinstance(b.get('props'), dict):
+                    url_val = b['props'].get('url') or ''
+                    if isinstance(url_val, str) and url_val.startswith(placeholder_prefix):
+                        block_id = b.get('id')
+                        if block_id and str(block_id) in uploaded_urls:
+                            b['props']['url'] = uploaded_urls[str(block_id)]
+                if isinstance(b.get('children'), list):
+                    inject_urls_into_blocks(b['children'])
+
+        inject_urls_into_blocks(blocks)
+        lesson.tutorx_content = json.dumps(blocks)
+        lesson.save(update_fields=['tutorx_content'])
+        return Response({'content': lesson.tutorx_content}, status=status.HTTP_200_OK)
 
 
 class TutorXLessonAskView(APIView):
@@ -560,266 +374,6 @@ class TutorXLessonAskView(APIView):
             logger.error(f"Error in TutorXLessonAskView: {e}", exc_info=True)
             return Response(
                 {'error': 'Failed to get answer', 'details': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-
-class TutorXBlockCreateView(APIView):
-    """
-    POST: Create a new TutorX block
-    """
-    permission_classes = [permissions.IsAuthenticated]
-    
-    @transaction.atomic
-    def post(self, request):
-        """Create a new block"""
-        lesson_id = request.data.get('lesson')
-        block_type = request.data.get('block_type')
-        content = request.data.get('content', '')
-        order = request.data.get('order')
-        metadata = request.data.get('metadata', {})
-        
-        # Validate required fields
-        if not lesson_id:
-            return Response(
-                {'error': 'lesson is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if not block_type:
-            return Response(
-                {'error': 'block_type is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if order is None:
-            return Response(
-                {'error': 'order is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Get lesson
-        try:
-            lesson = Lesson.objects.get(id=lesson_id)
-        except Lesson.DoesNotExist:
-            return Response(
-                {'error': 'Lesson not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Check permission
-        if lesson.course.teacher != request.user:
-            return Response(
-                {'error': 'Only the course teacher can create blocks'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Verify lesson type
-        if lesson.type != 'tutorx':
-            return Response(
-                {'error': 'This lesson is not a TutorX lesson'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Handle order conflicts - shift existing blocks if needed
-        existing_block_at_order = TutorXBlock.objects.filter(
-            lesson=lesson,
-            order=order
-        ).first()
-        
-        if existing_block_at_order:
-            # Shift all blocks with order >= new_order by 1
-            TutorXBlock.objects.filter(
-                lesson=lesson,
-                order__gte=order
-            ).update(order=F('order') + 1)
-            logger.info(f"Shifted blocks for lesson {lesson_id} starting from order {order}")
-        
-        # Create the new block
-        try:
-            new_block = TutorXBlock.objects.create(
-                lesson=lesson,
-                block_type=block_type,
-                content=content,
-                order=order,
-                metadata=metadata
-            )
-            
-            logger.info(f"✅ Created new TutorX block: {new_block.id} (type: {block_type}, order: {order})")
-            
-            return Response({
-                'id': str(new_block.id),
-                'lesson': str(new_block.lesson.id),
-                'block_type': new_block.block_type,
-                'content': new_block.content,
-                'order': new_block.order,
-                'metadata': new_block.metadata,
-                'created_at': new_block.created_at.isoformat(),
-                'updated_at': new_block.updated_at.isoformat(),
-            }, status=status.HTTP_201_CREATED)
-            
-        except Exception as e:
-            logger.error(f"Error creating block: {e}", exc_info=True)
-            return Response(
-                {'error': 'Failed to create block', 'details': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-
-class TutorXBlockDetailView(APIView):
-    """
-    GET: Get a specific block
-    PUT: Update a block
-    DELETE: Delete a block
-    """
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get(self, request, block_id):
-        """Get a specific block"""
-        block = get_object_or_404(TutorXBlock, id=block_id)
-        
-        # Check permission
-        if block.lesson.course.teacher != request.user:
-            return Response(
-                {'error': 'Only the course teacher can access this block'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        return Response({
-            'id': str(block.id),
-            'lesson': str(block.lesson.id),
-            'block_type': block.block_type,
-            'content': block.content,
-            'order': block.order,
-            'metadata': block.metadata,
-            'created_at': block.created_at.isoformat(),
-            'updated_at': block.updated_at.isoformat(),
-        }, status=status.HTTP_200_OK)
-    
-    @transaction.atomic
-    def put(self, request, block_id):
-        """Update a block"""
-        block = get_object_or_404(TutorXBlock, id=block_id)
-        
-        # Check permission
-        if block.lesson.course.teacher != request.user:
-            return Response(
-                {'error': 'Only the course teacher can update blocks'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        block_type = request.data.get('block_type')
-        content = request.data.get('content')
-        order = request.data.get('order')
-        metadata = request.data.get('metadata')
-        
-        # Handle order conflicts if order is being changed
-        old_order = block.order
-        if order is not None and order != old_order:
-            # Check if new order is occupied by another block
-            existing_block_at_order = TutorXBlock.objects.filter(
-                lesson=block.lesson,
-                order=order
-            ).exclude(id=block.id).first()
-            
-            if existing_block_at_order:
-                # Shift blocks to make room
-                if order > old_order:
-                    # Moving down - shift blocks between old and new order up
-                    TutorXBlock.objects.filter(
-                        lesson=block.lesson,
-                        order__gt=old_order,
-                        order__lte=order
-                    ).exclude(id=block.id).update(order=F('order') - 1)
-                else:
-                    # Moving up - shift blocks between new and old order down
-                    TutorXBlock.objects.filter(
-                        lesson=block.lesson,
-                        order__gte=order,
-                        order__lt=old_order
-                    ).exclude(id=block.id).update(order=F('order') + 1)
-        
-        # Update block fields
-        if block_type:
-            block.block_type = block_type
-        if content is not None:
-            block.content = content
-        if order is not None:
-            block.order = order
-        if metadata is not None:
-            block.metadata = metadata
-        
-        try:
-            block.save()
-            logger.info(f"✅ Updated TutorX block: {block.id}")
-            
-            return Response({
-                'id': str(block.id),
-                'lesson': str(block.lesson.id),
-                'block_type': block.block_type,
-                'content': block.content,
-                'order': block.order,
-                'metadata': block.metadata,
-                'created_at': block.created_at.isoformat(),
-                'updated_at': block.updated_at.isoformat(),
-            }, status=status.HTTP_200_OK)
-        except Exception as e:
-            logger.error(f"Error updating block: {e}", exc_info=True)
-            return Response(
-                {'error': 'Failed to update block', 'details': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @transaction.atomic
-    def delete(self, request, block_id):
-        """Delete a block"""
-        block = get_object_or_404(TutorXBlock, id=block_id)
-        
-        # Check permission
-        if block.lesson.course.teacher != request.user:
-            return Response(
-                {'error': 'Only the course teacher can delete blocks'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Delete image and thumbnail from GCS if it's an image block
-        if block.block_type == 'image' and block.content:
-            try:
-                from urllib.parse import urlparse, unquote
-                parsed_url = urlparse(block.content)
-                path_parts = parsed_url.path.strip('/').split('/', 1)
-                if len(path_parts) > 1:
-                    file_path = unquote(path_parts[1])
-                else:
-                    file_path = unquote(parsed_url.path.strip('/'))
-                
-                # Delete both main image and thumbnail
-                main_deleted, thumb_deleted = delete_image_and_thumbnail(file_path)
-                if main_deleted or thumb_deleted:
-                    logger.info(f"✅ Deleted image and thumbnail from GCS when deleting block: {file_path}")
-            except Exception as e:
-                logger.error(f"❌ Failed to delete image from GCS when deleting block: {e}")
-        
-        try:
-            block_id_str = str(block.id)
-            lesson = block.lesson
-            block_order = block.order
-            
-            block.delete()
-            logger.info(f"✅ Deleted TutorX block: {block_id_str}")
-            
-            # Optionally: Reorder remaining blocks to fill the gap
-            # This is optional - frontend handles ordering, but we can clean up gaps
-            TutorXBlock.objects.filter(
-                lesson=lesson,
-                order__gt=block_order
-            ).update(order=F('order') - 1)
-            
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        except Exception as e:
-            logger.error(f"Error deleting block: {e}", exc_info=True)
-            return Response(
-                {'error': 'Failed to delete block', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

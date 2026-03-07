@@ -223,29 +223,26 @@ When a student submits an assignment linked to a TutorX lesson, the student subm
 
 ## API Endpoints
 
-### Blocks CRUD and Images
+### Lesson content (single JSON field)
 
-**GET** `/api/tutorx/lessons/<lesson_id>/blocks/` — List all blocks for a TutorX lesson. Permission: course teacher or enrolled student.
+TutorX lesson body is stored as a single BlockNote JSON string in `Lesson.tutorx_content` (same pattern as book page content). The editor and viewer use the content API only; per-block CRUD endpoints have been removed.
 
-**PUT** `/api/tutorx/lessons/<lesson_id>/blocks/` — Bulk create/update/delete blocks. Permission: course teacher only.
+**GET** `/api/tutorx/lessons/<lesson_id>/content/` — Return `lesson.tutorx_content` (BlockNote JSON string). Permission: course teacher or enrolled student. Response: `{ "content": "..." }`.
 
-The PUT endpoint accepts two formats:
+**PUT** `/api/tutorx/lessons/<lesson_id>/content/` — Save BlockNote JSON to `lesson.tutorx_content`. Permission: course teacher only. Accepts **multipart** form data:
+- `content`: JSON string — full BlockNote document (array of blocks). New image blocks use `props.url` = `"__pending__<blockId>"` so the backend can match with file parts.
+- `deleted_image_urls`: JSON string — array of GCS URLs to delete (images the user removed).
+- `image_<blockId>`: one file per new image (key = block id).
 
-1. **JSON** (`Content-Type: application/json`): Body `{ "blocks": [ ... ] }`. Backend updates blocks only; no image upload/delete.
-2. **Multipart** (`Content-Type: multipart/form-data`): Used by the frontend for every save. Form fields:
-   - `blocks`: JSON string — array of block objects. New image blocks use placeholder `content` and `metadata.image_url` = `"__pending__<blockId>"`.
-   - `deleted_image_urls`: JSON string — array of GCS URLs to delete.
-   - `image_<blockId>`: one file per new image (key = block id).
+Backend processing: (1) Upload each `image_<blockId>` to GCS (`tutorx-images/`); (2) Parse `content` JSON and replace each `__pending__<blockId>` in image block `props.url` with the uploaded URL; (3) Delete from GCS every URL in `deleted_image_urls`; (4) Save the final JSON string to `lesson.tutorx_content`; (5) Return `{ "content": "..." }`. Single-request flow avoids orphaned images.
 
-Processing for multipart: (1) Upload each `image_<blockId>` file to GCS (folder `tutorx-images`) via the same logic as the image upload view; (2) In the parsed `blocks` array, replace each `__pending__<blockId>` with the uploaded image URL; (3) Delete from GCS every URL in `deleted_image_urls`; (4) Persist blocks (create/update/delete); (5) Return `{ "blocks": [...] }`. This single-request flow ensures no orphaned images (if the request fails, nothing is committed).
+**POST** `/api/tutorx/images/upload/` — Upload a single image to GCS (`tutorx-images/`). Request: `multipart/form-data` with `image` (file). Used by clients that do not use the content PUT.
 
-**POST** `/api/tutorx/images/upload/` — Upload a single image to GCS (`tutorx-images/`). Used by clients that do not use the multipart blocks PUT. Request: `multipart/form-data` with `image` (file).
-
-**DELETE** `/api/tutorx/images/delete/` — Delete an image from GCS by URL. Request body: `{ "image_url": "..." }`. Used by clients that do not use the multipart blocks PUT.
+**DELETE** `/api/tutorx/images/delete/` — Delete an image from GCS by URL. Request body: `{ "image_url": "..." }`.
 
 See `tutorx/API_REFERENCE.md` for full request/response details.
 
-**Frontend (single-request save)**: The React app sends multipart PUT for every TutorX save: `saveTutorXBlocksWithImages(lessonId, { blocks, pendingImages, deletedImageUrls })`. New images stay as blob URLs in the editor until save; one PUT sends blocks (with `__pending__<blockId>` for new images), `image_<blockId>` files, and `deleted_image_urls`. After success, the parent may call `onSave()` (e.g. `mutate.lessons()` in Course Management) to refresh the lessons list. See the frontend repo docs: `tutorx-block-save-architecture.md`, `blocknote-implementation.md`.
+**Frontend**: The React app uses `getTutorXLessonContent(lessonId)` to load and `saveTutorXLessonContent(lessonId, { content, pendingImages, deletedImageUrls })` to save. One multipart PUT sends the content JSON (with `__pending__<blockId>` for new images), `image_<blockId>` files, and `deleted_image_urls`. After success, the parent may call `onSave()` (e.g. `mutate.lessons()` in Course Management). See the frontend repo docs: `tutorx-block-save-architecture.md`, `blocknote-implementation.md`.
 
 ### Block Actions
 

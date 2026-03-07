@@ -1,6 +1,8 @@
 # Individual Block Operations - Backend Implementation
 
-## ✅ Changes Made
+> **Note (current architecture):** The per-block CRUD endpoints described in this document (`POST /api/tutorx/blocks/`, `GET/PUT/DELETE /api/tutorx/blocks/<block_id>/`) and the list/bulk endpoint (`GET/PUT /api/tutorx/lessons/<lesson_id>/blocks/`) have been **removed**. TutorX now uses a single content field: **GET** and **PUT** `/api/tutorx/lessons/<lesson_id>/content/` store the full BlockNote document as a JSON string in `Lesson.tutorx_content`. See the main `README.md` and `API_REFERENCE.md` for the current API.
+
+## ✅ Changes Made (historical)
 
 ### 1. New View: `TutorXBlockCreateView`
 

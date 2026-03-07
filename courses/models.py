@@ -419,6 +419,13 @@ class Lesson(models.Model):
         help_text="Additional type-specific lesson content and configuration"
     )
     
+    # TutorX: single BlockNote JSON string (same as book page content / FormFieldBlockNoteEditor)
+    tutorx_content = models.TextField(
+        blank=True,
+        default='',
+        help_text="For TutorX lessons: BlockNote blocks as JSON string. Same format as book page content."
+    )
+    
     # Materials & Resources
     materials = models.JSONField(
         default=list,

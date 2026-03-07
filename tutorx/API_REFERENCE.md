@@ -14,30 +14,58 @@ All endpoints require authentication. Include token in header:
 Authorization: Bearer <token>
 ```
 
-## Blocks CRUD and Images (Lesson Blocks)
+## Lesson content (single JSON field)
 
-### GET /api/tutorx/lessons/{lesson_id}/blocks/
+TutorX lesson body is stored in `Lesson.tutorx_content` as a single BlockNote JSON string (same pattern as book page content). Per-block list/create/detail endpoints are no longer used.
 
-List all blocks for a TutorX lesson.
+### GET /api/tutorx/lessons/{lesson_id}/content/
+
+Return the lesson's BlockNote content as a JSON string.
 
 **Path Parameters**: `lesson_id` (UUID)
 
-**Response**:
+**Response** (200 OK):
 ```json
 {
-  "blocks": [
-    {
-      "id": "uuid",
-      "block_type": "text|code|image|diagram|table|divider",
-      "content": "string",
-      "order": 1,
-      "metadata": {}
-    }
-  ]
+  "content": "[{\"id\":\"...\",\"type\":\"paragraph\",\"content\":[],\"props\":{}},...]"
 }
 ```
 
+Empty or new lessons may return `"content": ""`. Frontend treats empty string as empty document.
+
 **Permission**: Course teacher or enrolled student.
+
+---
+
+### PUT /api/tutorx/lessons/{lesson_id}/content/
+
+Save BlockNote JSON to `lesson.tutorx_content`. Used by the frontend for manual save with images in one request.
+
+**Path Parameters**: `lesson_id` (UUID)
+
+**Permission**: Course teacher only.
+
+**Request**: `Content-Type: multipart/form-data`
+
+| Part name | Type | Description |
+|-----------|------|-------------|
+| `content` | string (JSON) | Full BlockNote document (array of blocks). New image blocks must use `props.url` = `"__pending__<blockId>"` so the backend can match with file parts. |
+| `deleted_image_urls` | string (JSON) | Array of GCS URLs to delete (images the user removed). |
+| `image_<blockId>` | file | One file per new image; key = block id (e.g. `image_abc123`). |
+
+**Backend processing**:
+1. Upload each `image_<blockId>` file to GCS (folder `tutorx-images`), get URL.
+2. Parse `content` JSON; in image blocks, replace each `__pending__<blockId>` in `props.url` with the corresponding uploaded URL.
+3. Delete from GCS every URL in `deleted_image_urls`.
+4. Save the final JSON string to `lesson.tutorx_content`.
+5. Return `{ "content": "<saved JSON string>" }`.
+
+**Response** (200 OK):
+```json
+{
+  "content": "[{\"id\":\"...\",\"type\":\"paragraph\",...},...]"
+}
+```
 
 ---
 
@@ -80,65 +108,9 @@ Student Ask AI: send a question about selected text in a TutorX lesson. The fron
 
 ---
 
-### PUT /api/tutorx/lessons/{lesson_id}/blocks/
-
-Bulk create/update/delete blocks. Accepts **two request formats**.
-
-**Path Parameters**: `lesson_id` (UUID)
-
-**Permission**: Course teacher only.
-
-#### Format A: JSON (no new images)
-
-`Content-Type: application/json`
-
-**Request Body**:
-```json
-{
-  "blocks": [
-    {
-      "id": "uuid (optional for new blocks)",
-      "block_type": "text",
-      "content": "string",
-      "order": 1,
-      "metadata": {}
-    }
-  ]
-}
-```
-
-#### Format B: Multipart (single-request save with images)
-
-`Content-Type: multipart/form-data` — used by the frontend so image upload/delete and block persist happen in one request (no orphaned images).
-
-| Part name | Type | Description |
-|-----------|------|-------------|
-| `blocks` | string (JSON) | Array of block objects. New image blocks must use `content` and `metadata.image_url` = `"__pending__<blockId>"` so the backend can match with the file part. |
-| `deleted_image_urls` | string (JSON) | Array of GCS URLs to delete (images the user removed). |
-| `image_<blockId>` | file | One file per new image; key = block id (e.g. `image_abc123`). |
-
-**Backend processing** (multipart):
-1. Parse `blocks` and `deleted_image_urls` from form data.
-2. For each `image_<blockId>` file: upload to GCS (folder `tutorx-images`), get URL.
-3. In `blocks`, replace each `__pending__<blockId>` with the corresponding uploaded image URL.
-4. Delete from GCS every URL in `deleted_image_urls`.
-5. Persist blocks (create/update/delete by id and order).
-6. Return `{ "blocks": [...] }`.
-
-**Response** (both formats):
-```json
-{
-  "blocks": [
-    { "id": "uuid", "block_type": "...", "content": "...", "order": 1, "metadata": {} }
-  ]
-}
-```
-
----
-
 ### POST /api/tutorx/images/upload/
 
-Upload a single image for TutorX blocks (e.g. used by other clients). The **multipart PUT blocks** endpoint handles images in the main save flow.
+Upload a single image for TutorX (e.g. used by other clients). The **PUT /content/** multipart endpoint handles images in the main save flow.
 
 **Request**: `multipart/form-data` with `image` (file).
 
@@ -160,7 +132,7 @@ Upload a single image for TutorX blocks (e.g. used by other clients). The **mult
 
 ### DELETE /api/tutorx/images/delete/
 
-Delete an image from GCS by URL (e.g. used by other clients). The **multipart PUT blocks** endpoint handles deletes in the main save flow.
+Delete an image from GCS by URL (e.g. used by other clients). The **PUT /content/** multipart endpoint handles deletes in the main save flow.
 
 **Request Body**:
 ```json
