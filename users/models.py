@@ -120,6 +120,12 @@ class StudentProfile(models.Model):
     # Account settings
     notifications_enabled = models.BooleanField(default=True)
     email_notifications = models.BooleanField(default=True)
+    timezone = models.CharField(
+        max_length=63,
+        blank=True,
+        default='',
+        help_text='IANA timezone (e.g. Africa/Lagos, Asia/Shanghai). Used for scheduling and midnight checks.'
+    )
     
     # Performance Aggregates (denormalized for fast dashboard queries)
     # These are updated automatically via signals when quizzes/assignments are submitted/graded
