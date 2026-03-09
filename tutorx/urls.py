@@ -14,6 +14,7 @@ urlpatterns = [
     
     path('lessons/<uuid:lesson_id>/content/', views.TutorXLessonContentView.as_view(), name='tutorx-lesson-content'),
     path('lessons/<uuid:lesson_id>/ask/', views.TutorXLessonAskView.as_view(), name='tutorx-lesson-ask'),
+    path('lessons/<uuid:lesson_id>/chat/', views.LessonChatView.as_view(), name='tutorx-lesson-chat'),
     # Block actions - perform AI actions on blocks (must come after blocks/ to avoid conflicts)
     path('blocks/<str:action_type>/', views.BlockActionView.as_view(), name='block-action'),
     

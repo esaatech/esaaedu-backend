@@ -514,20 +514,10 @@ class TutorXAIService:
             user_prompt_text=user_prompt
         )
         
-        # Define schema for structured output
-        response_schema = {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "question": {"type": "string"},
-                    "type": {"type": "string"},
-                    "difficulty": {"type": "string"}
-                },
-                "required": ["question", "type", "difficulty"]
-            }
-        }
-        
+        # Use shared schema from tutorx.schemas for consistency
+        from tutorx.schemas import get_block_generate_questions_schema
+        response_schema = get_block_generate_questions_schema()
+
         try:
             response = self.gemini_service.generate(
                 system_instruction=system_instruction,
@@ -571,10 +561,13 @@ class TutorXAIService:
             Dictionary with 'answer' and 'model'.
         """
         valid_action_types = [
-            'explain_more', 'give_examples', 'simplify', 'summarize', 'generate_questions'
+            'explain_more', 'give_examples', 'simplify', 'summarize',
+            'generate_questions', 'harder_questions',
         ]
         if action_type and action_type in valid_action_types:
-            system_instruction = self._get_system_instruction(action_type)
+            # Use generate_questions system instruction for harder_questions (same intent, different schema)
+            si_action = 'generate_questions' if action_type == 'harder_questions' else action_type
+            system_instruction = self._get_system_instruction(si_action)
         else:
             system_instruction = (
                 "You are a helpful tutor. Answer the student's question clearly and concisely "
@@ -599,18 +592,120 @@ class TutorXAIService:
             parts.insert(4, "")
         prompt = "\n".join(parts)
 
+        # Structured output: use TutorX schemas for question-generation actions
+        response_schema = None
+        if action_type == 'generate_questions':
+            from tutorx.schemas import get_student_generate_questions_schema
+            response_schema = get_student_generate_questions_schema()
+        elif action_type == 'harder_questions':
+            from tutorx.schemas import get_student_harder_questions_schema
+            response_schema = get_student_harder_questions_schema()
+
         try:
             response = self.gemini_service.generate(
                 system_instruction=system_instruction,
                 prompt=prompt,
+                response_schema=response_schema,
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
+            raw = response['raw']
+            model = response.get('model')
+            parsed = response.get('parsed')
+
+            if action_type == 'generate_questions' and parsed:
+                return {
+                    'questions': parsed.get('questions', []),
+                    'message': parsed.get('message', ''),
+                    'model': model,
+                }
+            if action_type == 'harder_questions' and parsed:
+                return {
+                    'questions': parsed.get('questions', []),
+                    'model': model,
+                }
+            # All other action types: plain answer
             return {
-                'answer': response['raw'],
-                'model': response.get('model'),
+                'answer': raw,
+                'model': model,
             }
         except Exception as e:
             logger.error(f"Error in ask_student: {e}", exc_info=True)
             raise
+
+    def generate_questions_for_lesson_chat(
+        self,
+        lesson_context: str,
+        user_message: str = "",
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Lesson chat: generate quiz-style questions from full lesson context.
+        Uses same system instruction and schema as Student Ask generate_questions.
+        Returns dict with 'questions' (list) and 'message' (str) for response_type qanda.
+        """
+        if not lesson_context or not lesson_context.strip():
+            raise ValueError("lesson_context is required")
+        from tutorx.schemas import get_student_generate_questions_schema
+
+        system_instruction = self._get_system_instruction("generate_questions")
+        prompt_parts = [lesson_context.strip(), ""]
+        if user_message and user_message.strip():
+            prompt_parts.append("Student request:")
+            prompt_parts.append(user_message.strip())
+        else:
+            prompt_parts.append("Generate quiz-style questions (multiple choice and true/false) based on the lesson content above. Include a brief closing message (e.g. offering more or harder questions, or asking if they need anything else).")
+        prompt = "\n".join(prompt_parts)
+
+        response_schema = get_student_generate_questions_schema()
+        response = self.gemini_service.generate(
+            system_instruction=system_instruction,
+            prompt=prompt,
+            response_schema=response_schema,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        parsed = response.get("parsed")
+        if not parsed:
+            raise ValueError("Failed to parse generate_questions response")
+        return {
+            "questions": parsed.get("questions", []),
+            "message": (parsed.get("message") or "Want to try more questions?").strip() or "Anything else I can help with?",
+        }
+
+    def explain_for_lesson_chat(
+        self,
+        lesson_context: str,
+        phrase_or_concept: str,
+        user_message: str = "",
+        temperature: float = 0.5,
+        max_tokens: Optional[int] = None,
+    ) -> str:
+        """
+        Lesson chat: explain a phrase or concept from the lesson in simpler terms.
+        Uses explain_more system instruction; returns plain text (no structured schema).
+        """
+        if not lesson_context or not lesson_context.strip():
+            raise ValueError("lesson_context is required")
+        system_instruction = self._get_system_instruction("explain_more")
+        prompt_parts = [
+            lesson_context.strip(),
+            "",
+            "The student wants the following explained more simply or at a different level:",
+            phrase_or_concept or "(the whole lesson or their question)",
+            "",
+        ]
+        if user_message and user_message.strip():
+            prompt_parts.append("Student's full message:")
+            prompt_parts.append(user_message.strip())
+        prompt = "\n".join(prompt_parts)
+        response = self.gemini_service.generate(
+            system_instruction=system_instruction,
+            prompt=prompt,
+            response_schema=None,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return (response.get("raw") or "").strip()
 

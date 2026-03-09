@@ -92,7 +92,8 @@ class GenerateQuestionsResponseSerializer(serializers.Serializer):
 # --- Student Ask AI (sentence-based context) ---
 
 ACTION_TYPE_CHOICES = [
-    'explain_more', 'give_examples', 'simplify', 'summarize', 'generate_questions', 'custom'
+    'explain_more', 'give_examples', 'simplify', 'summarize',
+    'generate_questions', 'harder_questions', 'custom',
 ]
 
 
@@ -131,7 +132,40 @@ class StudentAskRequestSerializer(serializers.Serializer):
 
 
 class StudentAskResponseSerializer(serializers.Serializer):
-    """Response for POST /api/tutorx/lessons/<lesson_id>/ask/"""
-    answer = serializers.CharField()
+    """Response for POST /api/tutorx/lessons/<lesson_id>/ask/.
+
+    For generate_questions / harder_questions: questions (list), optional message, model.
+    For other actions: answer (str), model.
+    """
+    answer = serializers.CharField(required=False, allow_blank=True)
+    questions = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        allow_null=True,
+    )
+    message = serializers.CharField(required=False, allow_blank=True)
     model = serializers.CharField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        has_answer = attrs.get('answer') is not None and attrs.get('answer') != ''
+        has_questions = attrs.get('questions') is not None
+        if not has_answer and not has_questions:
+            raise serializers.ValidationError("Response must include either 'answer' or 'questions'.")
+        return attrs
+
+
+class LessonChatRequestSerializer(serializers.Serializer):
+    """Request for POST /api/tutorx/lessons/<lesson_id>/chat/ (lesson chat window)."""
+    message = serializers.CharField(required=True, allow_blank=False)
+    conversation = serializers.ListField(
+        child=serializers.DictField(allow_null=True),
+        required=False,
+        default=list,
+        help_text='Previous messages: [{ "role": "user"|"assistant", "type"?: "text"|"qanda", "content"?: "...", "data"?: {...} }]',
+    )
+
+    def validate_message(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("message cannot be empty")
+        return value.strip()
 

@@ -46,7 +46,7 @@ import os
 from typing import Dict, List, Optional, Any, Union
 from google.cloud import aiplatform
 from google.oauth2 import service_account
-from vertexai.generative_models import GenerativeModel, Part
+from vertexai.generative_models import GenerativeModel, Part, Tool, FunctionDeclaration
 from google.api_core import exceptions as google_exceptions
 from decouple import config
 
@@ -140,13 +140,19 @@ class GeminiService:
         
         return None
     
-    def _get_model(self, system_instruction: Optional[str] = None, model_name: Optional[str] = None) -> GenerativeModel:
+    def _get_model(
+        self,
+        system_instruction: Optional[str] = None,
+        model_name: Optional[str] = None,
+        tools: Optional[List[Tool]] = None,
+    ) -> GenerativeModel:
         """
         Get GenerativeModel instance.
         
         Args:
             system_instruction: Optional system instruction to pass to model
             model_name: Optional model name to use (overrides self.model_name)
+            tools: Optional list of Tool (e.g. for function calling)
             
         Returns:
             Configured GenerativeModel instance
@@ -156,6 +162,9 @@ class GeminiService:
         # Add system instruction if provided
         if system_instruction:
             model_kwargs['system_instruction'] = system_instruction
+        
+        if tools:
+            model_kwargs['tools'] = tools
         
         # Use provided model_name or fall back to instance default
         model_to_use = model_name if model_name else self.model_name
@@ -288,7 +297,67 @@ Return ONLY valid JSON, no additional text before or after."""
         except Exception as e:
             logger.error(f"Unexpected error in generate: {e}", exc_info=True)
             raise
-    
+
+    def generate_with_tools(
+        self,
+        system_instruction: str,
+        prompt: str,
+        tool_schemas: List[Dict[str, Any]],
+        temperature: float = 0.3,
+        max_tokens: Optional[int] = None,
+        model_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        One-shot generate with function/tool declarations. Use for intent inference:
+        model returns either a function_call (name + args) or plain text.
+        tool_schemas: list of {"name": str, "description": str, "parameters": dict}
+        where parameters is OpenAPI-style {"type": "object", "properties": {...}, "required": [...]}.
+        Returns either {"function_call": {"name": str, "args": dict}} or {"text": str}.
+        """
+        if not tool_schemas:
+            raise ValueError("tool_schemas is required for generate_with_tools")
+        function_declarations = []
+        for schema in tool_schemas:
+            decl = FunctionDeclaration(
+                name=schema["name"],
+                description=schema["description"],
+                parameters=schema.get("parameters", {"type": "object", "properties": {}}),
+            )
+            function_declarations.append(decl)
+        tools = [Tool(function_declarations=function_declarations)]
+        model = self._get_model(
+            system_instruction=system_instruction,
+            model_name=model_name,
+            tools=tools,
+        )
+        generation_config = {"temperature": temperature}
+        if max_tokens:
+            generation_config["max_output_tokens"] = max_tokens
+        response = model.generate_content(prompt, generation_config=generation_config)
+        # Parse: function_call in parts or text
+        if not response.candidates:
+            return {"text": ""}
+        content = response.candidates[0].content
+        if not hasattr(content, "parts") or not content.parts:
+            return {"text": getattr(response, "text", "") or ""}
+        text_parts = []
+        for part in content.parts:
+            if hasattr(part, "function_call") and part.function_call:
+                fc = part.function_call
+                name = getattr(fc, "name", None) or (fc.get("name") if isinstance(fc, dict) else None)
+                args = getattr(fc, "args", None)
+                if not isinstance(args, dict):
+                    try:
+                        args = dict(args) if args and hasattr(args, "items") else {}
+                    except (TypeError, ValueError):
+                        args = {}
+                args = args or {}
+                if name:
+                    return {"function_call": {"name": name, "args": args}}
+            if hasattr(part, "text") and part.text:
+                text_parts.append(part.text)
+        return {"text": "\n".join(text_parts).strip() if text_parts else ""}
+
     def test(self, test_prompt: Optional[str] = None):
         """
         Direct test function for the service.

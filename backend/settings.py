@@ -153,6 +153,9 @@ USE_I18N = True
 
 USE_TZ = True
 
+# Lesson chat (TutorX): cache TTL for lesson context (seconds). Default 10 min; use Redis in prod.
+LESSON_CHAT_CACHE_TTL_SECONDS = config('LESSON_CHAT_CACHE_TTL_SECONDS', default=600, cast=int)
+
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.2/howto/static-files/

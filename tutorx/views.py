@@ -562,6 +562,8 @@ class TutorXLessonContentView(APIView):
         inject_urls_into_blocks(blocks)
         lesson.tutorx_content = json.dumps(blocks)
         lesson.save(update_fields=['tutorx_content'])
+        from .services.lesson_chat import invalidate_lesson_chat_cache
+        invalidate_lesson_chat_cache(lesson_id)
         return Response({'content': lesson.tutorx_content}, status=status.HTTP_200_OK)
 
 
@@ -621,6 +623,82 @@ class TutorXLessonAskView(APIView):
                 {'error': 'Failed to get answer', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class LessonChatView(APIView):
+    """
+    POST: Lesson chat window (list-based, no WebSocket).
+    Request: { "message": "...", "conversation": [ { "role", "content" or "type", "data" } ] }
+    Response: { "response_type": "text"|"qanda"|"explainer_image", "content" or "data", "conversation": updated_list }
+    AI infers intent (explain_better, generate_questions, draw_explainer_image) via function calling; we dispatch to the matching handler. Permission: course teacher or enrolled student.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, lesson_id):
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+        if lesson.type != 'tutorx':
+            return Response(
+                {'error': 'This lesson is not a TutorX lesson'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        is_teacher = lesson.course.teacher == request.user
+        is_student = False
+        if not is_teacher and hasattr(request.user, 'student_profile'):
+            from student.models import EnrolledCourse
+            is_student = EnrolledCourse.objects.filter(
+                student_profile=request.user.student_profile,
+                course=lesson.course,
+                status__in=['active', 'completed']
+            ).exists()
+        if not is_teacher and not is_student:
+            return Response(
+                {'error': 'Only the course teacher or enrolled students can access this lesson'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        from .serializers import LessonChatRequestSerializer
+        from .services.lesson_chat import get_lesson_context, run_lesson_chat
+
+        serializer = LessonChatRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        message = serializer.validated_data['message']
+        conversation = list(serializer.validated_data.get('conversation') or [])
+
+        # Load lesson context (cached by lesson_id)
+        lesson_context = get_lesson_context(lesson_id)
+
+        # AI-based intent: model infers intent and we dispatch to the right handler
+        if lesson_context:
+            try:
+                response_type, content, data, assistant_msg = run_lesson_chat(
+                    lesson_context=lesson_context,
+                    user_message=message,
+                    conversation=conversation,
+                )
+            except Exception as e:
+                logger.exception("Lesson chat run_lesson_chat failed: %s", e)
+                content = f"Something went wrong. ({str(e)})"
+                assistant_msg = {'role': 'assistant', 'type': 'text', 'content': content}
+                response_type, data = 'text', None
+        else:
+            content = "Lesson content is not available."
+            assistant_msg = {'role': 'assistant', 'type': 'text', 'content': content}
+            response_type, data = 'text', None
+
+        user_msg = {'role': 'user', 'content': message}
+        updated_conversation = conversation + [user_msg, assistant_msg]
+
+        payload = {
+            'response_type': response_type,
+            'conversation': updated_conversation,
+        }
+        if response_type in ('qanda', 'explainer_image') and data is not None:
+            payload['data'] = data
+        else:
+            payload['content'] = content
+
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 class TutorXBlockCreateView(APIView):

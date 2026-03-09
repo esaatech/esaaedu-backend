@@ -108,6 +108,46 @@ Student Ask AI: send a question about selected text in a TutorX lesson. The fron
 
 ---
 
+### POST /api/tutorx/lessons/{lesson_id}/chat/
+
+Lesson chat: send a message and get an AI reply. The backend infers intent (explain, generate questions, draw explainer image, or plain text) and returns either plain text or structured data. Conversation is stateless: send the full conversation list with each request.
+
+**Path Parameters**: `lesson_id` (UUID)
+
+**Request Body** (JSON):
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `message` | string | Yes | The user's message. |
+| `conversation` | array | No | Previous messages in this chat. Each item: `{ "role": "user" \| "assistant", "content"?: string, "type"?: "text" \| "qanda" \| "explainer_image", "data"?: object }`. Default: `[]`. |
+
+**Response** (200 OK):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `response_type` | string | `"text"` \| `"qanda"` \| `"explainer_image"`. Tells the client which template to use for the **latest** reply. |
+| `content` | string | Present when `response_type === "text"`. The assistant's plain-text or markdown reply. |
+| `data` | object | Present when `response_type === "qanda"` or `"explainer_image"`. See below. |
+| `conversation` | array | Full conversation including the new user message and the new assistant message. Use for rendering history and for the next request. |
+
+**When `response_type === "qanda"`**, `data` has:
+
+- `questions`: array of `{ question_text, type, difficulty, content: { options?, correct_answer, ... }, explanation? }` (quiz-style).
+- `message`: string (e.g. "Do you want harder questions?").
+
+**When `response_type === "explainer_image"`**, `data` has:
+
+- `image_description`: string (short description for accessibility).
+- `image_prompt`: string (prompt for an image generation API).
+
+**Permission**: Course teacher or enrolled student. Lesson must exist and have `type == 'tutorx'`.
+
+**Status Codes**: `200 OK`, `400 Bad Request`, `403 Forbidden`, `404 Not Found`, `500 Internal Server Error`.
+
+**Implementation**: `tutorx/views.py` → `LessonChatView`, `tutorx/services/lesson_chat.py` (intent + dispatch), `tutorx/services/handlers.py` (handlers). See `tutorx/docs/LESSON_CHAT_TUTORIAL.md` and `tutorx/docs/LESSON_CHAT_FRONTEND.md`.
+
+---
+
 ### POST /api/tutorx/images/upload/
 
 Upload a single image for TutorX (e.g. used by other clients). The **PUT /content/** multipart endpoint handles images in the main save flow.
