@@ -20,6 +20,7 @@ from .serializers import (
     SimplifyResponseSerializer,
     SummarizeResponseSerializer,
     GenerateQuestionsResponseSerializer,
+    DrawExplainerImageResponseSerializer,
     StudentAskRequestSerializer,
     StudentAskResponseSerializer,
 )
@@ -85,6 +86,42 @@ def upload_tutorx_image_file_to_gcs(uploaded_file) -> str:
     return file_url
 
 
+def upload_tutorx_video_file_to_gcs(uploaded_file) -> str:
+    """
+    Upload a TutorX video file to GCS (tutorx-media/). No image processing.
+    Used by the multipart content PUT when the file extension is video.
+    Returns the public URL of the saved file.
+    """
+    original_filename = uploaded_file.name
+    file_extension = original_filename.split('.')[-1].lower() if '.' in original_filename else ''
+    allowed_extensions = ['mp4', 'webm', 'ogg', 'mov', 'm4v']
+    if file_extension not in allowed_extensions:
+        raise ValueError(
+            f'Video extension "{file_extension}" not allowed. Allowed: {", ".join(allowed_extensions)}'
+        )
+    max_size = 500 * 1024 * 1024  # 500MB
+    if uploaded_file.size > max_size:
+        raise ValueError(
+            f'Video size exceeds 500MB (got {round(uploaded_file.size / (1024 * 1024), 2)}MB)'
+        )
+    if not hasattr(settings, 'GS_BUCKET_NAME') or not settings.GS_BUCKET_NAME:
+        raise RuntimeError('Google Cloud Storage is not configured.')
+    unique_id = uuid.uuid4()
+    base_name = original_filename.rsplit('.', 1)[0] if '.' in original_filename else 'video'
+    base_name = ''.join(c for c in base_name if c.isalnum() or c in (' ', '-', '_')).strip()[:50]
+    filename = f"{unique_id}-{base_name}.{file_extension}"
+    storage_path = f"tutorx-media/{filename}"
+    saved_path = default_storage.save(storage_path, uploaded_file)
+    file_url = default_storage.url(saved_path)
+    if not file_url.startswith('http'):
+        file_url = f"https://storage.googleapis.com/{settings.GS_BUCKET_NAME}/{saved_path}"
+    return file_url
+
+
+# Video extensions for dispatch in content PUT (must match upload_tutorx_video_file_to_gcs)
+TUTORX_VIDEO_EXTENSIONS = {'mp4', 'webm', 'ogg', 'mov', 'm4v'}
+
+
 class BlockActionView(APIView):
     """
     API View for performing AI actions on content blocks.
@@ -111,7 +148,7 @@ class BlockActionView(APIView):
         }
         """
         action_type = action_type.lower()
-        valid_actions = ['explain_more', 'give_examples', 'simplify', 'summarize', 'generate_questions']
+        valid_actions = ['explain_more', 'give_examples', 'simplify', 'summarize', 'generate_questions', 'draw_explainer_image']
         
         if action_type not in valid_actions:
             return Response(
@@ -193,6 +230,7 @@ class BlockActionView(APIView):
                 'simplify': SimplifyResponseSerializer,
                 'summarize': SummarizeResponseSerializer,
                 'generate_questions': GenerateQuestionsResponseSerializer,
+                'draw_explainer_image': DrawExplainerImageResponseSerializer,
             }
             
             response_serializer = response_serializers[action_type](data=result)
@@ -534,8 +572,13 @@ class TutorXLessonContentView(APIView):
                 block_id = key[6:]
                 if not block_id:
                     continue
+                uploaded_file = request.FILES[key]
+                ext = (uploaded_file.name or '').split('.')[-1].lower() if '.' in (uploaded_file.name or '') else ''
                 try:
-                    url = upload_tutorx_image_file_to_gcs(request.FILES[key])
+                    if ext in TUTORX_VIDEO_EXTENSIONS:
+                        url = upload_tutorx_video_file_to_gcs(uploaded_file)
+                    else:
+                        url = upload_tutorx_image_file_to_gcs(uploaded_file)
                     uploaded_urls[block_id] = url
                 except (ValueError, RuntimeError) as e:
                     return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -550,7 +593,8 @@ class TutorXLessonContentView(APIView):
 
         def inject_urls_into_blocks(block_list):
             for b in block_list:
-                if b.get('type') == 'image' and isinstance(b.get('props'), dict):
+                block_type = b.get('type')
+                if block_type in ('image', 'video', 'audio') and isinstance(b.get('props'), dict):
                     url_val = b['props'].get('url') or ''
                     if isinstance(url_val, str) and url_val.startswith(placeholder_prefix):
                         block_id = b.get('id')

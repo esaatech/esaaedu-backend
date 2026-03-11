@@ -21,6 +21,13 @@ Usage:
     with open('generated_image.png', 'wb') as f:
         f.write(image_bytes)
 
+Nano Banana (Gemini image) — explainer images with text:
+    service.generate_image_nano_banana(
+        prompt="Create an explainer image: the water cycle with labels.",
+        model_id="gemini-2.5-flash-image",
+    )
+    # Returns same shape: result['images'], result['model']; prints confirm model used.
+
 Direct Testing:
     Run this file directly to test:
     python -m ai.gemini_image_service
@@ -52,9 +59,10 @@ class GeminiImageService:
     - Multiple image generation
     - Safety settings
     
-    Note: Uses Imagen 3 (imagegeneration@006) by default. "Nano Banana" (Gemini 2.5 Flash Image)
-    and "Nano Banana Pro" (Gemini 3.0 Pro Image) are consumer-facing names that use
-    Imagen technology. For Vertex AI, use imagegeneration@006 or check for newer versions.
+    Note: imagegeneration@006 is end-of-life. Default is imagen-3.0-generate-002 (Imagen 3).
+    This service uses ImageGenerationModel, which supports Imagen only. Gemini 2.5 Flash Image
+    (gemini-2.5-flash-image / "Nano Banana") uses a different API (GenerativeModel); if you set
+    IMAGEN_MODEL to that, we fall back to imagen-3.0-generate-002 and log a warning.
     
     Designed to follow the same pattern as GeminiService for consistency.
     """
@@ -66,17 +74,23 @@ class GeminiImageService:
         Reads configuration from environment variables:
         - GCP_PROJECT_ID: Google Cloud project ID
         - VERTEX_AI_LOCATION: Region (default: us-central1)
-        - IMAGEN_MODEL: Model name (default: imagegeneration@006)
+        - IMAGEN_MODEL: Imagen model only (default: imagen-3.0-generate-002). Gemini image models not supported here.
         - GOOGLE_APPLICATION_CREDENTIALS: Path to service account JSON (optional)
         """
         self.project_id = config('GCP_PROJECT_ID', default=None)
         self.location = config('VERTEX_AI_LOCATION', default='us-central1')
-        # Imagen 3 model: imagegeneration@006 (latest as of 2025)
-        # Note: "Nano Banana" (Gemini 2.5 Flash Image) and "Nano Banana Pro" (Gemini 3.0 Pro Image)
-        # are consumer-facing names that may use Imagen technology under the hood.
-        # For Vertex AI, use imagegeneration@006 or check for newer versions (e.g., imagegeneration@007)
-        # Older models: imagegeneration@005, imagegeneration@004
-        self.model_name = config('IMAGEN_MODEL', default='imagegeneration@006')
+        # imagegeneration@006 is EOL. ImageGenerationModel supports Imagen only (not Gemini image models).
+        # Options: imagen-3.0-generate-002, imagen-3.0-fast-generate-001, imagen-4.0-generate-001
+        _requested = config('IMAGEN_MODEL', default='imagen-3.0-generate-002')
+        if _requested and 'gemini' in _requested.lower():
+            logger.warning(
+                "IMAGEN_MODEL=%s uses a different API (GenerativeModel). This service uses "
+                "ImageGenerationModel (Imagen only). Falling back to imagen-3.0-generate-002.",
+                _requested,
+            )
+            self.model_name = 'imagen-3.0-generate-002'
+        else:
+            self.model_name = _requested or 'imagen-3.0-generate-002'
         
         if not self.project_id:
             logger.warning("GCP_PROJECT_ID not set, Vertex AI may not work correctly")
@@ -263,6 +277,84 @@ class GeminiImageService:
             logger.error(f"Unexpected error in generate_image: {e}", exc_info=True)
             raise
     
+    def generate_image_nano_banana(
+        self,
+        prompt: str,
+        model_id: str = "gemini-2.5-flash-image",
+        aspect_ratio: str = "16:9",
+    ) -> Dict[str, Any]:
+        """
+        Generate an image using Nano Banana (Gemini image model) via Vertex AI.
+        Best for explainer images with text, labels, and structured layouts.
+
+        Requires: pip install google-genai
+        Env for Vertex: GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, GOOGLE_GENAI_USE_VERTEXAI=True
+        (project and location are taken from GCP_PROJECT_ID and VERTEX_AI_LOCATION if not set.)
+
+        Args:
+            prompt: Text description of the image (e.g. explainer with labels).
+            model_id: Gemini image model. Options: gemini-2.5-flash-image, gemini-3.1-flash-image-preview.
+            aspect_ratio: e.g. "16:9", "1:1". Passed to API when supported.
+
+        Returns:
+            Dict with 'images' (list of bytes), 'prompt', 'model', 'text_parts' (any text from the model).
+        """
+        print(f"[Nano Banana] Using model: {model_id}")
+        try:
+            from google import genai
+            from google.genai.types import GenerateContentConfig, Modality
+        except ImportError:
+            raise ImportError(
+                "google-genai is required for Nano Banana. Install with: pip install google-genai"
+            )
+
+        # Ensure Vertex AI env vars for google-genai SDK
+        os.environ["GOOGLE_CLOUD_PROJECT"] = os.environ.get("GOOGLE_CLOUD_PROJECT") or self.project_id or ""
+        os.environ["GOOGLE_CLOUD_LOCATION"] = os.environ.get("GOOGLE_CLOUD_LOCATION") or self.location or "us-central1"
+        os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
+
+        if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
+            raise ValueError("GCP_PROJECT_ID or GOOGLE_CLOUD_PROJECT must be set for Nano Banana")
+
+        # Use same service account as Imagen so genai client can auth to Vertex
+        creds_path = config("GOOGLE_APPLICATION_CREDENTIALS", default=None)
+        if not creds_path:
+            try:
+                from django.conf import settings
+                base_dir = settings.BASE_DIR
+            except Exception:
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            default_creds = os.path.join(base_dir, ".credentials", "vertex-ai-service-account.json")
+            if os.path.exists(default_creds):
+                creds_path = default_creds
+        if creds_path and os.path.exists(creds_path):
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_path
+
+        client = genai.Client()
+        config_kw = {"response_modalities": [Modality.TEXT, Modality.IMAGE]}
+        response = client.models.generate_content(
+            model=model_id,
+            contents=prompt,
+            config=GenerateContentConfig(**config_kw),
+        )
+
+        images = []
+        text_parts = []
+        if response.candidates:
+            for part in response.candidates[0].content.parts:
+                if getattr(part, "text", None):
+                    text_parts.append(part.text)
+                if getattr(part, "inline_data", None) and part.inline_data.data:
+                    images.append(bytes(part.inline_data.data))
+
+        print(f"[Nano Banana] Model used: {model_id} — generated {len(images)} image(s)")
+        return {
+            "images": images,
+            "prompt": prompt,
+            "model": model_id,
+            "text_parts": text_parts,
+        }
+
     def save_image(self, image_bytes: bytes, filepath: str) -> str:
         """
         Save image bytes to a file.
@@ -321,7 +413,7 @@ class GeminiImageService:
             result = self.generate_image(
                 prompt=prompt,
                 number_of_images=1,
-                aspect_ratio="16:9"  # Widest landscape ratio supported by Imagen API
+                aspect_ratio="9:16"  # Widest landscape ratio supported by Imagen API
             )
             print(f"✅ Success!")
             print(f"Generated {result['number_of_images']} image(s)")
@@ -339,7 +431,43 @@ class GeminiImageService:
             import traceback
             traceback.print_exc()
             print()
-        
+
+        # Nano Banana (Gemini image) test — explainer with text
+        print("Nano Banana (Gemini image) Test")
+        print("-" * 60)
+        try:
+            nano_prompt = (
+                "Create an explainer image for kids: the water cycle. "
+                "Show evaporation, condensation, and precipitation with short labels on the diagram. "
+                "Clear, educational style."
+            )
+            print(f"Prompt: {nano_prompt[:80]}...")
+            nano_result = self.generate_image_nano_banana(
+                prompt=nano_prompt,
+                model_id="gemini-2.5-flash-image",
+                aspect_ratio="16:9",
+            )
+            print(f"✅ Nano Banana success!")
+            print(f"Model used: {nano_result['model']}")
+            print(f"Generated {len(nano_result['images'])} image(s)")
+            if nano_result.get("text_parts"):
+                print(f"Model text: {nano_result['text_parts'][0][:200]}...")
+            if nano_result["images"]:
+                print(f"Image size: {len(nano_result['images'][0])} bytes")
+                if save_test_image:
+                    nano_path = "test_nano_banana_image.png"
+                    self.save_image(nano_result["images"][0], nano_path)
+                    print(f"✅ Image saved to: {nano_path}")
+            print()
+        except ImportError as e:
+            print(f"⚠️ Skipping Nano Banana (install google-genai): {e}")
+            print()
+        except Exception as e:
+            print(f"❌ Nano Banana failed: {e}")
+            import traceback
+            traceback.print_exc()
+            print()
+
         print("="*60)
         print("✅ Testing complete!")
         print("="*60 + "\n")

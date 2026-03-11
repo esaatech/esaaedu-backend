@@ -541,6 +541,43 @@ class TutorXAIService:
             logger.error(f"Error in generate_questions: {e}", exc_info=True)
             raise
 
+    def draw_explainer_image(
+        self,
+        block_content: str,
+        block_type: str = "text",
+        context: Optional[Dict[str, Any]] = None,
+        user_prompt: Optional[str] = None,
+        temperature: float = 0.5,
+        max_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Block action: generate image_description and image_prompt for an explainer image from block content.
+        Uses TutorXBlockActionConfig for system instruction; returns structured output for image generation.
+        """
+        system_instruction = self._get_system_instruction("draw_explainer_image")
+        prompt = self._build_prompt(
+            action_type="draw_explainer_image",
+            block_content=block_content,
+            block_type=block_type,
+            context=context or {},
+            user_prompt_text=user_prompt,
+        )
+        from tutorx.schemas import get_draw_explainer_image_schema
+        response_schema = get_draw_explainer_image_schema()
+        response = self.gemini_service.generate(
+            system_instruction=system_instruction,
+            prompt=prompt,
+            response_schema=response_schema,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        parsed = response.get("parsed") or {}
+        return {
+            "image_description": (parsed.get("image_description") or "").strip() or "Explainer image",
+            "image_prompt": (parsed.get("image_prompt") or "").strip() or "",
+            "model": response.get("model", ""),
+        }
+
     def ask_student(
         self,
         lesson_title: str,

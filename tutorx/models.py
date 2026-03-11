@@ -23,6 +23,7 @@ class TutorXBlockActionConfig(models.Model):
         ('simplify', 'Simplify'),
         ('summarize', 'Summarize'),
         ('generate_questions', 'Generate Questions'),
+        ('draw_explainer_image', 'Draw Explainer Image'),
     ]
     
     # Basic Information
@@ -135,6 +136,7 @@ class TutorXUserInstructionsDefaults(models.Model):
         ('simplify', 'Simplify'),
         ('summarize', 'Summarize'),
         ('generate_questions', 'Generate Questions'),
+        ('draw_explainer_image', 'Draw Explainer Image'),
     ]
     
     # Basic Information

@@ -89,6 +89,13 @@ class GenerateQuestionsResponseSerializer(serializers.Serializer):
     model = serializers.CharField()
 
 
+class DrawExplainerImageResponseSerializer(serializers.Serializer):
+    """Serializer for draw_explainer_image action response"""
+    image_description = serializers.CharField()
+    image_prompt = serializers.CharField()
+    model = serializers.CharField()
+
+
 # --- Student Ask AI (sentence-based context) ---
 
 ACTION_TYPE_CHOICES = [

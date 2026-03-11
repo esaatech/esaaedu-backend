@@ -187,6 +187,30 @@ Return the questions as a JSON array, where each question has:
 - "difficulty": Difficulty level ("easy", "medium", "hard")
 
 Return ONLY valid JSON, no additional text."""
+            },
+            {
+                'action_type': 'draw_explainer_image',
+                'display_name': 'Draw Explainer Image',
+                'description': 'Generate an image description and a detailed prompt for an explainer image or diagram from block content',
+                'system_instruction': """You are an expert educational assistant helping students learn through visual explanations.
+Your role is to produce a short image description (for accessibility) and a detailed prompt suitable for an image generation API to illustrate the concept from the block content.
+Always maintain an educational, supportive tone.
+
+Guidelines:
+- Base the image on the key concept or idea in the block content
+- image_description: One short sentence for alt text / accessibility (what the image shows)
+- image_prompt: A detailed, concrete prompt for an image generator (style: clear educational diagram or illustration; suitable for learners)
+- Keep descriptions and prompts appropriate for the target audience
+- Focus on one main concept per image; avoid cluttered or ambiguous prompts""",
+                'default_user_prompt': """Create an explainer image for the following block content:
+
+{block_content}
+
+Provide:
+1. A short image description (one sentence, for accessibility).
+2. A detailed image prompt that an image generation API could use to create a clear, educational illustration of the main concept.
+
+Return only valid JSON with keys: "image_description" and "image_prompt"."""
             }
         ]
         
