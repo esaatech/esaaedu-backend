@@ -1,4 +1,7 @@
 import logging
+import os
+import shutil
+import tempfile
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
@@ -19,6 +22,13 @@ from .serializers import (
     AssignmentFeedbackSerializer
 )
 from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, LessonMaterial, VideoMaterial, BookPage, Lesson, DocumentMaterial, AudioVideoMaterial, CourseAssessment, CourseAssessmentSubmission
+from courses.hls_utils import (
+    convert_to_hls,
+    upload_hls_to_gcs,
+    delete_hls_from_gcs,
+    HLSConversionError,
+    HLSUploadError,
+)
 from student.models import EnrolledCourse, Conversation, Message
 from student.serializers import (
     ConversationListSerializer, ConversationSerializer,
@@ -3685,7 +3695,79 @@ class AudioVideoUploadView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Generate unique filename for storage
+            # Video: convert to HLS, upload to GCS, store playlist URL
+            if mime_type.startswith('video/'):
+                import uuid as uuid_module
+                material_id = uuid_module.uuid4()
+                gcs_prefix = f"hls/audio-video/{material_id}/"
+                temp_video_path = None
+                local_hls_dir = None
+                lesson_material_id = request.data.get('lesson_material_id')
+                lesson_material = None
+                if lesson_material_id:
+                    try:
+                        lesson_material = LessonMaterial.objects.get(
+                            id=lesson_material_id,
+                            material_type='audio'
+                        )
+                    except LessonMaterial.DoesNotExist:
+                        pass
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(original_filename)[1] or '.mp4') as tmp:
+                        for chunk in uploaded_file.chunks():
+                            tmp.write(chunk)
+                        temp_video_path = tmp.name
+                    local_hls_dir = convert_to_hls(temp_video_path)
+                    playlist_url = upload_hls_to_gcs(local_hls_dir, gcs_prefix)
+                    safe_file_name = f"hls/audio-video/{material_id}/playlist.m3u8"
+                    safe_original_filename = original_filename[:200] if len(original_filename) > 200 else original_filename
+                    audio_video_material = AudioVideoMaterial.objects.create(
+                        file_name=safe_file_name,
+                        original_filename=safe_original_filename,
+                        file_url=playlist_url,
+                        file_size=uploaded_file.size,
+                        file_extension=file_extension,
+                        mime_type=mime_type,
+                        uploaded_by=request.user,
+                        lesson_material=lesson_material
+                    )
+                    logger.info(f"AudioVideoMaterial (HLS) created: {audio_video_material.id}")
+                    return Response({
+                        'file_url': playlist_url,
+                        'file_size': uploaded_file.size,
+                        'file_size_mb': round(uploaded_file.size / (1024 * 1024), 2),
+                        'file_extension': file_extension,
+                        'file_name': safe_file_name,
+                        'original_filename': original_filename,
+                        'mime_type': mime_type,
+                        'audio_video_material_id': str(audio_video_material.id),
+                        'message': 'Video uploaded and converted to HLS successfully'
+                    }, status=status.HTTP_201_CREATED)
+                except (HLSConversionError, HLSUploadError) as e:
+                    logger.exception("HLS conversion or upload failed: %s", e)
+                    try:
+                        delete_hls_from_gcs(gcs_prefix)
+                    except Exception:
+                        pass
+                    return Response(
+                        {'error': str(e)},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+                finally:
+                    if temp_video_path and os.path.exists(temp_video_path):
+                        try:
+                            os.unlink(temp_video_path)
+                        except Exception:
+                            pass
+                    if local_hls_dir is not None:
+                        path_str = str(local_hls_dir)
+                        if os.path.exists(path_str):
+                            try:
+                                shutil.rmtree(path_str, ignore_errors=True)
+                            except Exception:
+                                pass
+
+            # Generate unique filename for storage (audio path)
             import uuid
             # CRITICAL: Database file_name column is VARCHAR(200), not 255!
             # UUID is 36 chars + 1 dash = 37 chars

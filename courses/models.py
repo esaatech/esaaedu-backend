@@ -874,40 +874,46 @@ class AudioVideoMaterial(models.Model):
     def delete(self, *args, **kwargs):
         """
         Override delete to also delete the file from Google Cloud Storage.
-        This ensures that when an AudioVideoMaterial is deleted (either directly or via CASCADE
-        when LessonMaterial is deleted), the associated file is also removed from GCS.
-        Follows the same pattern as DocumentMaterial.
+        For HLS assets (file_name starts with "hls/"), deletes the entire folder
+        (playlist + all segments). For single-file audio/video, deletes that file.
         """
-        # Delete file from GCS before deleting the model
+        import os
+
         if self.file_name:
             try:
-                from django.core.files.storage import default_storage
                 from django.conf import settings
-                
-                # Only delete from GCS if GCS is configured
-                if hasattr(settings, 'GS_BUCKET_NAME') and settings.GS_BUCKET_NAME:
+
+                if not getattr(settings, "GS_BUCKET_NAME", None):
+                    if os.path.exists(self.file_name):
+                        try:
+                            os.remove(self.file_name)
+                            logger.info(f"Deleted audio/video file from local storage: {self.file_name}")
+                        except Exception as e:
+                            logger.error(f"Failed to delete from local storage ({self.file_name}): {e}")
+                    super().delete(*args, **kwargs)
+                    return
+
+                # HLS: delete entire folder (playlist + segments) via prefix
+                if self.file_name.startswith("hls/"):
+                    gcs_prefix = os.path.dirname(self.file_name)
+                    if gcs_prefix:
+                        try:
+                            from courses.hls_utils import delete_hls_from_gcs
+                            delete_hls_from_gcs(gcs_prefix)
+                            logger.info(f"Deleted HLS folder from GCS: {gcs_prefix}")
+                        except Exception as e:
+                            logger.error(f"Failed to delete HLS folder from GCS ({gcs_prefix}): {e}")
+                else:
+                    # Single file (audio or legacy video)
+                    from django.core.files.storage import default_storage
                     try:
-                        # Delete the file from GCS
                         default_storage.delete(self.file_name)
                         logger.info(f"Deleted audio/video file from GCS: {self.file_name}")
                     except Exception as e:
-                        # Log error but don't fail the deletion
                         logger.error(f"Failed to delete audio/video file from GCS ({self.file_name}): {e}")
-                        # Continue with model deletion even if file deletion fails
-                else:
-                    # If GCS is not configured, try local storage
-                    try:
-                        import os
-                        if os.path.exists(self.file_name):
-                            os.remove(self.file_name)
-                            logger.info(f"Deleted audio/video file from local storage: {self.file_name}")
-                    except Exception as e:
-                        logger.error(f"Failed to delete audio/video file from local storage ({self.file_name}): {e}")
             except Exception as e:
                 logger.error(f"Error deleting audio/video file ({self.file_name}): {e}")
-                # Continue with model deletion even if file deletion fails
-        
-        # Call parent delete to actually delete the model
+
         super().delete(*args, **kwargs)
 
 
