@@ -2,6 +2,7 @@
 Serializers for TutorX views
 """
 from rest_framework import serializers
+from .models import InteractiveVideo, InteractiveEvent
 
 
 class BlockActionRequestSerializer(serializers.Serializer):
@@ -175,4 +176,39 @@ class LessonChatRequestSerializer(serializers.Serializer):
         if not value or not value.strip():
             raise serializers.ValidationError("message cannot be empty")
         return value.strip()
+
+
+class InteractiveEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InteractiveEvent
+        fields = [
+            'id',
+            'event_type',
+            'timestamp_seconds',
+            'title',
+            'prompt',
+            'explanation',
+            'options',
+            'correct_option_index',
+            'yes_label',
+            'no_label',
+            'explanation_yes',
+            'explanation_no',
+            'correct_answer',
+        ]
+
+
+class InteractiveVideoSerializer(serializers.ModelSerializer):
+    events = InteractiveEventSerializer(many=True)
+    video_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = InteractiveVideo
+        fields = ['id', 'video_url', 'events']
+
+    def get_video_url(self, obj):
+        if obj.audio_video_material:
+            return obj.audio_video_material.file_url
+        return None
+
 

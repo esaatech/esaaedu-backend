@@ -10,7 +10,7 @@ from django.db import transaction
 from django.db.models import F
 import logging
 
-from .models import TutorXBlock, TutorXBlockActionConfig
+from .models import TutorXBlock, TutorXBlockActionConfig, InteractiveVideo, InteractiveEvent
 from .services.ai import TutorXAIService
 from .services.storage import delete_image_and_thumbnail, file_path_from_tutorx_image_url
 from .serializers import (
@@ -25,7 +25,7 @@ from .serializers import (
     StudentAskResponseSerializer,
 )
 from settings.models import UserTutorXInstruction
-from courses.models import Lesson
+from courses.models import Lesson, AudioVideoMaterial
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from django.conf import settings
@@ -33,6 +33,16 @@ from PIL import Image as PILImage
 from io import BytesIO
 import uuid
 import json
+import os
+import tempfile
+
+from courses.hls_utils import (
+    convert_to_hls,
+    upload_hls_to_gcs,
+    delete_hls_from_gcs,
+    HLSConversionError,
+    HLSUploadError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +126,123 @@ def upload_tutorx_video_file_to_gcs(uploaded_file) -> str:
     if not file_url.startswith('http'):
         file_url = f"https://storage.googleapis.com/{settings.GS_BUCKET_NAME}/{saved_path}"
     return file_url
+
+
+def create_audio_video_material_for_tutorx(
+    file,
+    uploaded_by,
+    existing_material: AudioVideoMaterial | None = None,
+) -> AudioVideoMaterial:
+    """
+    Create or replace an AudioVideoMaterial for a TutorX interactive video.
+
+    - Converts video to HLS using the shared courses.hls_utils helpers.
+    - Uploads playlist + segments to GCS under a stable prefix.
+    - If existing_material is provided, deletes the old HLS assets and
+      updates that row instead of creating a new one.
+    """
+    original_filename = getattr(file, "name", "video.mp4")
+
+    max_size = 500 * 1024 * 1024  # 500MB in bytes
+    if file.size > max_size:
+        raise ValueError(
+            f"File size exceeds maximum allowed size of 500MB. "
+            f"File size: {round(file.size / (1024 * 1024), 2)}MB"
+        )
+
+    import mimetypes
+
+    file_extension = original_filename.split(".")[-1].lower() if "." in original_filename else "mp4"
+    mime_type = file.content_type or mimetypes.guess_type(original_filename)[0] or "video/mp4"
+
+    if not mime_type.startswith("video/"):
+        raise ValueError("Interactive TutorX videos must be video files.")
+
+    temp_video_path: str | None = None
+    local_hls_dir = None
+
+    import uuid as uuid_module
+
+    if existing_material is not None:
+        material_id = existing_material.id
+        try:
+            delete_hls_from_gcs(f"hls/audio-video/{material_id}/")
+        except Exception:
+            logger.warning("Failed to delete old HLS assets for material %s", material_id)
+    else:
+        material_id = uuid_module.uuid4()
+
+    gcs_prefix = f"hls/audio-video/{material_id}/"
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=os.path.splitext(original_filename)[1] or ".mp4",
+        ) as tmp:
+            for chunk in file.chunks():
+                tmp.write(chunk)
+            temp_video_path = tmp.name
+
+        local_hls_dir = convert_to_hls(temp_video_path)
+        playlist_url = upload_hls_to_gcs(local_hls_dir, gcs_prefix)
+
+        safe_file_name = f"hls/audio-video/{material_id}/playlist.m3u8"
+        safe_original_filename = (
+            original_filename[:200] if len(original_filename) > 200 else original_filename
+        )
+
+        if existing_material is None:
+            av_material = AudioVideoMaterial.objects.create(
+                file_name=safe_file_name,
+                original_filename=safe_original_filename,
+                file_url=playlist_url,
+                file_size=file.size,
+                file_extension=file_extension,
+                mime_type=mime_type,
+                uploaded_by=uploaded_by,
+                lesson_material=None,
+            )
+        else:
+            existing_material.file_name = safe_file_name
+            existing_material.original_filename = safe_original_filename
+            existing_material.file_url = playlist_url
+            existing_material.file_size = file.size
+            existing_material.file_extension = file_extension
+            existing_material.mime_type = mime_type
+            existing_material.uploaded_by = uploaded_by
+            existing_material.save()
+            av_material = existing_material
+
+        logger.info(
+            "TutorX InteractiveVideo AudioVideoMaterial saved: %s",
+            av_material.id,
+        )
+        return av_material
+    except (HLSConversionError, HLSUploadError) as e:
+        logger.exception(
+            "HLS conversion/upload failed for TutorX interactive video: %s",
+            e,
+        )
+        try:
+            delete_hls_from_gcs(gcs_prefix)
+        except Exception:
+            pass
+        raise
+    finally:
+        if temp_video_path and os.path.exists(temp_video_path):
+            try:
+                os.unlink(temp_video_path)
+            except Exception:
+                pass
+        if local_hls_dir is not None:
+            path_str = str(local_hls_dir)
+            if os.path.exists(path_str):
+                try:
+                    import shutil
+
+                    shutil.rmtree(path_str, ignore_errors=True)
+                except Exception:
+                    pass
 
 
 # Video extensions for dispatch in content PUT (must match upload_tutorx_video_file_to_gcs)
@@ -534,7 +661,14 @@ class TutorXLessonContentView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
         content = getattr(lesson, 'tutorx_content', '') or ''
-        return Response({'content': content}, status=status.HTTP_200_OK)
+        response_data = {'content': content}
+        if hasattr(lesson, 'interactive_video'):
+            from .serializers import InteractiveVideoSerializer
+
+            response_data['interactive_video'] = InteractiveVideoSerializer(
+                lesson.interactive_video
+            ).data
+        return Response(response_data, status=status.HTTP_200_OK)
 
     @transaction.atomic
     def put(self, request, lesson_id):
@@ -606,9 +740,85 @@ class TutorXLessonContentView(APIView):
         inject_urls_into_blocks(blocks)
         lesson.tutorx_content = json.dumps(blocks)
         lesson.save(update_fields=['tutorx_content'])
+
+        # --- Interactive video handling (optional, backwards compatible) ---
+        interactive_video_raw = request.data.get('interactive_video')
+        interactive_video_data = None
+        if interactive_video_raw:
+            try:
+                interactive_video_data = (
+                    json.loads(interactive_video_raw)
+                    if isinstance(interactive_video_raw, str)
+                    else interactive_video_raw
+                )
+            except (json.JSONDecodeError, TypeError):
+                return Response(
+                    {'error': 'Invalid interactive_video JSON'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        interactive_video_file = request.FILES.get('interactive_video_file')
+
+        interactive_video_obj = None
+        if interactive_video_data is not None or interactive_video_file:
+            interactive_video_obj, _created = InteractiveVideo.objects.get_or_create(
+                lesson=lesson
+            )
+
+            if interactive_video_file:
+                try:
+                    av_material = create_audio_video_material_for_tutorx(
+                        file=interactive_video_file,
+                        uploaded_by=request.user,
+                        existing_material=interactive_video_obj.audio_video_material,
+                    )
+                except (ValueError, HLSConversionError, HLSUploadError) as e:
+                    return Response(
+                        {'error': str(e)}, status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                interactive_video_obj.audio_video_material = av_material
+                interactive_video_obj.save(update_fields=['audio_video_material'])
+
+            InteractiveEvent.objects.filter(
+                interactive_video=interactive_video_obj
+            ).delete()
+
+            events_payload = (
+                (interactive_video_data or {}).get('events')
+                if interactive_video_data
+                else []
+            )
+            for ev in events_payload or []:
+                InteractiveEvent.objects.create(
+                    interactive_video=interactive_video_obj,
+                    event_type=ev.get('type'),
+                    timestamp_seconds=ev.get('timestampSeconds', 0),
+                    title=ev.get('title', ''),
+                    prompt=ev.get('prompt', ''),
+                    explanation=ev.get('explanation', ''),
+                    options=ev.get('options'),
+                    correct_option_index=ev.get('correctOptionIndex'),
+                    yes_label=ev.get('yesLabel', ''),
+                    no_label=ev.get('noLabel', ''),
+                    explanation_yes=ev.get('explanationYes', ''),
+                    explanation_no=ev.get('explanationNo', ''),
+                    correct_answer=ev.get('correctAnswer'),
+                )
+
         from .services.lesson_chat import invalidate_lesson_chat_cache
+
         invalidate_lesson_chat_cache(lesson_id)
-        return Response({'content': lesson.tutorx_content}, status=status.HTTP_200_OK)
+
+        from .serializers import InteractiveVideoSerializer
+
+        response_data = {'content': lesson.tutorx_content}
+        if hasattr(lesson, 'interactive_video'):
+            response_data['interactive_video'] = InteractiveVideoSerializer(
+                lesson.interactive_video
+            ).data
+
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class TutorXLessonAskView(APIView):

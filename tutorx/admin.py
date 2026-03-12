@@ -2,7 +2,13 @@
 Django admin for TutorX models
 """
 from django.contrib import admin
-from .models import TutorXBlockActionConfig, TutorXUserInstructionsDefaults, TutorXBlock
+from .models import (
+    TutorXBlockActionConfig,
+    TutorXUserInstructionsDefaults,
+    TutorXBlock,
+    InteractiveVideo,
+    InteractiveEvent,
+)
 
 
 @admin.register(TutorXBlockActionConfig)
@@ -121,3 +127,17 @@ class TutorXBlockAdmin(admin.ModelAdmin):
         """Optimize queryset with select_related"""
         qs = super().get_queryset(request)
         return qs.select_related('lesson', 'lesson__course')
+
+
+@admin.register(InteractiveVideo)
+class InteractiveVideoAdmin(admin.ModelAdmin):
+    list_display = ['id', 'lesson', 'audio_video_material', 'created_at', 'updated_at']
+    search_fields = ['lesson__title', 'lesson__course__title', 'audio_video_material__original_filename']
+    readonly_fields = ['created_at', 'updated_at']
+
+
+@admin.register(InteractiveEvent)
+class InteractiveEventAdmin(admin.ModelAdmin):
+    list_display = ['id', 'interactive_video', 'event_type', 'timestamp_seconds', 'title']
+    list_filter = ['event_type']
+    search_fields = ['title', 'interactive_video__lesson__title', 'interactive_video__lesson__course__title']

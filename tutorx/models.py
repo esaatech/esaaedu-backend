@@ -314,3 +314,93 @@ class TutorXBlock(models.Model):
             return f"[Diagram]\n{self.content}"
         else:
             return self.content
+
+
+class InteractiveVideo(models.Model):
+    """
+    Interactive video attached to a TutorX lesson.
+
+    Stores a reference to the underlying AudioVideoMaterial (HLS or regular video)
+    and serves as the parent for timestamped interactive events.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    lesson = models.OneToOneField(
+        'courses.Lesson',
+        on_delete=models.CASCADE,
+        related_name='interactive_video',
+        help_text='TutorX lesson this interactive video belongs to (type=tutorx)',
+    )
+
+    audio_video_material = models.ForeignKey(
+        'courses.AudioVideoMaterial',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='tutorx_interactive_videos',
+        help_text='Underlying audio/video material (HLS or normal file)',
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Interactive Video (TutorX)'
+        verbose_name_plural = 'Interactive Videos (TutorX)'
+
+    def __str__(self) -> str:
+        return f"InteractiveVideo for lesson {self.lesson_id}"
+
+
+class InteractiveEvent(models.Model):
+    """
+    Timestamped interactive events for TutorX interactive videos.
+
+    Supports multiple choice, yes/no, true/false, and essay-style prompts.
+    Content fields (prompt/explanation) are stored as JSON strings so the
+    frontend can use BlockNote for rich text, including images.
+    """
+
+    EVENT_TYPES = [
+        ('pop_quiz', 'Multiple choice'),
+        ('yes_no', 'Yes / No'),
+        ('true_false', 'True / False'),
+        ('essay', 'Essay'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    interactive_video = models.ForeignKey(
+        InteractiveVideo,
+        on_delete=models.CASCADE,
+        related_name='events',
+    )
+
+    event_type = models.CharField(max_length=20, choices=EVENT_TYPES)
+    timestamp_seconds = models.PositiveIntegerField()
+    title = models.CharField(max_length=255, blank=True)
+
+    # Generic content fields (BlockNote JSON strings)
+    prompt = models.TextField(blank=True)
+    explanation = models.TextField(blank=True)
+
+    # Multiple choice options
+    options = models.JSONField(null=True, blank=True)
+    correct_option_index = models.IntegerField(null=True, blank=True)
+
+    # Yes/No-specific labels & feedback
+    yes_label = models.CharField(max_length=50, blank=True)
+    no_label = models.CharField(max_length=50, blank=True)
+    explanation_yes = models.TextField(blank=True)
+    explanation_no = models.TextField(blank=True)
+
+    # True/False flag
+    correct_answer = models.BooleanField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['timestamp_seconds', 'id']
+
+    def __str__(self) -> str:
+        return f"{self.event_type} at {self.timestamp_seconds}s for video {self.interactive_video_id}"
+
