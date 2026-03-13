@@ -743,6 +743,10 @@ class TutorXLessonContentView(APIView):
 
         # --- Interactive video handling (optional, backwards compatible) ---
         interactive_video_raw = request.data.get('interactive_video')
+        # Debug logging to trace payload from frontend
+        print("TutorXLessonContentView.put interactive_video_raw:", interactive_video_raw)
+        print("TutorXLessonContentView.put interactive_video_file:", request.FILES.get('interactive_video_file'))
+        print("TutorXLessonContentView.put data keys:", list(request.data.keys()))
         interactive_video_data = None
         if interactive_video_raw:
             try:
@@ -790,20 +794,49 @@ class TutorXLessonContentView(APIView):
                 else []
             )
             for ev in events_payload or []:
+                # Frontend may send 'type' (camelCase) or 'event_type' (from re-sent API response).
+                event_type = ev.get('type') or ev.get('event_type')
+                if not event_type:
+                    logger.warning(
+                        "TutorX interactive event missing type/event_type, skipping: %s",
+                        ev.get('id'),
+                    )
+                    continue
+
+                # Default mapping (true/false, essay, yes/no, or future types).
+                # Accept both camelCase and snake_case so re-sent API payloads work.
+                prompt = ev.get('prompt') or ev.get('question', '')
+                explanation = ev.get('explanation', '')
+                options = ev.get('options')
+                correct_option_index = ev.get('correctOptionIndex')
+
+                # For multiple choice ('pop_quiz'), the frontend currently nests data
+                # under a single-element `questions` array.
+                if event_type == 'pop_quiz' and ev.get('questions'):
+                    first_q = (ev.get('questions') or [])[0] or {}
+                    prompt = (
+                        first_q.get('prompt')
+                        or first_q.get('question', '')
+                        or prompt
+                    )
+                    explanation = first_q.get('explanation', '') or explanation
+                    options = first_q.get('options', options)
+                    correct_option_index = first_q.get('correctOptionIndex', correct_option_index)
+
                 InteractiveEvent.objects.create(
                     interactive_video=interactive_video_obj,
-                    event_type=ev.get('type'),
-                    timestamp_seconds=ev.get('timestampSeconds', 0),
+                    event_type=event_type,
+                    timestamp_seconds=ev.get('timestampSeconds') or ev.get('timestamp_seconds', 0),
                     title=ev.get('title', ''),
-                    prompt=ev.get('prompt', ''),
-                    explanation=ev.get('explanation', ''),
-                    options=ev.get('options'),
-                    correct_option_index=ev.get('correctOptionIndex'),
-                    yes_label=ev.get('yesLabel', ''),
-                    no_label=ev.get('noLabel', ''),
-                    explanation_yes=ev.get('explanationYes', ''),
-                    explanation_no=ev.get('explanationNo', ''),
-                    correct_answer=ev.get('correctAnswer'),
+                    prompt=prompt,
+                    explanation=explanation,
+                    options=options,
+                    correct_option_index=correct_option_index if correct_option_index is not None else ev.get('correct_option_index'),
+                    yes_label=ev.get('yesLabel') or ev.get('yes_label', ''),
+                    no_label=ev.get('noLabel') or ev.get('no_label', ''),
+                    explanation_yes=ev.get('explanationYes') or ev.get('explanation_yes', ''),
+                    explanation_no=ev.get('explanationNo') or ev.get('explanation_no', ''),
+                    correct_answer=ev.get('correctAnswer') if ev.get('correctAnswer') is not None else ev.get('correct_answer'),
                 )
 
         from .services.lesson_chat import invalidate_lesson_chat_cache
