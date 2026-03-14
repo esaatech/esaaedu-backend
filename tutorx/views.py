@@ -684,6 +684,8 @@ class TutorXLessonContentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         content_raw = request.data.get('content') or request.POST.get('content', '[]')
+        if content_raw is None or (isinstance(content_raw, str) and not content_raw.strip()):
+            content_raw = '[]'
         if isinstance(content_raw, list):
             content_raw = json.dumps(content_raw)
         deleted_raw = request.data.get('deleted_image_urls') or request.POST.get('deleted_image_urls', '[]')
@@ -743,10 +745,6 @@ class TutorXLessonContentView(APIView):
 
         # --- Interactive video handling (optional, backwards compatible) ---
         interactive_video_raw = request.data.get('interactive_video')
-        # Debug logging to trace payload from frontend
-        print("TutorXLessonContentView.put interactive_video_raw:", interactive_video_raw)
-        print("TutorXLessonContentView.put interactive_video_file:", request.FILES.get('interactive_video_file'))
-        print("TutorXLessonContentView.put data keys:", list(request.data.keys()))
         interactive_video_data = None
         if interactive_video_raw:
             try:
@@ -769,12 +767,35 @@ class TutorXLessonContentView(APIView):
                 lesson=lesson
             )
 
+            # If no new file and payload says no video (video_source 'none'), remove existing video and delete from GCS.
+            video_source = (interactive_video_data or {}).get('video_source') if interactive_video_data else None
+            if not interactive_video_file and video_source == 'none':
+                old_av = interactive_video_obj.audio_video_material
+                if old_av:
+                    old_av.delete()
+                    interactive_video_obj.audio_video_material = None
+                    interactive_video_obj.save(update_fields=['audio_video_material'])
+
             if interactive_video_file:
+                # Two-step replace: delete old material (and its GCS files) first, then create new one.
+                # Reusing the same row + delete_hls_from_gcs in the helper was not removing old GCS; material.delete() does.
+                old_av = None
+                if getattr(interactive_video_obj, "audio_video_material_id", None):
+                    try:
+                        old_av = AudioVideoMaterial.objects.get(
+                            pk=interactive_video_obj.audio_video_material_id
+                        )
+                    except AudioVideoMaterial.DoesNotExist:
+                        pass
+                if old_av:
+                    old_av.delete()
+                    interactive_video_obj.audio_video_material = None
+                    interactive_video_obj.save(update_fields=['audio_video_material'])
                 try:
                     av_material = create_audio_video_material_for_tutorx(
                         file=interactive_video_file,
                         uploaded_by=request.user,
-                        existing_material=interactive_video_obj.audio_video_material,
+                        existing_material=None,
                     )
                 except (ValueError, HLSConversionError, HLSUploadError) as e:
                     return Response(
