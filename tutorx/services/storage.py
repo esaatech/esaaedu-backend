@@ -107,6 +107,51 @@ def _collect_image_urls_from_blocks(blocks: list) -> list[str]:
     return urls
 
 
+def collect_image_urls_from_blocknote_string(content: str) -> list[str]:
+    """
+    Parse a BlockNote JSON string and return all image URLs (GCS) found in blocks.
+    Used for interactive event prompt/explanation so we can diff and delete removed images.
+    Returns empty list if content is not valid JSON or not a list of blocks.
+    """
+    if not content or not isinstance(content, str) or not content.strip():
+        return []
+    stripped = content.strip()
+    if not stripped.startswith("["):
+        return []
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return _collect_image_urls_from_blocks(data)
+
+
+def collect_image_urls_from_event_payload(ev: dict) -> list[str]:
+    """
+    Collect all image URLs from an interactive event payload (prompt, explanation, etc.).
+    For pop_quiz we only use questions[0] for prompt/explanation so we don't double-count
+    stale top-level prompt (which can still contain removed images and would prevent GCS delete).
+    """
+    urls = []
+    event_type = ev.get("type") or ev.get("event_type")
+    is_pop_quiz = event_type == "pop_quiz"
+
+    if is_pop_quiz and ev.get("questions"):
+        first_q = (ev.get("questions") or [])[0]
+        if isinstance(first_q, dict):
+            for field in ("prompt", "question", "explanation"):
+                val = first_q.get(field)
+                if isinstance(val, str):
+                    urls.extend(collect_image_urls_from_blocknote_string(val))
+    else:
+        for field in ("prompt", "explanation", "explanationYes", "explanation_yes", "explanationNo", "explanation_no"):
+            val = ev.get(field)
+            if isinstance(val, str):
+                urls.extend(collect_image_urls_from_blocknote_string(val))
+    return urls
+
+
 def delete_tutorx_images_from_content(tutorx_content: str) -> None:
     """
     Parse TutorX BlockNote content JSON and delete every image file from GCS.

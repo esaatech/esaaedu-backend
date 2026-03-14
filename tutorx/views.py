@@ -12,7 +12,12 @@ import logging
 
 from .models import TutorXBlock, TutorXBlockActionConfig, InteractiveVideo, InteractiveEvent
 from .services.ai import TutorXAIService
-from .services.storage import delete_image_and_thumbnail, file_path_from_tutorx_image_url
+from .services.storage import (
+    delete_image_and_thumbnail,
+    file_path_from_tutorx_image_url,
+    collect_image_urls_from_blocknote_string,
+    collect_image_urls_from_event_payload,
+)
 from .serializers import (
     BlockActionRequestSerializer,
     ExplainMoreResponseSerializer,
@@ -805,15 +810,41 @@ class TutorXLessonContentView(APIView):
                 interactive_video_obj.audio_video_material = av_material
                 interactive_video_obj.save(update_fields=['audio_video_material'])
 
-            InteractiveEvent.objects.filter(
-                interactive_video=interactive_video_obj
-            ).delete()
-
             events_payload = (
                 (interactive_video_data or {}).get('events')
                 if interactive_video_data
                 else []
             )
+
+            # Delete from GCS any images that were in event content but are no longer (remove or replace).
+            existing_events = list(
+                InteractiveEvent.objects.filter(interactive_video=interactive_video_obj)
+            )
+            old_urls = set()
+            for ex in existing_events:
+                for field in ("prompt", "explanation", "explanation_yes", "explanation_no"):
+                    val = getattr(ex, field, None)
+                    if isinstance(val, str):
+                        old_urls.update(collect_image_urls_from_blocknote_string(val))
+            new_urls = set()
+            for ev in events_payload or []:
+                new_urls.update(collect_image_urls_from_event_payload(ev))
+            for image_url in old_urls - new_urls:
+                file_path = file_path_from_tutorx_image_url(image_url)
+                if file_path:
+                    try:
+                        delete_image_and_thumbnail(file_path)
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to delete event image from GCS %s: %s",
+                            image_url[:80] if image_url else "",
+                            e,
+                        )
+
+            InteractiveEvent.objects.filter(
+                interactive_video=interactive_video_obj
+            ).delete()
+
             for ev in events_payload or []:
                 # Frontend may send 'type' (camelCase) or 'event_type' (from re-sent API response).
                 event_type = ev.get('type') or ev.get('event_type')
