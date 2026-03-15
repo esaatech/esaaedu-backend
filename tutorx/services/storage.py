@@ -145,7 +145,7 @@ def collect_image_urls_from_event_payload(ev: dict) -> list[str]:
                 if isinstance(val, str):
                     urls.extend(collect_image_urls_from_blocknote_string(val))
     else:
-        for field in ("prompt", "explanation", "explanationYes", "explanation_yes", "explanationNo", "explanation_no"):
+        for field in ("prompt", "explanation", "explanationYes", "explanation_yes", "explanationNo", "explanation_no", "model_answer", "modelAnswer"):
             val = ev.get(field)
             if isinstance(val, str):
                 urls.extend(collect_image_urls_from_blocknote_string(val))

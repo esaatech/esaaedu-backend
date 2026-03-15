@@ -52,7 +52,7 @@ def _delete_interactive_video_assets(interactive_video):
                 e,
             )
     for event in InteractiveEvent.objects.filter(interactive_video=interactive_video):
-        for field in ("prompt", "explanation", "explanation_yes", "explanation_no"):
+        for field in ("prompt", "explanation", "explanation_yes", "explanation_no", "model_answer"):
             val = getattr(event, field, None)
             if isinstance(val, str):
                 for image_url in collect_image_urls_from_blocknote_string(val):

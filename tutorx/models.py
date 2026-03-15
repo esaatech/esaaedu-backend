@@ -398,6 +398,9 @@ class InteractiveEvent(models.Model):
     # True/False flag
     correct_answer = models.BooleanField(null=True, blank=True)
 
+    # Essay: model answer / feedback shown to student after they submit
+    model_answer = models.TextField(blank=True)
+
     class Meta:
         ordering = ['timestamp_seconds', 'id']
 

@@ -195,6 +195,7 @@ class InteractiveEventSerializer(serializers.ModelSerializer):
             'explanation_yes',
             'explanation_no',
             'correct_answer',
+            'model_answer',
         ]
 
 

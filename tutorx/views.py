@@ -28,6 +28,8 @@ from .serializers import (
     DrawExplainerImageResponseSerializer,
     StudentAskRequestSerializer,
     StudentAskResponseSerializer,
+    InteractiveEventSerializer,
+    InteractiveVideoSerializer,
 )
 from settings.models import UserTutorXInstruction
 from courses.models import Lesson, AudioVideoMaterial
@@ -708,21 +710,33 @@ class TutorXLessonContentView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         uploaded_urls = {}
+        event_uploaded_urls = {}  # (event_index, field, block_id) -> url
         for key in list(request.FILES.keys()):
-            if key.startswith('image_'):
-                block_id = key[6:]
-                if not block_id:
-                    continue
-                uploaded_file = request.FILES[key]
-                ext = (uploaded_file.name or '').split('.')[-1].lower() if '.' in (uploaded_file.name or '') else ''
-                try:
-                    if ext in TUTORX_VIDEO_EXTENSIONS:
-                        url = upload_tutorx_video_file_to_gcs(uploaded_file)
-                    else:
-                        url = upload_tutorx_image_file_to_gcs(uploaded_file)
-                    uploaded_urls[block_id] = url
-                except (ValueError, RuntimeError) as e:
-                    return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            if not key.startswith('image_'):
+                continue
+            suffix = key[6:]  # after "image_"
+            uploaded_file = request.FILES[key]
+            ext = (uploaded_file.name or '').split('.')[-1].lower() if '.' in (uploaded_file.name or '') else ''
+            try:
+                if ext in TUTORX_VIDEO_EXTENSIONS:
+                    url = upload_tutorx_video_file_to_gcs(uploaded_file)
+                else:
+                    url = upload_tutorx_image_file_to_gcs(uploaded_file)
+            except (ValueError, RuntimeError) as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            if suffix.startswith('ev_'):
+                parts = suffix[3:].split('_')  # after "ev_": e.g. "0_prompt_abc123" -> ["0","prompt","abc123"]
+                if len(parts) >= 3:
+                    try:
+                        event_index = int(parts[0])
+                        block_id = parts[-1]
+                        field = '_'.join(parts[1:-1])
+                        event_uploaded_urls[(event_index, field, block_id)] = url
+                    except (ValueError, IndexError):
+                        pass
+            else:
+                if suffix:
+                    uploaded_urls[suffix] = url
         for image_url in deleted_image_urls:
             file_path = file_path_from_tutorx_image_url(image_url)
             if file_path:
@@ -816,13 +830,74 @@ class TutorXLessonContentView(APIView):
                 else []
             )
 
+            def inject_urls_into_blocknote_string(field_json, block_id_to_url):
+                if not field_json or not isinstance(field_json, str):
+                    return field_json
+                try:
+                    blocks = json.loads(field_json)
+                except (json.JSONDecodeError, TypeError):
+                    return field_json
+                if not isinstance(blocks, list):
+                    return field_json
+
+                def walk(block_list):
+                    for b in block_list:
+                        if b.get('type') in ('image', 'video', 'audio') and isinstance(b.get('props'), dict):
+                            url_val = b['props'].get('url') or ''
+                            if isinstance(url_val, str) and url_val.startswith(placeholder_prefix):
+                                block_id = b.get('id')
+                                if block_id and str(block_id) in block_id_to_url:
+                                    b['props']['url'] = block_id_to_url[str(block_id)]
+                        if isinstance(b.get('children'), list):
+                            walk(b['children'])
+
+                walk(blocks)
+                return json.dumps(blocks)
+
+            for i, ev in enumerate(events_payload or []):
+                event_type = ev.get('type') or ev.get('event_type')
+                if event_type == 'pop_quiz' and ev.get('questions'):
+                    q0 = (ev.get('questions') or [{}])[0] if ev.get('questions') else {}
+                    if isinstance(q0, dict):
+                        block_id_to_url_prompt = {
+                            bid: u for (ei, f, bid), u in event_uploaded_urls.items()
+                            if ei == i and f == 'q0_prompt'
+                        }
+                        block_id_to_url_expl = {
+                            bid: u for (ei, f, bid), u in event_uploaded_urls.items()
+                            if ei == i and f == 'q0_explanation'
+                        }
+                        if block_id_to_url_prompt or block_id_to_url_expl:
+                            q0 = dict(q0)
+                            if block_id_to_url_prompt and q0.get('prompt'):
+                                q0['prompt'] = inject_urls_into_blocknote_string(q0['prompt'], block_id_to_url_prompt)
+                            if block_id_to_url_expl and q0.get('explanation'):
+                                q0['explanation'] = inject_urls_into_blocknote_string(q0['explanation'], block_id_to_url_expl)
+                            ev['questions'] = [q0] + list((ev.get('questions') or [])[1:])
+                else:
+                    for field_key, field_name in [
+                        ('prompt', 'prompt'),
+                        ('question', 'question'),
+                        ('explanation', 'explanation'),
+                        ('explanationYes', 'explanation_yes'),
+                        ('explanationNo', 'explanation_no'),
+                        ('modelAnswer', 'model_answer'),
+                    ]:
+                        block_id_to_url = {
+                            bid: event_uploaded_urls[(i, field_name, bid)]
+                            for (ei, f, bid), u in event_uploaded_urls.items()
+                            if ei == i and f == field_name
+                        }
+                        if block_id_to_url and ev.get(field_key):
+                            ev[field_key] = inject_urls_into_blocknote_string(ev[field_key], block_id_to_url)
+
             # Delete from GCS any images that were in event content but are no longer (remove or replace).
             existing_events = list(
                 InteractiveEvent.objects.filter(interactive_video=interactive_video_obj)
             )
             old_urls = set()
             for ex in existing_events:
-                for field in ("prompt", "explanation", "explanation_yes", "explanation_no"):
+                for field in ("prompt", "explanation", "explanation_yes", "explanation_no", "model_answer"):
                     val = getattr(ex, field, None)
                     if isinstance(val, str):
                         old_urls.update(collect_image_urls_from_blocknote_string(val))
@@ -889,6 +964,7 @@ class TutorXLessonContentView(APIView):
                     explanation_yes=ev.get('explanationYes') or ev.get('explanation_yes', ''),
                     explanation_no=ev.get('explanationNo') or ev.get('explanation_no', ''),
                     correct_answer=ev.get('correctAnswer') if ev.get('correctAnswer') is not None else ev.get('correct_answer'),
+                    model_answer=ev.get('modelAnswer') or ev.get('model_answer', ''),
                 )
 
         from .services.lesson_chat import invalidate_lesson_chat_cache
@@ -904,6 +980,399 @@ class TutorXLessonContentView(APIView):
             ).data
 
         return Response(response_data, status=status.HTTP_200_OK)
+
+
+class TutorXLessonVideoView(APIView):
+    """
+    Manage the interactive video (HLS) for a TutorX lesson.
+
+    - GET: return current interactive video id and video_url (if any).
+    - PUT: upload/replace/remove interactive video without touching content or events.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_lesson_and_check_access(self, request, lesson_id, write: bool):
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+        if lesson.type != 'tutorx':
+            return None, Response(
+                {'error': 'This lesson is not a TutorX lesson'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        is_teacher = lesson.course.teacher == request.user
+        if write:
+            if not is_teacher:
+                return None, Response(
+                    {'error': 'Only the course teacher can update the interactive video'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        else:
+            if not is_teacher:
+                is_student = False
+                if hasattr(request.user, 'student_profile'):
+                    from student.models import EnrolledCourse
+
+                    is_student = EnrolledCourse.objects.filter(
+                        student_profile=request.user.student_profile,
+                        course=lesson.course,
+                        status__in=['active', 'completed'],
+                    ).exists()
+                if not is_student:
+                    return None, Response(
+                        {
+                            'error': (
+                                'Only the course teacher or enrolled students can '
+                                'access this lesson video'
+                            )
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+        return lesson, None
+
+    def get(self, request, lesson_id):
+        lesson, error = self._get_lesson_and_check_access(
+            request, lesson_id, write=False
+        )
+        if error is not None:
+            return error
+
+        data = {
+            'interactive_video_id': None,
+            'video_url': None,
+        }
+        if hasattr(lesson, 'interactive_video'):
+            iv = lesson.interactive_video
+            data['interactive_video_id'] = str(iv.id)
+            if iv.audio_video_material:
+                data['video_url'] = iv.audio_video_material.file_url
+        return Response(data, status=status.HTTP_200_OK)
+
+    @transaction.atomic
+    def put(self, request, lesson_id):
+        lesson, error = self._get_lesson_and_check_access(
+            request, lesson_id, write=True
+        )
+        if error is not None:
+            return error
+
+        interactive_video, _created = InteractiveVideo.objects.get_or_create(
+            lesson=lesson
+        )
+
+        video_source = (request.data.get('video_source') or '').strip() or 'existing'
+        video_file = request.FILES.get('video_file')
+
+        # Remove video
+        if video_source == 'none':
+            old_av = interactive_video.audio_video_material
+            if old_av:
+                try:
+                    old_av.delete()
+                except Exception as e:
+                    logger.warning(
+                        "Failed to delete AudioVideoMaterial for interactive_video %s: %s",
+                        interactive_video.id,
+                        e,
+                    )
+                interactive_video.audio_video_material = None
+                interactive_video.save(update_fields=['audio_video_material'])
+
+        # Upload / replace video
+        elif video_source == 'new_upload' and video_file:
+            old_av = interactive_video.audio_video_material
+            if old_av:
+                try:
+                    old_av.delete()
+                except Exception as e:
+                    logger.warning(
+                        "Failed to delete old AudioVideoMaterial for interactive_video %s: %s",
+                        interactive_video.id,
+                        e,
+                    )
+                interactive_video.audio_video_material = None
+                interactive_video.save(update_fields=['audio_video_material'])
+            try:
+                av_material = create_audio_video_material_for_tutorx(
+                    file=video_file,
+                    uploaded_by=request.user,
+                    existing_material=None,
+                )
+            except (ValueError, HLSConversionError, HLSUploadError) as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+            interactive_video.audio_video_material = av_material
+            interactive_video.save(update_fields=['audio_video_material'])
+
+        # else: video_source == 'existing' or no recognized change -> no-op
+
+        data = {
+            'interactive_video_id': str(interactive_video.id),
+            'video_url': None,
+        }
+        if interactive_video.audio_video_material:
+            data['video_url'] = interactive_video.audio_video_material.file_url
+
+        return Response(data, status=status.HTTP_200_OK)
+
+
+class TutorXLessonEventsView(APIView):
+    """
+    GET: Return interactive events for the lesson's interactive video.
+    PUT: Replace all events (JSON body { "events": [...] }). Creates InteractiveVideo if needed.
+    Same permission as video: teacher can write; teacher or enrolled student can read.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_lesson_and_check_access(self, request, lesson_id, write: bool):
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+        if lesson.type != 'tutorx':
+            return None, Response(
+                {'error': 'This lesson is not a TutorX lesson'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        is_teacher = lesson.course.teacher == request.user
+        if write:
+            if not is_teacher:
+                return None, Response(
+                    {'error': 'Only the course teacher can update interactive events'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        else:
+            if not is_teacher:
+                is_student = False
+                if hasattr(request.user, 'student_profile'):
+                    from student.models import EnrolledCourse
+                    is_student = EnrolledCourse.objects.filter(
+                        student_profile=request.user.student_profile,
+                        course=lesson.course,
+                        status__in=['active', 'completed'],
+                    ).exists()
+                if not is_student:
+                    return None, Response(
+                        {
+                            'error': (
+                                'Only the course teacher or enrolled students can '
+                                'access this lesson\'s events'
+                            )
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+        return lesson, None
+
+    def get(self, request, lesson_id):
+        lesson, error = self._get_lesson_and_check_access(
+            request, lesson_id, write=False
+        )
+        if error is not None:
+            return error
+        events_data = []
+        if hasattr(lesson, 'interactive_video'):
+            iv = lesson.interactive_video
+            events_qs = InteractiveEvent.objects.filter(
+                interactive_video=iv
+            ).order_by('timestamp_seconds', 'id')
+            events_data = InteractiveEventSerializer(events_qs, many=True).data
+        return Response({'events': events_data}, status=status.HTTP_200_OK)
+
+    @transaction.atomic
+    def put(self, request, lesson_id):
+        lesson, error = self._get_lesson_and_check_access(
+            request, lesson_id, write=True
+        )
+        if error is not None:
+            return error
+
+        # Parse events: JSON body or multipart (events in POST as JSON string)
+        try:
+            body = request.data if getattr(request, 'data', None) else {}
+            if not body and request.body and not request.FILES:
+                body = json.loads(request.body)
+            events_raw = (body.get('events') if body else None) or request.POST.get('events')
+            if events_raw is None:
+                events_raw = []
+            if isinstance(events_raw, str):
+                events_raw = json.loads(events_raw)
+            if not isinstance(events_raw, list):
+                return Response(
+                    {'error': 'events must be an array'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            events_payload = events_raw
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
+            return Response(
+                {'error': f'Invalid JSON: {e}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Multipart: upload image_ev_<blockId> files and build block_id -> url
+        block_id_to_url = {}
+        for key in list(request.FILES.keys()):
+            if not key.startswith('image_ev_'):
+                continue
+            block_id = key[9:]  # after "image_ev_"
+            if not block_id:
+                continue
+            uploaded_file = request.FILES[key]
+            try:
+                url = upload_tutorx_image_file_to_gcs(uploaded_file)
+                block_id_to_url[block_id] = url
+            except (ValueError, RuntimeError) as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        def inject_urls_into_blocknote_string(field_json, id_to_url):
+            if not field_json or not isinstance(field_json, str):
+                return field_json
+            try:
+                blocks = json.loads(field_json)
+            except (json.JSONDecodeError, TypeError):
+                return field_json
+            if not isinstance(blocks, list):
+                return field_json
+
+            def walk(block_list):
+                for b in block_list:
+                    if b.get('type') in ('image', 'video', 'audio') and isinstance(b.get('props'), dict):
+                        url_val = b['props'].get('url') or ''
+                        if isinstance(url_val, str) and url_val.startswith(PENDING_IMAGE_PREFIX):
+                            block_id = url_val[len(PENDING_IMAGE_PREFIX):]
+                            if block_id and block_id in id_to_url:
+                                b['props']['url'] = id_to_url[block_id]
+                    if isinstance(b.get('children'), list):
+                        walk(b['children'])
+
+            walk(blocks)
+            return json.dumps(blocks)
+
+        # Replace __pending__<blockId> in event content fields
+        for ev in events_payload:
+            if ev.get('questions'):
+                for i, q in enumerate(ev.get('questions') or []):
+                    if isinstance(q, dict):
+                        if q.get('prompt'):
+                            q['prompt'] = inject_urls_into_blocknote_string(q['prompt'], block_id_to_url)
+                        if q.get('explanation'):
+                            q['explanation'] = inject_urls_into_blocknote_string(q['explanation'], block_id_to_url)
+            for field_key in ('prompt', 'question', 'explanation', 'explanationYes', 'explanation_yes',
+                              'explanationNo', 'explanation_no', 'modelAnswer', 'model_answer'):
+                if ev.get(field_key):
+                    ev[field_key] = inject_urls_into_blocknote_string(ev[field_key], block_id_to_url)
+
+        # Delete from GCS any URLs in deleted_image_urls (multipart)
+        deleted_raw = body.get('deleted_image_urls') if body else None
+        if deleted_raw is None and request.POST.get('deleted_image_urls'):
+            try:
+                deleted_raw = json.loads(request.POST.get('deleted_image_urls'))
+            except (json.JSONDecodeError, TypeError):
+                deleted_raw = []
+        if isinstance(deleted_raw, list):
+            for image_url in deleted_raw:
+                if not isinstance(image_url, str):
+                    continue
+                file_path = file_path_from_tutorx_image_url(image_url)
+                if file_path:
+                    try:
+                        delete_image_and_thumbnail(file_path)
+                    except Exception as e:
+                        logger.warning(
+                            'Failed to delete event image from GCS %s: %s',
+                            image_url[:80] if image_url else '',
+                            e,
+                        )
+
+        interactive_video_obj, _ = InteractiveVideo.objects.get_or_create(
+            lesson=lesson
+        )
+
+        # Collect old event image URLs for GCS cleanup
+        existing_events = list(
+            InteractiveEvent.objects.filter(interactive_video=interactive_video_obj)
+        )
+        old_urls = set()
+        for ex in existing_events:
+            for field in (
+                'prompt', 'explanation', 'explanation_yes', 'explanation_no',
+                'model_answer',
+            ):
+                val = getattr(ex, field, None)
+                if isinstance(val, str):
+                    old_urls.update(
+                        collect_image_urls_from_blocknote_string(val)
+                    )
+        new_urls = set()
+        for ev in events_payload:
+            new_urls.update(collect_image_urls_from_event_payload(ev))
+        for image_url in old_urls - new_urls:
+            file_path = file_path_from_tutorx_image_url(image_url)
+            if file_path:
+                try:
+                    delete_image_and_thumbnail(file_path)
+                except Exception as e:
+                    logger.warning(
+                        'Failed to delete event image from GCS %s: %s',
+                        (image_url[:80] if image_url else ''),
+                        e,
+                    )
+
+        InteractiveEvent.objects.filter(
+            interactive_video=interactive_video_obj
+        ).delete()
+
+        for ev in events_payload:
+            event_type = ev.get('type') or ev.get('event_type')
+            if not event_type:
+                logger.warning(
+                    'TutorX interactive event missing type/event_type, skipping: %s',
+                    ev.get('id'),
+                )
+                continue
+            prompt = ev.get('prompt') or ev.get('question', '')
+            explanation = ev.get('explanation', '')
+            options = ev.get('options')
+            correct_option_index = ev.get('correctOptionIndex')
+            if event_type == 'pop_quiz' and ev.get('questions'):
+                first_q = (ev.get('questions') or [])[0] or {}
+                prompt = (
+                    first_q.get('prompt')
+                    or first_q.get('question', '')
+                    or prompt
+                )
+                explanation = first_q.get('explanation', '') or explanation
+                options = first_q.get('options', options)
+                correct_option_index = first_q.get(
+                    'correctOptionIndex', first_q.get('correct_option_index')
+                )
+            InteractiveEvent.objects.create(
+                interactive_video=interactive_video_obj,
+                event_type=event_type,
+                timestamp_seconds=ev.get('timestampSeconds') or ev.get('timestamp_seconds', 0),
+                title=ev.get('title', ''),
+                prompt=prompt,
+                explanation=explanation,
+                options=options,
+                correct_option_index=(
+                    correct_option_index
+                    if correct_option_index is not None
+                    else ev.get('correct_option_index')
+                ),
+                yes_label=ev.get('yesLabel') or ev.get('yes_label', ''),
+                no_label=ev.get('noLabel') or ev.get('no_label', ''),
+                explanation_yes=ev.get('explanationYes') or ev.get('explanation_yes', ''),
+                explanation_no=ev.get('explanationNo') or ev.get('explanation_no', ''),
+                correct_answer=(
+                    ev.get('correctAnswer')
+                    if ev.get('correctAnswer') is not None
+                    else ev.get('correct_answer')
+                ),
+                model_answer=ev.get('modelAnswer') or ev.get('model_answer', ''),
+            )
+
+        events_qs = InteractiveEvent.objects.filter(
+            interactive_video=interactive_video_obj
+        ).order_by('timestamp_seconds', 'id')
+        events_data = InteractiveEventSerializer(events_qs, many=True).data
+        return Response({'events': events_data}, status=status.HTTP_200_OK)
 
 
 class TutorXLessonAskView(APIView):

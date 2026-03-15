@@ -20,18 +20,35 @@ TutorX lesson body is stored in `Lesson.tutorx_content` as a single BlockNote JS
 
 ### GET /api/tutorx/lessons/{lesson_id}/content/
 
-Return the lesson's BlockNote content as a JSON string.
+Return the lesson's BlockNote content and, when present, the interactive video config (video URL + events) for the student viewer.
 
 **Path Parameters**: `lesson_id` (UUID)
 
 **Response** (200 OK):
 ```json
 {
-  "content": "[{\"id\":\"...\",\"type\":\"paragraph\",\"content\":[],\"props\":{}},...]"
+  "content": "[{\"id\":\"...\",\"type\":\"paragraph\",\"content\":[],\"props\":{}},...]",
+  "interactive_video": {
+    "id": "uuid",
+    "video_url": "https://.../playlist.m3u8",
+    "events": [
+      {
+        "id": "uuid",
+        "event_type": "pop_quiz",
+        "timestamp_seconds": 30,
+        "title": "Quick check",
+        "prompt": "...",
+        "explanation": "...",
+        "options": ["A", "B", "C", "D"],
+        "correct_option_index": 0
+      }
+    ]
+  }
 }
 ```
 
-Empty or new lessons may return `"content": ""`. Frontend treats empty string as empty document.
+- `content`: BlockNote JSON string. Empty or new lessons may return `"content": ""`; frontend treats empty as empty document.
+- `interactive_video`: Optional. Present when the lesson has an interactive video (one-to-one with lesson). `video_url` is the HLS playlist URL; `events` are timestamped checkpoints (pop_quiz, yes_no, true_false, essay). Used by the student viewer to show the video and pause at events.
 
 **Permission**: Course teacher or enrolled student.
 
@@ -39,7 +56,7 @@ Empty or new lessons may return `"content": ""`. Frontend treats empty string as
 
 ### PUT /api/tutorx/lessons/{lesson_id}/content/
 
-Save BlockNote JSON to `lesson.tutorx_content`. Used by the frontend for manual save with images in one request.
+Save BlockNote JSON to `lesson.tutorx_content` and optionally update interactive video (video file + events). Used by the frontend for manual save with images and interactive video in one request.
 
 **Path Parameters**: `lesson_id` (UUID)
 
@@ -49,21 +66,27 @@ Save BlockNote JSON to `lesson.tutorx_content`. Used by the frontend for manual 
 
 | Part name | Type | Description |
 |-----------|------|-------------|
-| `content` | string (JSON) | Full BlockNote document (array of blocks). New image blocks must use `props.url` = `"__pending__<blockId>"` so the backend can match with file parts. |
-| `deleted_image_urls` | string (JSON) | Array of GCS URLs to delete (images the user removed). |
+| `content` | string (JSON) | Full BlockNote document (array of blocks). New image blocks must use `props.url` = `"__pending__<blockId>"` so the backend can match with file parts. Empty or whitespace is normalized to `"[]"`. |
+| `deleted_image_urls` | string (JSON) | Array of GCS URLs to delete (images the user removed from the main content). |
 | `image_<blockId>` | file | One file per new image; key = block id (e.g. `image_abc123`). |
+| `interactive_video` | string (JSON) | Optional. Payload: `{ "video_source": "new_upload" \| "existing" \| "none", "existing_video_url": "<url or null>", "events": [...] }`. Sent on every save when the editor has interactive video state so the backend can persist "remove video" or event updates. |
+| `interactive_video_file` | file | Optional. New video file when `video_source` is `new_upload`. Converted to HLS and stored; previous video is deleted (two-step: delete old AudioVideoMaterial then create new). |
 
 **Backend processing**:
-1. Upload each `image_<blockId>` file to GCS (folder `tutorx-images`), get URL.
-2. Parse `content` JSON; in image blocks, replace each `__pending__<blockId>` in `props.url` with the corresponding uploaded URL.
-3. Delete from GCS every URL in `deleted_image_urls`.
-4. Save the final JSON string to `lesson.tutorx_content`.
-5. Return `{ "content": "<saved JSON string>" }`.
+1. Normalize `content`: if empty or whitespace, use `"[]"` before parsing. Parse JSON; in image blocks, replace each `__pending__<blockId>` with the uploaded URL for `image_<blockId>`.
+2. Delete from GCS every URL in `deleted_image_urls` (main content images).
+3. Save the final JSON to `lesson.tutorx_content`.
+4. **Interactive video** (if `interactive_video` or `interactive_video_file` present):
+   - If `video_source === "none"` and no new file: delete existing `AudioVideoMaterial` (and its HLS assets in GCS) and clear the lesson’s interactive video link.
+   - If new file: delete existing `AudioVideoMaterial` (so GCS is cleaned), then create a new one (HLS upload) and link it.
+   - Replace events from payload. **Event images**: collect image URLs from existing events’ prompt/explanation; collect from incoming payload; delete from GCS any URL that was in old content but not in new (removed or replaced images).
+5. Return `{ "content": "...", "interactive_video": { ... } }` when the lesson has an interactive video.
 
 **Response** (200 OK):
 ```json
 {
-  "content": "[{\"id\":\"...\",\"type\":\"paragraph\",...},...]"
+  "content": "[{\"id\":\"...\",\"type\":\"paragraph\",...},...]",
+  "interactive_video": { "id": "...", "video_url": "...", "events": [...] }
 }
 ```
 

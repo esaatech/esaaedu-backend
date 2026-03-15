@@ -227,14 +227,18 @@ When a student submits an assignment linked to a TutorX lesson, the student subm
 
 TutorX lesson body is stored as a single BlockNote JSON string in `Lesson.tutorx_content` (same pattern as book page content). The editor and viewer use the content API only; per-block CRUD endpoints have been removed.
 
-**GET** `/api/tutorx/lessons/<lesson_id>/content/` — Return `lesson.tutorx_content` (BlockNote JSON string). Permission: course teacher or enrolled student. Response: `{ "content": "..." }`.
+**GET** `/api/tutorx/lessons/<lesson_id>/content/` — Return `lesson.tutorx_content` (BlockNote JSON string) and optional `interactive_video` (video_url, events) when the lesson has an interactive video. Permission: course teacher or enrolled student. Response: `{ "content": "...", "interactive_video": { ... } }` (interactive_video omitted when none).
 
-**PUT** `/api/tutorx/lessons/<lesson_id>/content/` — Save BlockNote JSON to `lesson.tutorx_content`. Permission: course teacher only. Accepts **multipart** form data:
-- `content`: JSON string — full BlockNote document (array of blocks). New image blocks use `props.url` = `"__pending__<blockId>"` so the backend can match with file parts.
-- `deleted_image_urls`: JSON string — array of GCS URLs to delete (images the user removed).
+**PUT** `/api/tutorx/lessons/<lesson_id>/content/` — Save BlockNote JSON to `lesson.tutorx_content` and optionally update interactive video. Permission: course teacher only. Accepts **multipart** form data:
+- `content`: JSON string — full BlockNote document (array of blocks). Empty/whitespace normalized to `"[]"`. New image blocks use `props.url` = `"__pending__<blockId>"` so the backend can match with file parts.
+- `deleted_image_urls`: JSON string — array of GCS URLs to delete (images the user removed from main content).
 - `image_<blockId>`: one file per new image (key = block id).
+- `interactive_video`: JSON string — optional; `{ "video_source": "new_upload" | "existing" | "none", "existing_video_url", "events" }`. Sent when the editor has interactive video so backend can persist remove-video or event changes.
+- `interactive_video_file`: file — optional; new video when `video_source` is `new_upload`. Backend deletes old HLS then creates new (two-step replace).
 
-Backend processing: (1) Upload each `image_<blockId>` to GCS (`tutorx-images/`); (2) Parse `content` JSON and replace each `__pending__<blockId>` in image block `props.url` with the uploaded URL; (3) Delete from GCS every URL in `deleted_image_urls`; (4) Save the final JSON string to `lesson.tutorx_content`; (5) Return `{ "content": "..." }`. Single-request flow avoids orphaned images.
+Backend processing: (1) Upload each `image_<blockId>` to GCS (`tutorx-images/`); (2) Parse `content` JSON and replace each `__pending__<blockId>` in image block `props.url` with the uploaded URL; (3) Delete from GCS every URL in `deleted_image_urls`; (4) Save the final JSON to `lesson.tutorx_content`; (5) If interactive video payload present: apply remove-video (`video_source === "none"`), two-step video replace (delete old then create new), replace events, and delete from GCS any event image URLs that were removed or replaced; (6) Return `{ "content": "...", "interactive_video": { ... } }` when the lesson has an interactive video. Single-request flow avoids orphaned images and video assets.
+
+**Lesson delete cleanup**: When a TutorX lesson is deleted, a `pre_delete` signal (`tutorx/signals.py`) cleans up assets: BlockNote images in `tutorx_content`, the lesson’s interactive video HLS file (AudioVideoMaterial), and all event images (prompt/explanation/explanation_yes/explanation_no) so nothing is left in GCS.
 
 **POST** `/api/tutorx/images/upload/` — Upload a single image to GCS (`tutorx-images/`). Request: `multipart/form-data` with `image` (file). Used by clients that do not use the content PUT.
 
