@@ -11,13 +11,14 @@ ENV PORT=8080
 # Set work directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (ffmpeg required for HLS video conversion)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         postgresql-client \
         build-essential \
         libpq-dev \
         curl \
+        ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
