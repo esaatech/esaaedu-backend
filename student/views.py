@@ -3577,7 +3577,16 @@ def _submission_has_return_feedback(submission):
 
 
 def _attach_return_feedback_to_questions(questions_data, return_feedback):
-    """Add feedback and has_feedback to each question from return_feedback list. Returns new list."""
+    """
+    Add feedback and has_feedback (and optional per-question scores) to each question
+    from return_feedback list. Returns new list.
+
+    return_feedback items may include:
+      - question_id (required)
+      - feedback (string)
+      - points_earned (optional)
+      - points_possible (optional)
+    """
     if not return_feedback or not isinstance(return_feedback, list):
         return questions_data
     lookup = {}
@@ -3587,13 +3596,24 @@ def _attach_return_feedback_to_questions(questions_data, return_feedback):
         qid = item.get('question_id')
         if qid is None:
             continue
-        lookup[str(qid)] = item.get('feedback') or item.get('teacher_feedback') or ''
+        lookup[str(qid)] = {
+            'feedback': item.get('feedback') or item.get('teacher_feedback') or '',
+            'points_earned': item.get('points_earned'),
+            'points_possible': item.get('points_possible'),
+        }
     out = []
     for q in questions_data:
         q = dict(q)
-        fb = lookup.get(q.get('id') or '', '')
+        data = lookup.get(q.get('id') or '', {})
+        fb = data.get('feedback') or ''
         q['feedback'] = fb if fb else None
         q['has_feedback'] = bool(fb)
+
+        # Optional per-question scores for returned drafts (TutorX auto-grade)
+        if 'points_earned' in data and data.get('points_earned') is not None:
+            q['points_earned'] = data.get('points_earned')
+        if 'points_possible' in data and data.get('points_possible') is not None:
+            q['points_possible'] = data.get('points_possible')
         out.append(q)
     return out
 

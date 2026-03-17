@@ -250,22 +250,35 @@ def handle_assignment_submission(submission):
             print(f"[TutorX] update_assignment_performance failed: {e}")
         print(f"[TutorX] submission saved as GRADED submission_id={submission.id}")
     else:
-        # Phase 4: return for revision (same shape as teacher return); increment return count
+        # Phase 4: return for revision (same shape as teacher return, but keep per-question scores); increment return count
         submission.return_for_revision_count = return_count + 1
         print(f"[TutorX] applying RETURN FOR REVISION path submission_id={submission.id} return_for_revision_count={submission.return_for_revision_count}")
-        return_feedback = [
-            {"question_id": qid, "feedback": grade_by_qid.get(qid, {}).get("feedback") or ""}
-            for qid in grade_by_qid
-        ]
-        return_feedback = [x for x in return_feedback if x.get("feedback")]
+
+        # Build per-question feedback payload that also includes points_earned/points_possible
+        return_feedback = []
+        for qid, g in grade_by_qid.items():
+            feedback_text = g.get("feedback") or ""
+            if not feedback_text:
+                continue
+            return_feedback.append(
+                {
+                    "question_id": qid,
+                    "feedback": feedback_text,
+                    "points_earned": g.get("points_earned"),
+                    "points_possible": g.get("points_possible"),
+                }
+            )
         if not return_feedback:
             return_feedback = None
+
+        # Keep overall provisional score so students can see their total grade,
+        # but do not mark as graded yet.
         submission.status = "draft"
         submission.is_graded = False
         submission.is_teacher_draft = False
-        submission.points_earned = None
-        submission.points_possible = None
-        submission.percentage = None
+        submission.points_earned = Decimal(total_score)
+        submission.points_possible = Decimal(total_possible)
+        submission.percentage = round(Decimal(percentage), 2)
         submission.passed = False
         submission.graded_at = None
         submission.graded_by = None
@@ -274,9 +287,19 @@ def handle_assignment_submission(submission):
         submission.return_feedback = return_feedback
         print(f"[TutorX] saving submission as return for revision (update_fields) submission_id={submission.id}")
         submission.save(update_fields=[
-            "status", "is_graded", "is_teacher_draft", "points_earned", "points_possible",
-            "percentage", "passed", "graded_at", "graded_by", "instructor_feedback",
-            "graded_questions", "return_feedback", "return_for_revision_count",
+            "status",
+            "is_graded",
+            "is_teacher_draft",
+            "points_earned",
+            "points_possible",
+            "percentage",
+            "passed",
+            "graded_at",
+            "graded_by",
+            "instructor_feedback",
+            "graded_questions",
+            "return_feedback",
+            "return_for_revision_count",
         ])
         print(f"[TutorX] submission saved as RETURN FOR REVISION submission_id={submission.id} percentage={percentage} passing_score={passing_score}")
 
