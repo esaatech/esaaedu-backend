@@ -4558,6 +4558,8 @@ class StudentLessonDetailView(APIView):
                                 'points_possible': latest_submission.points_possible,
                                 'percentage': latest_submission.percentage,
                                 'passed': latest_submission.passed,
+                                # Track how many times this submission has been returned for revision (TutorX)
+                                'return_for_revision_count': getattr(latest_submission, 'return_for_revision_count', 0),
                             }
                     
                     # Build assignment data
