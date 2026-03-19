@@ -358,8 +358,8 @@ def get_assessment_generation_schema() -> Dict[str, Any]:
                         },
                         "type": {
                             "type": "string",
-                            "enum": ["multiple_choice", "true_false", "fill_blank", "short_answer", "essay"],
-                            "description": "Question type: multiple_choice, true_false, fill_blank, short_answer, or essay"
+                            "enum": ["multiple_choice", "true_false", "fill_blank", "short_answer", "essay", "code"],
+                            "description": "Question type: multiple_choice, true_false, fill_blank, short_answer, essay, or code"
                         },
                         "points": {
                             "type": "integer",
@@ -368,7 +368,7 @@ def get_assessment_generation_schema() -> Dict[str, Any]:
                         },
                         "content": {
                             "type": "object",
-                            "description": "Question-specific content. For multiple_choice: {\"options\": [\"option1\", \"option2\", ...], \"correct_answer\": \"option1\", \"full_options\": {\"options\": [{\"id\": \"option-0\", \"text\": \"option1\", \"isCorrect\": true, \"explanation\": \"why correct\"}, {\"id\": \"option-1\", \"text\": \"option2\", \"isCorrect\": false, \"explanation\": \"why wrong\"}, ...]}} (full_options is optional but recommended). For true_false: {\"correct_answer\": \"true\" or \"false\", \"full_options\": {\"trueOption\": {\"id\": \"true\", \"text\": \"True\", \"isCorrect\": true, \"explanation\": \"...\"}, \"falseOption\": {\"id\": \"false\", \"text\": \"False\", \"isCorrect\": false, \"explanation\": \"...\"}}} (full_options optional). For fill_blank: {\"blanks\": [\"string\"], \"correct_answers\": {\"0\": \"answer1\", \"1\": \"answer2\"}}. For essay: {\"instructions\": \"string\" (optional), \"correct_answer\": \"string\" (model answer)}. For short_answer: {\"correct_answer\": \"string\", \"accept_variations\": boolean}.",
+                            "description": "Question-specific content. For multiple_choice: {\"options\": [\"option1\", \"option2\", ...], \"correct_answer\": \"option1\", \"full_options\": {\"options\": [{\"id\": \"option-0\", \"text\": \"option1\", \"isCorrect\": true, \"explanation\": \"why correct\"}, {\"id\": \"option-1\", \"text\": \"option2\", \"isCorrect\": false, \"explanation\": \"why wrong\"}, ...]}} (full_options is optional but recommended). For true_false: {\"correct_answer\": \"true\" or \"false\", \"full_options\": {\"trueOption\": {\"id\": \"true\", \"text\": \"True\", \"isCorrect\": true, \"explanation\": \"...\"}, \"falseOption\": {\"id\": \"false\", \"text\": \"False\", \"isCorrect\": false, \"explanation\": \"...\"}}} (full_options optional). For fill_blank: {\"blanks\": [\"string\"], \"correct_answers\": {\"0\": \"answer1\", \"1\": \"answer2\"}}. For essay: {\"instructions\": \"string\" (optional), \"correct_answer\": \"string\" (model answer)}. For short_answer: {\"correct_answer\": \"string\", \"accept_variations\": boolean}. For code: {\"language\": \"string\" (e.g., \"python\"), \"starter_code\": \"string\" (optional template), \"instructions\": \"string\" (instructions for students).",
                             "properties": {
                                 "options": {"type": "array", "items": {"type": "string"}},
                                 "correct_answer": {"type": "string"},
@@ -414,7 +414,9 @@ def get_assessment_generation_schema() -> Dict[str, Any]:
                                 "blanks": {"type": "array", "items": {"type": "string"}},
                                 "correct_answers": {"type": "object"},
                                 "instructions": {"type": "string"},
-                                "accept_variations": {"type": "boolean"}
+                                "accept_variations": {"type": "boolean"},
+                                "language": {"type": "string"},
+                                "starter_code": {"type": "string"}
                             },
                             "additionalProperties": False
                         },
