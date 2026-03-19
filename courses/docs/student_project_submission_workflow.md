@@ -9,10 +9,13 @@ This document describes how student project submission works, including the sche
 ### Project Scheduling
 - Projects must be **scheduled** (have an associated ClassEvent) before students can submit
 - When a project is scheduled, the teacher sets:
-  - `project_platform` (e.g., Ace Pyodide, Trinket)
+  - `project_platform` (e.g., App, Trinket)
   - `submission_type` (e.g., 'code', 'note', 'link', etc.)
 - These values are stored in the ClassEvent, not the Project model
 - The Project model's `submission_type` is optional and used as a fallback
+- `project_platform` and `submission_type` are decoupled:
+  - platform = where students work
+  - submission type = what students submit
 
 ### Submission Requirements
 - **Unscheduled projects**: Submission is disabled, students see a message
@@ -48,8 +51,8 @@ This document describes how student project submission works, including the sche
             "submission_type": "code",  // From ClassEvent if scheduled, else from Project
             "project_platform": {      // From ClassEvent if scheduled, else null
                 "id": "platform-uuid",
-                "name": "ace_pyodide",
-                "display_name": "Ace Pyodide",
+                "name": "app",
+                "display_name": "App",
                 "base_url": "https://..."
             },
             "is_scheduled": true,       // Whether project has ClassEvent
@@ -147,7 +150,7 @@ const canSubmit = isScheduled || isSubmitted;
 
 2. **Scheduled Projects** (`is_scheduled === true`):
    - Enables submission based on `submission_type`:
-     - `'code'` + `project_platform.name === 'ace_pyodide'`: Shows Ace Pyodide IDE
+     - `'code'` + `project_platform.name === 'app'`: Shows internal Ace Pyodide IDE
      - `'code'`: Shows code editor
      - `'note'`: Shows text area
      - `'link'`: Shows URL input
@@ -171,10 +174,10 @@ const canSubmit = isScheduled || isSubmitted;
    - These are defaults, not enforced
 
 2. **Schedule Project**: Teacher schedules project as ClassEvent
-   - Sets `project_platform` (e.g., Ace Pyodide)
+   - Sets `project_platform` (e.g., App)
    - Sets `submission_type` (e.g., 'code')
    - Sets `due_date`
-   - **Note**: For Ace Pyodide, `submission_type` is automatically set to 'code'
+   - **Note**: Platform and submission type are selected independently
 
 3. **Student Access**: Student can now see project with:
    - `is_scheduled: true`

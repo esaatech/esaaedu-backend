@@ -580,12 +580,48 @@ class Command(BaseCommand):
             )
         )
 
-        # Add internal Ace Pyodide platform
+        # Add internal App platform (primary in-app workspace)
+        app_platform, created = ProjectPlatform.objects.update_or_create(
+            name='app',
+            defaults={
+                'display_name': 'App',
+                'description': 'Internal Little Learners Tech workspace. Use this for in-app work where submission type controls the artifact (for example, code, file, note, or link).',
+                'platform_type': 'Online IDE',
+                'base_url': '/student/ide',
+                'api_endpoint': '',
+                'supported_languages': ['python', 'javascript'],
+                'requires_authentication': True,
+                'supports_collaboration': False,
+                'supports_file_upload': True,
+                'supports_live_preview': True,
+                'supports_version_control': False,
+                'platform_config': {
+                    'is_internal': True,
+                    'workspace': 'app',
+                    'default_code_runner': 'ace_pyodide'
+                },
+                'icon': 'app-window',
+                'color': '#2563eb',
+                'logo_url': '',
+                'min_age': 8,
+                'max_age': 18,
+                'skill_levels': ['beginner', 'intermediate', 'advanced'],
+                'is_active': True,
+                'is_featured': True,
+                'is_free': True,
+            }
+        )
+        if created:
+            self.stdout.write(self.style.SUCCESS('✓ Created App platform'))
+        else:
+            self.stdout.write(self.style.SUCCESS('✓ Updated App platform'))
+
+        # Keep Ace Pyodide for legacy compatibility (not offered as active default)
         ace_pyodide_platform, created = ProjectPlatform.objects.update_or_create(
             name='ace_pyodide',
             defaults={
-                'display_name': 'Ace Pyodide',
-                'description': 'Internal code editor with Python execution using Pyodide. Students write and run code directly in the browser without external platforms.',
+                'display_name': 'Ace Pyodide (Legacy)',
+                'description': 'Legacy internal code editor platform kept for compatibility with previously scheduled class events.',
                 'platform_type': 'Online IDE',
                 'base_url': '/student/ide',  # Internal route
                 'api_endpoint': '',
@@ -607,15 +643,15 @@ class Command(BaseCommand):
                 'min_age': 8,
                 'max_age': 18,
                 'skill_levels': ['beginner', 'intermediate', 'advanced'],
-                'is_active': True,
-                'is_featured': True,
+                'is_active': False,
+                'is_featured': False,
                 'is_free': True,
             }
         )
         if created:
-            self.stdout.write(self.style.SUCCESS(f'✓ Created Ace Pyodide platform'))
+            self.stdout.write(self.style.SUCCESS('✓ Created Ace Pyodide legacy platform'))
         else:
-            self.stdout.write(self.style.SUCCESS(f'✓ Updated Ace Pyodide platform'))
+            self.stdout.write(self.style.SUCCESS('✓ Updated Ace Pyodide legacy platform'))
 
         # Display summary by platform type
         self.stdout.write('\nPlatform Summary by Type:')
