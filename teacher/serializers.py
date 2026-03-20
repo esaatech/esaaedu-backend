@@ -220,7 +220,7 @@ class ProjectSubmissionSerializer(serializers.ModelSerializer):
         model = ProjectSubmission
         fields = [
             'id', 'project', 'project_id', 'project_title', 'student', 'student_name',
-            'student_email', 'status', 'status_display', 'content', 'file_url',
+            'student_email', 'status', 'status_display', 'content', 'file_url', 'file_urls',
             'reflection', 'submitted_at', 'graded_at', 'grader', 'grader_name',
             'points_earned', 'feedback', 'feedback_response', 'feedback_checked',
             'feedback_checked_at', 'created_at', 'updated_at'

@@ -2732,6 +2732,7 @@ class ProjectSubmission(models.Model):
     status = models.CharField(max_length=20, choices=STATUS, default="ASSIGNED")
     content = models.TextField(blank=True, help_text="Submission content (text, notes, code)")
     file_url = models.URLField(blank=True, help_text="URL to uploaded file in cloud storage")
+    file_urls = models.JSONField(default=list, blank=True, help_text="List of uploaded file URLs for multi-file submissions")
     reflection = models.TextField(blank=True)
 
     submitted_at = models.DateTimeField(null=True, blank=True)

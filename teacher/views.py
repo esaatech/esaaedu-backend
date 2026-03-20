@@ -2797,9 +2797,33 @@ class StudentProjectSubmissionsView(APIView):
                 # Serialize project and submission (using serializers already imported at top)
                 project_serializer = ProjectSerializer(project, context={'request': request})
                 submission_serializer = ProjectSubmissionSerializer(submission)
+                project_payload = project_serializer.data
+
+                # Use latest scheduled ClassEvent values for teacher grading context.
+                # This ensures submission_type/project_platform reflect scheduling, not just Project defaults.
+                latest_event = ClassEvent.objects.filter(
+                    project=project
+                ).select_related(
+                    'project_platform',
+                    'submission_type'
+                ).order_by('-created_at').first()
+
+                if latest_event:
+                    project_payload['submission_type'] = (
+                        latest_event.submission_type.name if latest_event.submission_type else project_payload.get('submission_type')
+                    )
+                    project_payload['project_platform'] = (
+                        {
+                            'id': str(latest_event.project_platform.id),
+                            'name': latest_event.project_platform.name,
+                            'display_name': latest_event.project_platform.display_name,
+                            'base_url': latest_event.project_platform.base_url,
+                        }
+                        if latest_event.project_platform else project_payload.get('project_platform')
+                    )
                 
                 results.append({
-                    'project': project_serializer.data,
+                    'project': project_payload,
                     'submission': submission_serializer.data,
                     'course_title': project.course.title if project.course else 'N/A',
                     'course_id': str(project.course.id) if project.course else None

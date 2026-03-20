@@ -3707,8 +3707,16 @@ def student_project_submit(request, project_id):
         if 'content' in request.data:
             submission.content = request.data['content']
         
-        if 'file_url' in request.data:
+        if 'file_urls' in request.data and isinstance(request.data.get('file_urls'), list):
+            submission.file_urls = request.data.get('file_urls') or []
+            # Keep legacy single file_url populated for backward compatibility.
+            if submission.file_urls:
+                submission.file_url = submission.file_urls[0]
+            else:
+                submission.file_url = ''
+        elif 'file_url' in request.data:
             submission.file_url = request.data['file_url']
+            submission.file_urls = [request.data['file_url']] if request.data['file_url'] else []
         
         if 'reflection' in request.data:
             submission.reflection = request.data['reflection']

@@ -3188,7 +3188,7 @@ class StudentProjectSubmissionSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'project', 'project_title', 'project_points', 'project_instructions',
             'submission_type', 'project_platform', 'status',
-            'content', 'file_url', 'reflection', 'submitted_at', 'graded_at',
+            'content', 'file_url', 'file_urls', 'reflection', 'submitted_at', 'graded_at',
             'points_earned', 'points_possible', 'percentage', 'passed', 'is_graded',
             'feedback', 'feedback_response', 'feedback_checked', 'feedback_checked_at',
             'grader_name', 'share_token', 'created_at', 'updated_at'
@@ -3219,6 +3219,7 @@ class PublicProjectSubmissionSerializer(serializers.ModelSerializer):
             'course_title',
             'content',
             'file_url',
+            'file_urls',
             'reflection',
             'submitted_at',
             'created_at'
