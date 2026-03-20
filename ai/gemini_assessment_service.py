@@ -67,7 +67,8 @@ class GeminiAssessmentService:
         true_false_count: int = 0,
         fill_blank_count: int = 0,
         short_answer_count: int = 0,
-        essay_count: int = 0
+        essay_count: int = 0,
+        code_count: int = 0
     ) -> Dict[str, Any]:
         """
         Generate assessment questions using Gemini AI.
@@ -88,6 +89,7 @@ class GeminiAssessmentService:
             fill_blank_count: Number of fill-in-the-blank questions
             short_answer_count: Number of short answer questions
             essay_count: Number of essay questions
+            code_count: Number of code questions
             
         Returns:
             Dictionary containing generated questions:
@@ -108,7 +110,7 @@ class GeminiAssessmentService:
             # Validate question counts
             total_specified = (
                 multiple_choice_count + true_false_count + fill_blank_count + 
-                short_answer_count + essay_count
+                short_answer_count + essay_count + code_count
             )
             
             if total_specified != total_questions:
@@ -120,7 +122,10 @@ class GeminiAssessmentService:
                     true_false_count = int(true_false_count * ratio)
                     fill_blank_count = int(fill_blank_count * ratio)
                     short_answer_count = int(short_answer_count * ratio)
-                    essay_count = total_questions - (multiple_choice_count + true_false_count + fill_blank_count + short_answer_count)
+                    essay_count = int(essay_count * ratio)
+                    code_count = total_questions - (
+                        multiple_choice_count + true_false_count + fill_blank_count + short_answer_count + essay_count
+                    )
                 else:
                     # Increase to match total - distribute evenly among non-zero types
                     non_zero_types = []
@@ -134,6 +139,8 @@ class GeminiAssessmentService:
                         non_zero_types.append('sa')
                     if essay_count > 0:
                         non_zero_types.append('essay')
+                    if code_count > 0:
+                        non_zero_types.append('code')
                     
                     if non_zero_types:
                         remainder = total_questions - total_specified
@@ -154,6 +161,9 @@ class GeminiAssessmentService:
                             extra = max(0, extra - 1)
                         if 'essay' in non_zero_types:
                             essay_count += per_type + (1 if extra > 0 else 0)
+                            extra = max(0, extra - 1)
+                        if 'code' in non_zero_types:
+                            code_count += per_type + (1 if extra > 0 else 0)
             
             # Build content section
             content_section = ""
@@ -191,6 +201,8 @@ class GeminiAssessmentService:
                 question_type_requirements.append(f"Exactly {short_answer_count} short answer question(s)")
             if essay_count > 0:
                 question_type_requirements.append(f"Exactly {essay_count} essay question(s)")
+            if code_count > 0:
+                question_type_requirements.append(f"Exactly {code_count} code question(s)")
             
             question_types_str = "\n".join([f"- {req}" for req in question_type_requirements])
             
@@ -256,6 +268,13 @@ CRITICAL REQUIREMENTS:
    - Provide detailed model answer in explanation field
    - Include instructions for students in content.instructions if needed
    - Model answer should demonstrate expected depth and quality
+
+10. For Code Questions:
+   - The question must ask students to write or complete executable code.
+   - Use practical programming tasks tied to the provided lesson materials.
+   - CRITICAL: Include content.language (default to "python" if uncertain).
+   - CRITICAL: Include content.instructions with clear coding instructions.
+   - Include content.starter_code as an optional scaffold (use empty string if none).
 
 GENERATION STRATEGY:
 - First pass: Generate one question from each lesson (prioritizing most recent lessons if total lessons < total questions)
@@ -395,6 +414,14 @@ Remember: {assessment_type.capitalize()}s should comprehensively assess student 
                         validated_q['content']['instructions'] = ''
                     if 'correct_answer' not in validated_q['content']:
                         validated_q['content']['correct_answer'] = validated_q.get('explanation', '')
+                
+                elif validated_q['type'] == 'code':
+                    if 'language' not in validated_q['content'] or not validated_q['content'].get('language'):
+                        validated_q['content']['language'] = 'python'
+                    if 'starter_code' not in validated_q['content']:
+                        validated_q['content']['starter_code'] = ''
+                    if 'instructions' not in validated_q['content']:
+                        validated_q['content']['instructions'] = ''
                 
                 validated_questions.append(validated_q)
             

@@ -8152,6 +8152,7 @@ class AIGenerateAssessmentQuestionsView(APIView):
             fill_blank_count = int(request.data.get('fill_blank_count', 0))
             short_answer_count = int(request.data.get('short_answer_count', 0))
             essay_count = int(request.data.get('essay_count', 0))
+            code_count = int(request.data.get('code_count', 0))
             
             # Get system instruction
             system_instruction = request.data.get('system_instruction', '').strip()
@@ -8189,7 +8190,8 @@ Generate thorough exam questions that evaluate deep understanding, critical thin
                 true_false_count=true_false_count,
                 fill_blank_count=fill_blank_count,
                 short_answer_count=short_answer_count,
-                essay_count=essay_count
+                essay_count=essay_count,
+                code_count=code_count
             )
             
             return Response(result, status=status.HTTP_200_OK)
