@@ -1,6 +1,6 @@
 from multiprocessing import parent_process
 from django.shortcuts import get_object_or_404
-from django.db import models
+from django.db import models, transaction
 from rest_framework import status, permissions
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
@@ -32,7 +32,8 @@ from .serializers import (
     CourseWithLessonsSerializer, LessonMaterialSerializer,
     ClassroomSerializer, ClassroomCreateSerializer, ClassroomUpdateSerializer,
     CourseAssessmentListSerializer, CourseAssessmentDetailSerializer, CourseAssessmentCreateUpdateSerializer,
-    CourseAssessmentQuestionSerializer, CourseAssessmentQuestionCreateSerializer
+    CourseAssessmentQuestionSerializer, CourseAssessmentQuestionCreateSerializer,
+    CourseAssessmentQuestionReorderSerializer,
 )
 
 
@@ -7718,6 +7719,25 @@ class CourseAssessmentDetailView(APIView):
             )
 
 
+def renumber_course_assessment_questions(assessment):
+    """
+    Set question.order to contiguous 1..n by current sort order.
+    Two-phase update avoids unique_together (assessment, order) violations mid-update.
+    """
+    qs = list(
+        CourseAssessmentQuestion.objects.filter(assessment=assessment).order_by('order')
+    )
+    if not qs:
+        return
+    with transaction.atomic():
+        for i, cq in enumerate(qs):
+            cq.order = -(i + 1)
+        CourseAssessmentQuestion.objects.bulk_update(qs, ['order'])
+        for i, cq in enumerate(qs, start=1):
+            cq.order = i
+        CourseAssessmentQuestion.objects.bulk_update(qs, ['order'])
+
+
 class CourseAssessmentQuestionListView(APIView):
     """
     GET: List all questions for an assessment
@@ -7869,8 +7889,11 @@ class CourseAssessmentQuestionDetailView(APIView):
         """DELETE: Delete question"""
         try:
             question = self.get_question_and_validate(request, course_id, assessment_id, question_id)
-            question.delete()
-            
+            assessment = question.assessment
+            with transaction.atomic():
+                question.delete()
+                renumber_course_assessment_questions(assessment)
+
             return Response(
                 {'message': 'Question deleted successfully'},
                 status=status.HTTP_200_OK
@@ -7886,6 +7909,82 @@ class CourseAssessmentQuestionDetailView(APIView):
             return Response(
                 {'error': 'Failed to delete question', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CourseAssessmentQuestionReorderView(APIView):
+    """
+    PUT: Reorder all questions for a test/exam assessment (same two-phase pattern as lessons/projects).
+    Body: { "questions": [ {"id": "<uuid>", "order": 1}, ... ] } — must include every question once.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def put(self, request, course_id, assessment_id):
+        try:
+            course = get_object_or_404(Course, id=course_id)
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if course.teacher != request.user:
+                return Response(
+                    {'error': 'Only the course teacher can manage assessments'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            assessment = get_object_or_404(CourseAssessment, id=assessment_id, course=course)
+
+            serializer = CourseAssessmentQuestionReorderSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+            questions_data = serializer.validated_data['questions']
+            db_count = assessment.questions.count()
+            if db_count == 0:
+                return Response([], status=status.HTTP_200_OK)
+            if len(questions_data) != db_count:
+                return Response(
+                    {
+                        'error': 'Invalid reorder payload',
+                        'details': f'Expected {db_count} questions, got {len(questions_data)}',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            incoming_ids = {str(qd['id']) for qd in questions_data}
+            db_ids = {str(q.id) for q in assessment.questions.all()}
+            if incoming_ids != db_ids:
+                return Response(
+                    {'error': 'Payload must list each assessment question exactly once'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            with transaction.atomic():
+                to_update = []
+                for qd in questions_data:
+                    q = get_object_or_404(
+                        CourseAssessmentQuestion,
+                        id=qd['id'],
+                        assessment=assessment,
+                    )
+                    to_update.append((q, int(qd['order'])))
+
+                for i, (q, _) in enumerate(to_update):
+                    q.order = -(i + 1)
+                    q.save(update_fields=['order'])
+                for q, new_order in to_update:
+                    q.order = new_order
+                    q.save(update_fields=['order'])
+
+            questions = assessment.questions.all().order_by('order')
+            out = CourseAssessmentQuestionSerializer(questions, many=True)
+            return Response(out.data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f'Error reordering assessment questions: {e}', exc_info=True)
+            return Response(
+                {'error': 'Failed to reorder questions', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 

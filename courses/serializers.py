@@ -2942,6 +2942,10 @@ class CourseAssessmentQuestionCreateSerializer(serializers.ModelSerializer):
         fields = [
             'question_text', 'order', 'points', 'type', 'content', 'explanation'
         ]
+        extra_kwargs = {
+            # Omitted on AI batch create; view assigns max(order)+1 on POST.
+            'order': {'required': False},
+        }
     
     def validate_content(self, value):
         """Validate question content based on type"""
@@ -2954,6 +2958,34 @@ class CourseAssessmentQuestionCreateSerializer(serializers.ModelSerializer):
             if 'language' not in value:
                 raise serializers.ValidationError("Code questions require 'language' field")
         
+        return value
+
+
+class CourseAssessmentQuestionReorderSerializer(serializers.Serializer):
+    """Reorder assessment questions (tests/exams); same contract as lesson/project reorder."""
+
+    questions = serializers.ListField(
+        child=serializers.DictField(child=serializers.CharField()),
+        help_text="List of {id, order} for questions in this assessment",
+    )
+
+    def validate_questions(self, value):
+        if not value:
+            return value
+        seen_ids = set()
+        for item in value:
+            if 'id' not in item or 'order' not in item:
+                raise serializers.ValidationError("Each item must have 'id' and 'order'")
+            qid = str(item['id'])
+            if qid in seen_ids:
+                raise serializers.ValidationError("Duplicate question id in payload")
+            seen_ids.add(qid)
+            try:
+                order = int(item['order'])
+                if order < 1:
+                    raise serializers.ValidationError("Order must be positive")
+            except (ValueError, TypeError):
+                raise serializers.ValidationError("Order must be a valid integer")
         return value
 
 
