@@ -132,6 +132,21 @@ Files are organized in GCS as follows:
 
 ## API Endpoints
 
+### Assessment AI grade (teacher)
+
+- **URL**: `/api/teacher/assessments/{assessment_id}/grading/{submission_id}/ai-grade/`
+- **Method**: POST
+- **Purpose**: AI-grade tests/exams without persisting; returns grade suggestions for each provided question.
+- **Behavior**:
+  - Uses **hybrid grading** in `teacher/assessment_grading_helper.py`
+  - Deterministic scoring for objective/structured types when `content` is present (`multiple_choice`, `true_false`, keyed `short_answer`, `fill_blank`, `matching`, `ordering`)
+  - LLM scoring (`GeminiGrader`, template `assessment_grading`) for open-ended/code/ambiguous cases
+  - Response shape matches assignment AI grade: `{ grades, total_score, total_possible }`
+- **Request body**:
+  - `questions`: list of `{ question_id, question_text, question_type, student_answer, points_possible, explanation?, rubric?, content? }`
+  - `assignment_context` optional (course/assessment metadata)
+- **Note**: Assignment AI grading path is unchanged and still uses `teacher/ai_grading_helper.py`.
+
 ### Assignment return (teacher)
 
 - **URL**: `/api/teacher/assignments/{assignment_id}/grading/{submission_id}/return/`

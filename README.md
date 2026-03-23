@@ -44,6 +44,7 @@ Django REST API backend for the Little Learners Tech educational platform.
 ## Documentation
 
 - [Assessment AI generation](courses/docs/assessment_ai_generation.md) - Assessment/test AI generation contract, including `code_count`, prompt requirements for `type="code"`, and validation defaults for `language`, `instructions`, and `starter_code`
+- [Teacher assessment AI grading](teacher/README.md#assessment-ai-grade-teacher) - Hybrid assessment grading endpoint (`/api/teacher/assessments/{assessment_id}/grading/{submission_id}/ai-grade/`), deterministic + LLM behavior, and request contract
 - [Assignment return and feedback](courses/docs/assignment_return_and_feedback.md) - Return submission to student as draft, `return_feedback`, `return_for_revision_count`, and `graded_questions`; how student lesson exposes per-question feedback
 - [TutorX assignment submission](tutorx/ASSIGNMENT_SUBMISSION.md) - Autograde and return-for-revision flow for TutorX lessons; max returns and `return_for_revision_count`
 - [Blog API](blog/docs/blog-api.md) - Public blog API: list posts and get post by slug; posts managed in Django Admin

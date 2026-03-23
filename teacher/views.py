@@ -38,7 +38,6 @@ from users.models import StudentProfile
 from rest_framework.pagination import PageNumberPagination
 from datetime import datetime, timedelta
 # Import AI grading service
-from ai.gemini_grader import GeminiGrader
 # Import AI generation services
 from ai.gemini_course_introduction_service import GeminiCourseIntroductionService
 from ai.gemini_course_lessons_service import GeminiCourseLessonsService
@@ -2365,15 +2364,17 @@ class AssignmentAIGradingView(APIView):
                 except Exception as e:
                     logger.warning(f"Failed to extract assignment context: {e}")
             
-            # Initialize grader
-            grader = GeminiGrader()
-            
-            # Grade questions batch
-            result = grader.grade_questions_batch(
-                questions=questions_data,
-                assignment_context=assignment_context if assignment_context else None
+            from teacher.ai_grading_helper import (
+                run_teacher_ai_grading_batch,
+                ASSIGNMENT_GRADING_TEMPLATE,
             )
-            
+
+            result = run_teacher_ai_grading_batch(
+                questions_data,
+                assignment_context if assignment_context else None,
+                ASSIGNMENT_GRADING_TEMPLATE,
+            )
+
             return Response({
                 'grades': result['grades'],
                 'total_score': result['total_score'],
@@ -2383,6 +2384,89 @@ class AssignmentAIGradingView(APIView):
         except Exception as e:
             import traceback
             logger.error(f"Error in AI grading: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Error during AI grading: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CourseAssessmentAIGradingView(APIView):
+    """
+    AI-powered course assessment (test/exam) grading — hybrid deterministic + LLM.
+
+    POST only; does not save. Objective types use rules when `content` is present; essay/code/etc.
+    use AIPromptTemplate `assessment_grading` via GeminiGrader.
+
+    Request body matches assignment shape, plus optional per-question `content` (full question JSON)
+    for objective scoring. Response shape matches assignment AI grade: grades, total_score, total_possible.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, assessment_id, submission_id):
+        try:
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can use AI grading'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            try:
+                assessment = CourseAssessment.objects.select_related('course').get(id=assessment_id)
+                if assessment.course.teacher != request.user:
+                    return Response(
+                        {'error': 'Assessment not found or you do not have permission to grade it'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except CourseAssessment.DoesNotExist:
+                return Response(
+                    {'error': 'Assessment not found or you do not have permission to grade it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            try:
+                submission = CourseAssessmentSubmission.objects.select_related('student').get(
+                    id=submission_id,
+                    assessment=assessment,
+                )
+            except CourseAssessmentSubmission.DoesNotExist:
+                return Response(
+                    {'error': 'Submission not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            questions_data = request.data.get('questions', [])
+            if not questions_data:
+                return Response(
+                    {'error': 'Questions array is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            assignment_context = request.data.get('assignment_context')
+            if not assignment_context:
+                assignment_context = {
+                    'course_title': assessment.course.title,
+                    'assessment_title': assessment.title,
+                    'assessment_description': assessment.description or '',
+                    'assessment_instructions': assessment.instructions or '',
+                    'assessment_type': assessment.assessment_type,
+                }
+
+            from teacher.assessment_grading_helper import run_assessment_hybrid_grading
+
+            result = run_assessment_hybrid_grading(
+                questions_data,
+                assignment_context if assignment_context else None,
+            )
+
+            return Response({
+                'grades': result['grades'],
+                'total_score': result['total_score'],
+                'total_possible': result['total_possible'],
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            import traceback
+            logger.error(f"Error in assessment AI grading: {e}\n{traceback.format_exc()}")
             return Response(
                 {'error': f'Error during AI grading: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

@@ -6,7 +6,7 @@ Frontend-centric design:
 - Backend returns: points_earned, feedback, correct_answer
 - NO database saves - returns only
 - Frontend manages state and saving
-- System instruction loaded from AIPromptTemplate (assignment_grading)
+- System instruction loaded from AIPromptTemplate (default: assignment_grading; use assessment_grading for tests/exams)
 
 Usage:
     grader = GeminiGrader()
@@ -70,35 +70,53 @@ class GeminiGrader:
     Frontend-centric: Receives question data, returns grades.
     No database operations - purely computational.
     Frontend handles state management and saving.
-    System instruction loaded from AIPromptTemplate (assignment_grading).
+    System instruction loaded from AIPromptTemplate (name configurable per instance).
     """
     
-    def __init__(self):
-        """Initialize with GeminiService instance."""
+    def __init__(self, prompt_template_name: str = "assignment_grading"):
+        """
+        Args:
+            prompt_template_name: AIPromptTemplate.name (e.g. assignment_grading, assessment_grading).
+        """
         self.gemini_service = GeminiService()
+        self._prompt_template_name = prompt_template_name or "assignment_grading"
         self._system_instruction = None
         self._template_temperature = 0.3
-        logger.info("GeminiGrader initialized")
+        logger.info("GeminiGrader initialized (template=%s)", self._prompt_template_name)
     
     def _get_system_instruction_from_template(self) -> str:
         """
-        Get system instruction from AIPromptTemplate (assignment_grading).
-        Falls back to hardcoded instruction if template not found.
+        Get system instruction from AIPromptTemplate (name from self._prompt_template_name).
+        If that template is missing, tries assignment_grading, then hardcoded fallback.
         """
         if self._system_instruction:
             return self._system_instruction
         
         try:
             from .models import AIPromptTemplate
+            primary = self._prompt_template_name
             template = AIPromptTemplate.objects.filter(
-                name='assignment_grading',
+                name=primary,
                 is_active=True
             ).first()
+            if not template and primary != "assignment_grading":
+                template = AIPromptTemplate.objects.filter(
+                    name="assignment_grading",
+                    is_active=True,
+                ).first()
+                if template:
+                    logger.info(
+                        "Template %r not found; using assignment_grading for system instruction",
+                        primary,
+                    )
             
             if template:
                 self._system_instruction = template.default_system_instruction
                 self._template_temperature = template.temperature
-                logger.info("Loaded system instruction from AIPromptTemplate (assignment_grading)")
+                logger.info(
+                    "Loaded system instruction from AIPromptTemplate (%s)",
+                    template.name,
+                )
                 return self._system_instruction
         except Exception as e:
             logger.warning(f"Failed to load prompt template, using fallback: {e}")
@@ -305,15 +323,34 @@ If you cannot grade the question due to unclear question, unclear answer, or ins
         """
         prompt_parts = []
         
-        # Add assignment context if available
+        # Add assignment / assessment context if available
         if assignment_context:
             prompt_parts.append("ASSIGNMENT CONTEXT:")
+            if assignment_context.get('course_title'):
+                prompt_parts.append(f"Course: {assignment_context['course_title']}")
+            if assignment_context.get('assessment_title'):
+                atype = assignment_context.get('assessment_type') or ''
+                prompt_parts.append(f"Assessment ({atype}): {assignment_context['assessment_title']}")
+            if assignment_context.get('assessment_description'):
+                prompt_parts.append(f"Assessment description: {assignment_context['assessment_description']}")
+            if assignment_context.get('assessment_instructions'):
+                prompt_parts.append(f"Assessment instructions: {assignment_context['assessment_instructions']}")
+            if assignment_context.get('assignment_title'):
+                prompt_parts.append(f"Assignment: {assignment_context['assignment_title']}")
+            if assignment_context.get('assignment_description'):
+                prompt_parts.append(f"Assignment description: {assignment_context['assignment_description']}")
+            if assignment_context.get('lesson_title'):
+                prompt_parts.append(f"Lesson: {assignment_context['lesson_title']}")
             if assignment_context.get('passage_text'):
                 prompt_parts.append(f"Passage: {assignment_context['passage_text']}")
             if assignment_context.get('lesson_content'):
                 prompt_parts.append(f"Lesson Content: {assignment_context['lesson_content']}")
             if assignment_context.get('learning_objectives'):
-                prompt_parts.append(f"Learning Objectives: {', '.join(assignment_context['learning_objectives'])}")
+                lo = assignment_context['learning_objectives']
+                if isinstance(lo, list):
+                    prompt_parts.append(f"Learning Objectives: {', '.join(str(x) for x in lo)}")
+                else:
+                    prompt_parts.append(f"Learning Objectives: {lo}")
             prompt_parts.append("")
         
         # Add question
@@ -389,6 +426,19 @@ If you cannot grade the question due to unclear question, unclear answer, or ins
             base_instruction += "- Award partial credit for close answers that show understanding\n"
             base_instruction += "- Consider variations in wording that convey the same idea\n"
             base_instruction += "- Focus on whether the student understands the concept\n"
+
+        elif question_type == 'code':
+            base_instruction += "\nFor programming / code questions:\n"
+            base_instruction += "- Evaluate correctness of logic and whether the code would solve the stated problem\n"
+            base_instruction += "- Mention syntax or API issues briefly when relevant\n"
+            base_instruction += "- Do not claim you executed the code unless output was provided; infer from the source\n"
+            base_instruction += "- Award partial credit for partially correct solutions\n"
+            base_instruction += "- In correct_answer, give a concise model solution or the key fix needed\n"
+
+        elif question_type in ('multiple_choice', 'true_false', 'ordering', 'matching'):
+            base_instruction += "\nFor this structured question type:\n"
+            base_instruction += "- Be precise; treat points_possible as the maximum score\n"
+            base_instruction += "- If the prompt includes the official correct answer or key, align your score with it\n"
         
         return base_instruction
     
