@@ -171,6 +171,19 @@ Files are organized in GCS as follows:
 - **Request**: JSON with `file_url`
 - **Response**: Deletion status with `main_deleted` and `thumb_deleted` booleans
 
+## Teacher pending submission counts (API contract)
+
+Implementation lives in the `courses` app (`courses/teacher_pending_counts.py`, `TeacherDashboardAPIView.get_header_data`, `teacher_students_master`). These counters drive the **Students** sidebar badges and **Student Management** course dropdown—same semantics as “work waiting on the teacher,” aligned with assignments where applicable.
+
+| Counter | Source | Pending rule |
+|--------|--------|--------------|
+| `pending_assignment_count` | `AssignmentSubmission` | `status='submitted'` and `is_graded=False` (scoped to the teacher’s courses via assignment → lessons → course). |
+| `pending_test_submission_count` | `CourseAssessmentSubmission` + `CourseAssessment.assessment_type='test'` | `status` in `submitted` / `auto_submitted` and `is_graded=False`. |
+| `pending_exam_submission_count` | Same + `assessment_type='exam'` | Same as test. |
+| `pending_project_submission_count` | `ProjectSubmission` | `status='SUBMITTED'` only (excludes `RETURNED` while waiting on the student; excludes `GRADED`). |
+
+`pending_submission_total` on the dashboard header is the sum of the four counts. Per-enrollment rows on `GET /api/courses/teacher/students/master/` expose the same four fields per student/course pair.
+
 ## Future Migration
 The following functionality will be moved from the `courses` app to this app:
 - Teacher dashboard views

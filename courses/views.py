@@ -2370,18 +2370,26 @@ def teacher_students_master(request):
         for enrollment in enrollments:
             student_user = enrollment.student_profile.user
             
-            # Get assignment summary for this student (count only submissions that are submitted and ungraded FOR THIS SPECIFIC COURSE)
-            from courses.models import AssignmentSubmission
-            
-            # Filter by student AND course (through the assignment's lessons)
-            ungraded_submissions = AssignmentSubmission.objects.filter(
-                student=student_user,
-                assignment__lessons__course=enrollment.course,
-                status='submitted',
-                is_graded=False
+            # Pending work per type for this enrollment (same semantics as dashboard counts)
+            from courses.teacher_pending_counts import (
+                pending_assignment_count_for_enrollment,
+                pending_exam_submission_count_for_enrollment,
+                pending_project_submission_count_for_enrollment,
+                pending_test_submission_count_for_enrollment,
             )
-            
-            assignment_count = ungraded_submissions.count()
+
+            assignment_count = pending_assignment_count_for_enrollment(
+                student_user, enrollment.course
+            )
+            pending_test_submission_count = pending_test_submission_count_for_enrollment(
+                student_user, enrollment.course
+            )
+            pending_exam_submission_count = pending_exam_submission_count_for_enrollment(
+                student_user, enrollment.course
+            )
+            pending_project_submission_count = pending_project_submission_count_for_enrollment(
+                student_user, enrollment.course
+            )
             
             # Get unread message counts for this student/course combination
             # Prioritize course-specific conversations, but also include general conversations
@@ -2454,7 +2462,10 @@ def teacher_students_master(request):
                 'completed_lessons_count': enrollment.completed_lessons_count,
                 'total_lessons_count': enrollment.total_lessons_count,
                 'last_accessed': enrollment.last_accessed.isoformat() if enrollment.last_accessed else None,
-                'pending_assignment_count': assignment_count,  # Add assignment count
+                'pending_assignment_count': assignment_count,
+                'pending_test_submission_count': pending_test_submission_count,
+                'pending_exam_submission_count': pending_exam_submission_count,
+                'pending_project_submission_count': pending_project_submission_count,
                 'parent_unread_count': parent_unread_count,  # Add parent unread count
                 'student_unread_count': student_unread_count  # Add student unread count
             }
@@ -5197,13 +5208,35 @@ class TeacherDashboardAPIView(APIView):
 
     def get_header_data(self, teacher):
         """Get welcome message and quick stats"""
+        from courses.teacher_pending_counts import (
+            pending_assignment_count_for_teacher,
+            pending_exam_submission_count_for_teacher,
+            pending_project_submission_count_for_teacher,
+            pending_test_submission_count_for_teacher,
+        )
+
+        pending_assignment_count = pending_assignment_count_for_teacher(teacher)
+        pending_test_submission_count = pending_test_submission_count_for_teacher(teacher)
+        pending_exam_submission_count = pending_exam_submission_count_for_teacher(teacher)
+        pending_project_submission_count = pending_project_submission_count_for_teacher(teacher)
+        pending_submission_total = (
+            pending_assignment_count
+            + pending_test_submission_count
+            + pending_exam_submission_count
+            + pending_project_submission_count
+        )
+
         return {
             'teacher_name': teacher.get_full_name() or teacher.first_name,
             'total_students': self.get_total_students(teacher),
             'active_courses': self.get_active_courses(teacher),
             'total_enrollments': self.get_total_enrollments(teacher),
             'monthly_revenue': self.get_monthly_revenue(teacher),
-            'pending_assignment_count': self.get_pending_assignment_count(teacher),
+            'pending_assignment_count': pending_assignment_count,
+            'pending_test_submission_count': pending_test_submission_count,
+            'pending_exam_submission_count': pending_exam_submission_count,
+            'pending_project_submission_count': pending_project_submission_count,
+            'pending_submission_total': pending_submission_total,
             'unread_message_count': self.get_unread_message_count(teacher),
         }
 
@@ -5250,16 +5283,9 @@ class TeacherDashboardAPIView(APIView):
 
     def get_pending_assignment_count(self, teacher):
         """Count pending assignment submissions (status='submitted', is_graded=False)"""
-        from courses.models import AssignmentSubmission
-        
-        # Count submissions for teacher's courses that are submitted but not graded
-        pending_count = AssignmentSubmission.objects.filter(
-            assignment__lessons__course__teacher=teacher,
-            status='submitted',
-            is_graded=False
-        ).count()
-        
-        return pending_count
+        from courses.teacher_pending_counts import pending_assignment_count_for_teacher
+
+        return pending_assignment_count_for_teacher(teacher)
 
     def get_unread_message_count(self, teacher):
         """Count unread messages for teacher (from parents and students)"""
