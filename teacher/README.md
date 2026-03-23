@@ -178,8 +178,8 @@ Implementation lives in the `courses` app (`courses/teacher_pending_counts.py`, 
 | Counter | Source | Pending rule |
 |--------|--------|--------------|
 | `pending_assignment_count` | `AssignmentSubmission` | `status='submitted'` and `is_graded=False` (scoped to the teacher’s courses via assignment → lessons → course). |
-| `pending_test_submission_count` | `CourseAssessmentSubmission` + `CourseAssessment.assessment_type='test'` | `status` in `submitted` / `auto_submitted` and `is_graded=False`. |
-| `pending_exam_submission_count` | Same + `assessment_type='exam'` | Same as test. |
+| `pending_test_submission_count` | `CourseAssessmentSubmission` + `CourseAssessment.assessment_type='test'` | `status` in `submitted` / `auto_submitted` and `is_graded=False`, **only on the latest attempt** per (student, assessment). Older attempts from retakes stay in the DB but are ignored so counts match the teacher list (`StudentAssessmentSubmissionsView`), which shows one row per assessment (latest submission). |
+| `pending_exam_submission_count` | Same + `assessment_type='exam'` | Same as test (latest attempt only). |
 | `pending_project_submission_count` | `ProjectSubmission` | `status='SUBMITTED'` only (excludes `RETURNED` while waiting on the student; excludes `GRADED`). |
 
 `pending_submission_total` on the dashboard header is the sum of the four counts. Per-enrollment rows on `GET /api/courses/teacher/students/master/` expose the same four fields per student/course pair.
