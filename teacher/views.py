@@ -19,9 +19,10 @@ from .serializers import (
     ProjectSubmissionFeedbackSerializer,
     AssignmentListSerializer, AssignmentDetailSerializer, AssignmentCreateUpdateSerializer,
     AssignmentQuestionSerializer, AssignmentSubmissionSerializer, AssignmentGradingSerializer,
-    AssignmentFeedbackSerializer
+    AssignmentFeedbackSerializer,
+    TeacherTimetableResponseSerializer,
 )
-from courses.models import Course, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, LessonMaterial, VideoMaterial, BookPage, Lesson, DocumentMaterial, AudioVideoMaterial, CourseAssessment, CourseAssessmentSubmission
+from courses.models import Course, Class, ClassEvent, CourseReview, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, LessonMaterial, VideoMaterial, BookPage, Lesson, DocumentMaterial, AudioVideoMaterial, CourseAssessment, CourseAssessmentSubmission
 from courses.hls_utils import (
     convert_to_hls,
     upload_hls_to_gcs,
@@ -571,6 +572,73 @@ class TeacherScheduleAPIView(APIView):
             'upcoming_live_classes': upcoming_live_classes,
             'upcoming_project_deadlines': upcoming_project_deadlines,
         }
+
+
+class TeacherTimetableAPIView(APIView):
+    """
+    API view for fixed weekly timetable templates.
+    Returns lean payload for all teacher-owned classes and active sessions.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            teacher = request.user
+            if not getattr(teacher, 'is_teacher', False):
+                return Response(
+                    {'error': 'Only teachers can access this endpoint'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            classes = Class.objects.filter(
+                teacher=teacher,
+                is_active=True,
+            ).select_related('course').prefetch_related('sessions').order_by('course__title', 'name')
+
+            timezone_name = timezone.get_current_timezone_name()
+            class_items = []
+            total_slots = 0
+
+            for class_instance in classes:
+                sessions = class_instance.sessions.filter(is_active=True).order_by('day_of_week', 'start_time')
+                session_items = []
+
+                for session in sessions:
+                    total_slots += 1
+                    session_items.append({
+                        'id': session.id,
+                        'session_number': session.session_number,
+                        'day_of_week': session.day_of_week,
+                        'day_name': session.get_day_of_week_display(),
+                        'start_time': session.start_time,
+                        'end_time': session.end_time,
+                        'is_active': session.is_active,
+                    })
+
+                class_items.append({
+                    'class_id': class_instance.id,
+                    'class_name': class_instance.name,
+                    'course_id': class_instance.course.id,
+                    'course_title': class_instance.course.title,
+                    'timezone': timezone_name,
+                    'sessions': session_items,
+                })
+
+            payload = {
+                'classes': class_items,
+                'summary': {
+                    'total_courses': len({str(item['course_id']) for item in class_items}),
+                    'total_classes': len(class_items),
+                    'total_slots': total_slots,
+                }
+            }
+            serializer = TeacherTimetableResponseSerializer(payload)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as exc:
+            return Response(
+                {'error': 'Failed to fetch timetable data', 'details': str(exc)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class ProjectManagementView(APIView):

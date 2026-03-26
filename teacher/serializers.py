@@ -692,3 +692,30 @@ class AssignmentFeedbackSerializer(serializers.ModelSerializer):
         if value and len(value.strip()) < 10:
             raise serializers.ValidationError("Instructor feedback must be at least 10 characters long")
         return value
+
+
+class TeacherTimetableSessionSerializer(serializers.Serializer):
+    """Lean serializer for fixed weekly class sessions."""
+    id = serializers.UUIDField(read_only=True)
+    session_number = serializers.IntegerField(read_only=True)
+    day_of_week = serializers.IntegerField(read_only=True)
+    day_name = serializers.CharField(read_only=True)
+    start_time = serializers.TimeField(read_only=True)
+    end_time = serializers.TimeField(read_only=True)
+    is_active = serializers.BooleanField(read_only=True)
+
+
+class TeacherTimetableClassSerializer(serializers.Serializer):
+    """Lean serializer for timetable classes grouped by course."""
+    class_id = serializers.UUIDField(read_only=True)
+    class_name = serializers.CharField(read_only=True)
+    course_id = serializers.UUIDField(read_only=True)
+    course_title = serializers.CharField(read_only=True)
+    timezone = serializers.CharField(read_only=True)
+    sessions = TeacherTimetableSessionSerializer(many=True, read_only=True)
+
+
+class TeacherTimetableResponseSerializer(serializers.Serializer):
+    """Response envelope for teacher timetable endpoint."""
+    classes = TeacherTimetableClassSerializer(many=True, read_only=True)
+    summary = serializers.DictField(read_only=True)

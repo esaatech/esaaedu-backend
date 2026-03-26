@@ -7,6 +7,7 @@ app_name = 'teacher'
 urlpatterns = [
     path('profile/', views.TeacherProfileAPIView.as_view(), name='teacher_profile'),
     path('schedule/', views.TeacherScheduleAPIView.as_view(), name='teacher_schedule'),
+    path('timetable/', views.TeacherTimetableAPIView.as_view(), name='teacher_timetable'),
     
     # Project Management URLs
     path('projects/', views.ProjectManagementView.as_view(), name='project_management'),

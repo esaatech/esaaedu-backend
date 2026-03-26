@@ -132,6 +132,13 @@ Files are organized in GCS as follows:
 
 ## API Endpoints
 
+### Timetable (teacher)
+
+- **URL**: `/api/teacher/timetable/`
+- **Method**: GET
+- **Purpose**: Return a lean weekly timetable template for all teacher classes with class/course labels and active class session slots.
+- **Docs**: See [teacher/docs/timetable-endpoint.md](./docs/timetable-endpoint.md)
+
 ### Assessment AI grade (teacher)
 
 - **URL**: `/api/teacher/assessments/{assessment_id}/grading/{submission_id}/ai-grade/`
