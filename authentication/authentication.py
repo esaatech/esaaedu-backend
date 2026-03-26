@@ -4,6 +4,9 @@ from rest_framework.exceptions import AuthenticationFailed
 from firebase_admin import auth
 import firebase_admin
 import logging
+import hashlib
+from django.db import IntegrityError
+from django.utils.text import slugify
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -19,6 +22,53 @@ def ensure_firebase_initialized():
             logger.error(f"Failed to initialize Firebase: {e}")
             return False
     return True
+
+
+def ensure_public_handle(user_obj, decoded_token, max_attempts=10, max_length=20):
+    """
+    Create a short, globally-unique public handle on first login.
+
+    Deterministic suffix derived from firebase uid, with retries on uniqueness collisions.
+    """
+    if getattr(user_obj, "public_handle", None):
+        return user_obj.public_handle
+
+    firebase_uid_local = (decoded_token or {}).get("uid") or ""
+    email_local = (decoded_token or {}).get("email") or ""
+    name_local = (decoded_token or {}).get("name") or ""
+
+    # Base handle: first name if available, else email local-part.
+    first_token = (name_local or "").strip().split(" ", 1)[0]
+    base = first_token if first_token else (email_local.split("@", 1)[0] if email_local else "")
+    base = slugify(base).strip("-").lower()
+    if not base:
+        base = "user"
+
+    # Deterministic 3-digit suffix from firebase_uid.
+    seed = int(hashlib.sha256(firebase_uid_local.encode("utf-8")).hexdigest(), 16) % 1000
+
+    # Keep base short so "base + 3-digit suffix" always fits max_length.
+    base_max_len = max_length - 3
+    base_trimmed = base[:base_max_len].rstrip("-") or "user"
+
+    for attempt in range(max_attempts):
+        suffix = (seed + attempt) % 1000
+        candidate = f"{base_trimmed}{suffix:03d}"
+
+        # Ensure candidate matches model validator.
+        candidate = slugify(candidate).strip("-").lower()
+        candidate = candidate[:max_length].rstrip("-")
+        if not candidate:
+            continue
+
+        try:
+            user_obj.public_handle = candidate
+            user_obj.save(update_fields=["public_handle"])
+            return candidate
+        except IntegrityError:
+            continue
+
+    raise RuntimeError("Failed to generate a unique public_handle after multiple attempts")
 
 
 class FirebaseAuthentication(BaseAuthentication):
@@ -149,7 +199,7 @@ class FirebaseAuthentication(BaseAuthentication):
         firebase_uid = decoded_token.get('uid')
         email = decoded_token.get('email')
         name = decoded_token.get('name', '')
-        
+
         try:
             # Try to get existing user by Firebase UID
             user = User.objects.get(firebase_uid=firebase_uid)
@@ -186,6 +236,9 @@ class FirebaseAuthentication(BaseAuthentication):
             
             logger.info(f"Created new user with default student role: {email}")
         
+        # Ensure the user has a globally unique public handle for hosted URLs.
+        ensure_public_handle(user, decoded_token)
+
         # Update last login
         from django.utils import timezone
         user.last_login_at = timezone.now()

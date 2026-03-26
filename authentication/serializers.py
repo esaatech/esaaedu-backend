@@ -14,10 +14,10 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'id', 'firebase_uid', 'email', 'first_name', 'last_name', 
+            'id', 'firebase_uid', 'email', 'first_name', 'last_name', 'public_handle',
             'full_name', 'role', 'is_active', 'created_at', 'last_login_at'
         ]
-        read_only_fields = ['id', 'firebase_uid', 'created_at', 'last_login_at']
+        read_only_fields = ['id', 'firebase_uid', 'public_handle', 'created_at', 'last_login_at']
     
     def get_full_name(self, obj):
         return obj.get_full_name()
@@ -96,11 +96,11 @@ class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'id', 'firebase_uid', 'email', 'first_name', 'last_name',
+            'id', 'firebase_uid', 'email', 'public_handle', 'first_name', 'last_name',
             'full_name', 'role', 'is_active', 'created_at', 'last_login_at',
             'teacher_profile', 'student_profile', 'parent_profile'
         ]
-        read_only_fields = ['id', 'firebase_uid', 'created_at', 'last_login_at']
+        read_only_fields = ['id', 'firebase_uid', 'public_handle', 'created_at', 'last_login_at']
     
     def get_full_name(self, obj):
         return obj.get_full_name()

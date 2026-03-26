@@ -13,9 +13,9 @@ except Exception:
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    list_display = ['email', 'first_name', 'last_name', 'role', 'is_active', 'is_staff', 'date_joined']
+    list_display = ['email', 'public_handle', 'first_name', 'last_name', 'role', 'is_active', 'is_staff', 'date_joined']
     list_filter = ['role', 'is_active', 'is_staff', 'is_superuser', 'date_joined']
-    search_fields = ['email', 'first_name', 'last_name', 'firebase_uid']
+    search_fields = ['email', 'public_handle', 'first_name', 'last_name', 'firebase_uid']
     ordering = ['-date_joined']
     
     fieldsets = (
@@ -23,7 +23,7 @@ class UserAdmin(BaseUserAdmin):
             'fields': ('email', 'password', 'firebase_uid')
         }),
         ('Personal Info', {
-            'fields': ('first_name', 'last_name', 'username')
+            'fields': ('first_name', 'last_name', 'username', 'public_handle')
         }),
         ('Role & Permissions', {
             'fields': ('role', 'is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')
@@ -36,7 +36,7 @@ class UserAdmin(BaseUserAdmin):
     add_fieldsets = (
         ('Create User', {
             'classes': ('wide',),
-            'fields': ('email', 'password1', 'password2', 'firebase_uid', 'role', 'first_name', 'last_name'),
+            'fields': ('email', 'password1', 'password2', 'firebase_uid', 'role', 'first_name', 'last_name', 'public_handle'),
         }),
     )
     

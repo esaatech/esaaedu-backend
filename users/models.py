@@ -1,6 +1,7 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.db.models import Avg, Sum, Count, Q
+from django.core.validators import RegexValidator
 from django.utils import timezone
 from decimal import Decimal
 from datetime import datetime, timedelta
@@ -33,6 +34,24 @@ class User(AbstractUser):
     # Override username to use email as primary identifier
     username = models.CharField(max_length=150, unique=False, blank=True)
     email = models.EmailField(unique=True)
+
+    # Short, stable, globally-unique handle used for hosted app URLs:
+    # e.g. sbtyacademy.com/apps/john243/calculator
+    # Note: This is independent from `username` (which is not unique in this project).
+    public_handle = models.SlugField(
+        max_length=20,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+        validators=[
+            RegexValidator(
+                regex=r'^[a-z0-9-]+$',
+                message='Public handle can only contain lowercase letters, numbers, and hyphens',
+            )
+        ],
+        help_text="Short unique handle for hosted app URLs (e.g. john243).",
+    )
     
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['firebase_uid']

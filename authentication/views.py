@@ -5,7 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.generics import RetrieveUpdateAPIView
 from django.contrib.auth import get_user_model
 from firebase_admin import auth
-from .authentication import FirebaseAuthentication
+from .authentication import FirebaseAuthentication, ensure_public_handle
 from .serializers import (
     AuthTokenSerializer, UserProfileSerializer, RoleUpdateSerializer,
     TeacherProfileSerializer, StudentProfileSerializer, ParentProfileSerializer
@@ -324,6 +324,7 @@ def student_signup(request):
                 existing_profile = existing_user.student_profile
                 
                 # User exists and has profile - return existing user
+                ensure_public_handle(existing_user, decoded_token)
                 user_serializer = UserProfileSerializer(existing_user)
                 return Response({
                     'message': 'User already exists with complete profile',
@@ -427,6 +428,9 @@ def student_signup(request):
         
         logger.info(f"New student user created: {email}")
         
+        # Ensure public handle exists for hosted app URLs.
+        ensure_public_handle(user, decoded_token)
+
         # Return complete user profile
         user_serializer = UserProfileSerializer(user)
         return Response({
@@ -498,6 +502,9 @@ def student_login(request):
                         status=status.HTTP_403_FORBIDDEN
                     )
             
+            # Ensure the user has a public handle for hosted app URLs.
+            ensure_public_handle(user, decoded_token)
+
             # Update last login
             from django.utils import timezone
             user.last_login_at = timezone.now()
@@ -662,6 +669,9 @@ def teacher_signup(request):
             else:
                 print(f"🎓 Teacher profile serializer errors: {profile_serializer.errors}")
 
+        # Ensure public handle exists for hosted app URLs.
+        ensure_public_handle(user, decoded_token)
+
         # Serialize and return the complete teacher data
         user_serializer = UserProfileSerializer(user)
         
@@ -728,6 +738,9 @@ def teacher_login(request):
                         {'error': 'This account is not registered as a Teacher. Please check your account type.'},
                         status=status.HTTP_403_FORBIDDEN
                     )
+
+            # Ensure the user has a public handle for hosted app URLs.
+            ensure_public_handle(user, decoded_token)
             
             # Update last login
             from django.utils import timezone
@@ -893,6 +906,9 @@ def parent_signup(request):
             else:
                 print(f"👨‍👩‍👧 Parent profile serializer errors: {profile_serializer.errors}")
 
+        # Ensure public handle exists for hosted app URLs.
+        ensure_public_handle(user, decoded_token)
+
         # Serialize and return the complete parent data
         user_serializer = UserProfileSerializer(user)
         
@@ -964,6 +980,9 @@ def parent_login(request):
                         {'error': 'This account is not registered as a Parent. Please check your account type.'},
                         status=status.HTTP_403_FORBIDDEN
                     )
+
+            # Ensure the user has a public handle for hosted app URLs.
+            ensure_public_handle(user, decoded_token)
             
             # Update last login
             from django.utils import timezone

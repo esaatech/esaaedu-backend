@@ -94,6 +94,8 @@ Once deployed, your API will be available at:
 ```
 POST /api/auth/verify-token/     # Verify Firebase token
 GET  /api/auth/user/             # Get current user
+                                 # Includes `public_handle` (short globally-unique handle)
+                                 # used for hosted app URLs like `/apps/{public_handle}/{appSlug}`
 GET  /api/auth/profile/          # Get user profile
 PUT  /api/auth/profile/          # Update user profile
 POST /api/auth/complete-setup/   # Complete profile setup
