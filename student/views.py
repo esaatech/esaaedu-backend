@@ -1,7 +1,7 @@
 from django.shortcuts import get_object_or_404
 from django.http import Http404
 from rest_framework import status, permissions
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.response import Response
 from rest_framework.authentication import SessionAuthentication
@@ -10,14 +10,25 @@ from rest_framework.views import APIView
 from django.utils import timezone
 from django.db import models
 from django.db.models import Q, Count, Avg
+from django.contrib.auth import get_user_model
 from datetime import datetime, timedelta
 import uuid
 import logging
+import re
 
 from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback, Conversation, Message, CodeSnippet
 from teacher.utils import FileUploadService
 
 logger = logging.getLogger(__name__)
+User = get_user_model()
+
+
+def _frontend_style_slug(title: str) -> str:
+    """
+    Match frontend slugifyFlaskTitle behavior:
+    lower -> replace non [a-z0-9] runs with '-' -> trim '-'.
+    """
+    return re.sub(r"^-+|-+$", "", re.sub(r"[^a-z0-9]+", "-", (title or "").strip().lower()))
 from courses.models import Class, ClassEvent, Course, Lesson, Quiz, QuizAttempt, Question, Assignment, AssignmentSubmission, Classroom, ProjectSubmission, CourseAssessmentSubmission, CourseAssessment, CourseReview
 from settings.models import UserDashboardSettings
 from .serializers import (
@@ -5730,6 +5741,62 @@ class CodeSnippetShareView(APIView):
         except Exception as e:
             return Response(
                 {'error': 'Failed to fetch shared code snippet', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class PublicFlaskAppView(APIView):
+    """
+    Public read-only endpoint for Flask simulation links.
+    GET /api/public/flask-app/<str:public_handle>/<str:flask_slug>/
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, public_handle, flask_slug):
+        try:
+            owner = User.objects.filter(public_handle=public_handle).first()
+            if not owner:
+                return Response(
+                    {'error': 'App not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            flask_snippets = CodeSnippet.objects.filter(
+                language='flask',
+                is_shared=True,
+            ).filter(
+                Q(student=owner) | Q(teacher=owner)
+            ).order_by('-updated_at')
+
+            flask_snippet = None
+            for snippet in flask_snippets:
+                if _frontend_style_slug((snippet.title or '').strip()) == flask_slug:
+                    flask_snippet = snippet
+                    break
+
+            if not flask_snippet:
+                return Response(
+                    {'error': 'App not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            html_snippets = CodeSnippet.objects.filter(
+                language='html'
+            ).filter(
+                Q(student=owner) | Q(teacher=owner)
+            ).order_by('-updated_at')
+
+            return Response({
+                'flask_code': flask_snippet.code,
+                'html_snippets': [
+                    {'title': item.title, 'code': item.code}
+                    for item in html_snippets
+                ],
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {'error': 'Failed to fetch app', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

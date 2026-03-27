@@ -1,5 +1,7 @@
 from rest_framework import serializers
+from django.db.models import Q
 from django.contrib.auth import get_user_model
+import re
 from .models import (
     EnrolledCourse, StudentAttendance, StudentGrade, 
     StudentBehavior, StudentNote, StudentCommunication,
@@ -9,6 +11,14 @@ from .models import (
 from courses.models import AssignmentSubmission
 
 User = get_user_model()
+
+
+def _frontend_style_slug(title: str) -> str:
+    """
+    Match frontend slugifyFlaskTitle behavior:
+    lower -> replace non [a-z0-9] runs with '-' -> trim '-'.
+    """
+    return re.sub(r"^-+|-+$", "", re.sub(r"[^a-z0-9]+", "-", (title or "").strip().lower()))
 
 
 # ===== BASIC SERIALIZERS =====
@@ -902,6 +912,61 @@ class CodeSnippetCreateUpdateSerializer(serializers.ModelSerializer):
         if value not in valid_languages:
             raise serializers.ValidationError(f"Language must be one of: {', '.join(valid_languages)}")
         return value
+
+    def validate(self, attrs):
+        """
+        Enforce per-owner Flask slug uniqueness:
+        /app/<public_handle>/<slugified-title> must not collide for same owner.
+        """
+        attrs = super().validate(attrs)
+
+        language = attrs.get('language')
+        title = attrs.get('title')
+        if self.instance:
+            if language is None:
+                language = self.instance.language
+            if title is None:
+                title = self.instance.title
+
+        if language != 'flask':
+            return attrs
+
+        norm_title = (title or '').strip()
+        if not norm_title:
+            raise serializers.ValidationError({
+                'title': 'Title is required for Flask snippets.'
+            })
+
+        new_slug = _frontend_style_slug(norm_title)
+        if not new_slug:
+            raise serializers.ValidationError({
+                'title': 'Title must include letters or numbers for URL slug generation.'
+            })
+
+        request = self.context.get('request')
+        owner = None
+        if request and getattr(request, 'user', None) and request.user.is_authenticated:
+            owner = request.user
+        if not owner and self.instance:
+            owner = self.instance.student or self.instance.teacher
+
+        if not owner:
+            return attrs
+
+        qs = CodeSnippet.objects.filter(language='flask').filter(
+            Q(student=owner) | Q(teacher=owner)
+        )
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+
+        for existing in qs:
+            existing_slug = _frontend_style_slug((existing.title or '').strip())
+            if existing_slug == new_slug:
+                raise serializers.ValidationError({
+                    'title': 'You already have another Flask app with this title (same URL slug).'
+                })
+
+        return attrs
 
 
 class CodeSnippetShareSerializer(serializers.ModelSerializer):

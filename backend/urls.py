@@ -19,6 +19,7 @@ from django.urls import path, include
 from django.http import JsonResponse
 from rest_framework.routers import DefaultRouter
 from api_docs import api_documentation, course_creation_contract, contact_contract, landing_page_contract, teacher_project_contract, teacher_assignment_contract, class_events_contract, teacher_student_record_contract, student_lesson_detail_contract, student_assignment_submission_contract
+from student import views as student_views
 
 # Create API router
 router = DefaultRouter()
@@ -39,6 +40,11 @@ urlpatterns = [
     path("api/tutorx/", include('tutorx.urls')),
     path("api/blog/", include('blog.urls')),
     path("api/lead-magnet/", include('lead_magnet.urls')),
+    path(
+        "api/public/flask-app/<str:public_handle>/<str:flask_slug>/",
+        student_views.PublicFlaskAppView.as_view(),
+        name="public_flask_app",
+    ),
     path("api/", include(router.urls)),
     
     # Public marketing program landing pages (simplified URL)

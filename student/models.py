@@ -1606,6 +1606,7 @@ class CodeSnippet(models.Model):
         ('html', 'HTML'),
         ('css', 'CSS'),
         ('json', 'JSON'),
+        ('flask', 'Flask'),
         ('java', 'Java'),
         ('cpp', 'C++'),
         ('c', 'C'),
