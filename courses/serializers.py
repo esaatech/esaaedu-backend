@@ -3286,3 +3286,27 @@ class PublicProjectSubmissionSerializer(serializers.ModelSerializer):
     def get_course_title(self, obj):
         """Get course title"""
         return obj.project.lesson.course.title if obj.project.lesson else None
+
+
+# ===== TEACHER CLASS ATTENDANCE (classroom roll call; minimal PII) =====
+
+TEACHER_ATTENDANCE_STATUSES = ['present', 'absent', 'late', 'excused']
+
+
+class TeacherClassAttendanceEntrySerializer(serializers.Serializer):
+    """Single row when saving attendance for a class and date."""
+    # User PK is integer (not UUID); client may send JSON number or numeric string.
+    student_id = serializers.IntegerField(min_value=1)
+    status = serializers.ChoiceField(choices=TEACHER_ATTENDANCE_STATUSES)
+    notes = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=5000,
+        help_text="Optional note (e.g. reason when status is excused)",
+    )
+
+
+class TeacherClassAttendanceBulkSerializer(serializers.Serializer):
+    """Bulk upsert attendance for one calendar day."""
+    date = serializers.DateField(required=False)
+    entries = TeacherClassAttendanceEntrySerializer(many=True)

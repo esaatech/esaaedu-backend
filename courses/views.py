@@ -16,7 +16,7 @@ import logging
 from .models import Course, Lesson, Module, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission, DocumentMaterial, Project, ProjectSubmission, SubmissionType
 
 logger = logging.getLogger(__name__)
-from student.models import EnrolledCourse
+from student.models import EnrolledCourse, StudentAttendance
 from django.db.models import F, Sum, Max
 from courses.models import ClassEvent
 from .serializers import (
@@ -31,6 +31,7 @@ from .serializers import (
     StudentBasicSerializer, TeacherStudentDetailSerializer, TeacherStudentSummarySerializer,
     CourseWithLessonsSerializer, LessonMaterialSerializer,
     ClassroomSerializer, ClassroomCreateSerializer, ClassroomUpdateSerializer,
+    TeacherClassAttendanceBulkSerializer,
     CourseAssessmentListSerializer, CourseAssessmentDetailSerializer, CourseAssessmentCreateUpdateSerializer,
     CourseAssessmentQuestionSerializer, CourseAssessmentQuestionCreateSerializer,
     CourseAssessmentQuestionReorderSerializer,
@@ -55,7 +56,7 @@ def delete_course_with_cleanup(course, skip_enrollment_check=False):
     """
     from django.core.files.storage import default_storage
     from urllib.parse import urlparse, unquote
-    from student.models import EnrolledCourse
+    from student.models import EnrolledCourse, StudentAttendance
     
     try:
         # Check enrollments unless skipped (for admin)
@@ -518,7 +519,7 @@ def teacher_courses(request):
     if request.method == 'GET':
         try:
             from django.db.models import Count, Q
-            from student.models import EnrolledCourse
+            from student.models import EnrolledCourse, StudentAttendance
             
             # Get courses with enrollment counts and modules (for teacher course management)
             courses = Course.objects.filter(teacher=request.user).annotate(
@@ -2106,6 +2107,161 @@ def teacher_class_detail(request, class_id):
             )
 
 
+@api_view(['GET', 'POST', 'PATCH'])
+@permission_classes([permissions.IsAuthenticated])
+def teacher_class_attendance(request, class_id):
+    """
+    GET: Enrolled students with attendance for one calendar day (default: today).
+         Returns student_id, full_name, status, notes (no email or phone).
+
+    POST / PATCH: Same body — upsert attendance for that date.
+         Body: { "date"?: "YYYY-MM-DD", "entries": [{ "student_id", "status", "notes"?: "" }] }
+    Use POST if your client prefers it; behavior matches PATCH.
+    """
+    from datetime import date as date_cls
+
+    if request.user.role != 'teacher':
+        return Response(
+            {'error': 'Only teachers can access this endpoint'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    class_instance = get_object_or_404(Class, id=class_id, teacher=request.user)
+
+    if request.method == 'GET':
+        try:
+            date_param = request.query_params.get('date')
+            if date_param:
+                try:
+                    target_date = date_cls.fromisoformat(date_param)
+                except ValueError:
+                    return Response(
+                        {'error': 'Invalid date format. Use YYYY-MM-DD.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            else:
+                target_date = timezone.now().date()
+
+            students = class_instance.students.filter(role='student').order_by(
+                'last_name', 'first_name', 'email'
+            )
+            attendance_qs = StudentAttendance.objects.filter(
+                class_session=class_instance, date=target_date
+            ).select_related('student')
+            attendance_by_student = {str(a.student_id): a for a in attendance_qs}
+
+            rows = []
+            for student in students:
+                att = attendance_by_student.get(str(student.id))
+                name = (student.get_full_name() or '').strip()
+                if not name:
+                    name = (f'{student.first_name or ""} {student.last_name or ""}').strip() or 'Student'
+                rows.append({
+                    'student_id': str(student.id),
+                    'full_name': name,
+                    'status': att.status if att else None,
+                    'attendance_id': str(att.id) if att else None,
+                    'notes': (att.notes or '').strip() if att else '',
+                })
+
+            return Response(
+                {
+                    'class_id': str(class_instance.id),
+                    'date': target_date.isoformat(),
+                    'students': rows,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.exception('teacher_class_attendance GET failed')
+            return Response(
+                {'error': 'Failed to fetch attendance', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    elif request.method in ('POST', 'PATCH'):
+        serializer = TeacherClassAttendanceBulkSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        target_date = serializer.validated_data.get('date') or timezone.now().date()
+        entries = serializer.validated_data['entries']
+
+        enrolled_ids = set(
+            str(uid) for uid in class_instance.students.filter(role='student').values_list('id', flat=True)
+        )
+        entry_ids = {str(e['student_id']) for e in entries}
+
+        if not enrolled_ids and entries:
+            return Response(
+                {'error': 'No students enrolled in this class.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        unknown = entry_ids - enrolled_ids
+        if unknown:
+            return Response(
+                {
+                    'error': 'One or more student_ids are not enrolled in this class.',
+                    'invalid_ids': list(unknown),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with transaction.atomic():
+                for entry in entries:
+                    defaults = {
+                        'status': entry['status'],
+                        'recorded_by': request.user,
+                    }
+                    # Only touch notes when the client sends the field (preserve existing if omitted).
+                    if 'notes' in entry:
+                        defaults['notes'] = (entry['notes'] or '').strip()
+                    StudentAttendance.objects.update_or_create(
+                        student_id=entry['student_id'],
+                        class_session=class_instance,
+                        date=target_date,
+                        defaults=defaults,
+                    )
+
+            attendance_qs = StudentAttendance.objects.filter(
+                class_session=class_instance, date=target_date
+            ).select_related('student')
+            attendance_by_student = {str(a.student_id): a for a in attendance_qs}
+
+            rows = []
+            for student in class_instance.students.filter(role='student').order_by(
+                'last_name', 'first_name', 'email'
+            ):
+                att = attendance_by_student.get(str(student.id))
+                name = (student.get_full_name() or '').strip()
+                if not name:
+                    name = (f'{student.first_name or ""} {student.last_name or ""}').strip() or 'Student'
+                rows.append({
+                    'student_id': str(student.id),
+                    'full_name': name,
+                    'status': att.status if att else None,
+                    'attendance_id': str(att.id) if att else None,
+                    'notes': (att.notes or '').strip() if att else '',
+                })
+
+            return Response(
+                {
+                    'class_id': str(class_instance.id),
+                    'date': target_date.isoformat(),
+                    'students': rows,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.exception('teacher_class_attendance save failed')
+            return Response(
+                {'error': 'Failed to save attendance', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def course_enrolled_students(request, course_id):
@@ -2119,7 +2275,7 @@ def course_enrolled_students(request, course_id):
         )
     
     try:
-        from student.models import EnrolledCourse
+        from student.models import EnrolledCourse, StudentAttendance
         from .serializers import EnrolledStudentSerializer
         
         # Verify the course belongs to the teacher
@@ -2175,7 +2331,7 @@ def teacher_students(request):
         )
     
     try:
-        from student.models import EnrolledCourse
+        from student.models import EnrolledCourse, StudentAttendance
         from django.db.models import Q, Prefetch
         from django.core.paginator import Paginator
         
@@ -2324,7 +2480,7 @@ def teacher_students_master(request):
         )
     
     try:
-        from student.models import EnrolledCourse
+        from student.models import EnrolledCourse, StudentAttendance
         from django.db.models import Q, Prefetch
         
         # Get all courses taught by the teacher
@@ -5255,7 +5411,7 @@ class TeacherDashboardAPIView(APIView):
 
     def get_total_enrollments(self, teacher):
         """Count total enrollments across all teacher's courses"""
-        from student.models import EnrolledCourse
+        from student.models import EnrolledCourse, StudentAttendance
         
         enrollments = EnrolledCourse.objects.filter(course__teacher=teacher)
         return enrollments.count()
@@ -6412,7 +6568,7 @@ class LessonMaterial(APIView):
         
         # Students can access lessons in courses they're enrolled in
         if user.role == 'student':
-            from student.models import EnrolledCourse
+            from student.models import EnrolledCourse, StudentAttendance
             return EnrolledCourse.objects.filter(
                 student_profile__user=user,
                 course=lesson.course,
@@ -6731,7 +6887,7 @@ class BookPageView(APIView):
             return True
         
         if user.role == 'student':
-            from student.models import EnrolledCourse
+            from student.models import EnrolledCourse, StudentAttendance
             enrolled = EnrolledCourse.objects.filter(
                 student_profile__user=user,
                 course=lesson.course,

@@ -61,6 +61,7 @@ urlpatterns = [
     # Classroom endpoints
     path('teacher/classes/<uuid:class_id>/classroom/', views.ClassroomView.as_view(), name='classroom_detail'),
     path('teacher/classes/<uuid:class_id>/classroom/active-session/', views.ClassroomActiveSessionView.as_view(), name='classroom_active_session'),
+    path('teacher/classes/<uuid:class_id>/attendance/', views.teacher_class_attendance, name='teacher_class_attendance'),
     
     # Board endpoints
     path('teacher/classes/<uuid:class_id>/classroom/board/', views.BoardView.as_view(), name='board_detail'),
