@@ -7,7 +7,10 @@ Precedence: logged-in user's admin_calendar_timezone (if set and valid)
 
 from zoneinfo import available_timezones
 
-from settings.models import get_calendar_timezone_fallback_name
+from settings.models import (
+    get_calendar_timezone_fallback_detail,
+    get_calendar_timezone_fallback_name,
+)
 
 _MAX_TZ_LEN = 120
 
@@ -17,15 +20,23 @@ def _is_valid_iana_name(name: str) -> bool:
     return bool(s and len(s) <= _MAX_TZ_LEN and s in available_timezones())
 
 
-def resolve_admin_calendar_timezone_name(request) -> str:
+def resolve_admin_calendar_timezone_detail(request) -> tuple[str, str]:
     """
-    Return the effective IANA timezone name for admin calendar UI for this request.
+    Return (iana_name, source) where source is ``user``, ``system_settings``, or ``time_zone``.
     """
     user = getattr(request, "user", None)
     if user is not None and user.is_authenticated:
         raw = getattr(user, "admin_calendar_timezone", None) or ""
         tz_name = str(raw).strip()
         if tz_name and _is_valid_iana_name(tz_name):
-            return tz_name.strip()
+            return tz_name.strip(), "user"
 
-    return get_calendar_timezone_fallback_name()
+    name, src = get_calendar_timezone_fallback_detail()
+    return name, src
+
+
+def resolve_admin_calendar_timezone_name(request) -> str:
+    """
+    Return the effective IANA timezone name for admin calendar UI for this request.
+    """
+    return resolve_admin_calendar_timezone_detail(request)[0]

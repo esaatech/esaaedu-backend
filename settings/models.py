@@ -525,11 +525,11 @@ class UserTutorXInstruction(models.Model):
             return True  # If we can't find default, assume it's customized
 
 
-def get_calendar_timezone_fallback_name():
+def get_calendar_timezone_fallback_detail():
     """
-    IANA zone for admin timetable when the user has no admin_calendar_timezone set.
+    Return (iana_name, source) for admin calendar when user has no admin_calendar_timezone.
 
-    Order: SystemSettings.calendar_timezone → Django TIME_ZONE → UTC.
+    source is ``system_settings`` or ``time_zone`` (Django TIME_ZONE / UTC safety).
     Safe if the DB table is missing (e.g. during migrations).
     """
     from django.conf import settings as django_settings
@@ -540,8 +540,14 @@ def get_calendar_timezone_fallback_name():
         if row and row.calendar_timezone:
             s = str(row.calendar_timezone).strip()
             if s and s in available_timezones():
-                return s
+                return s, "system_settings"
     except Exception:
         pass
     s = str(django_settings.TIME_ZONE)
-    return s if s in available_timezones() else "UTC"
+    name = s if s in available_timezones() else "UTC"
+    return name, "time_zone"
+
+
+def get_calendar_timezone_fallback_name():
+    """IANA zone string only; see ``get_calendar_timezone_fallback_detail``."""
+    return get_calendar_timezone_fallback_detail()[0]

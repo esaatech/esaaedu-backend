@@ -84,9 +84,33 @@
   }
   .admin-timetable-source {
     display: block;
-    margin-top: 2px;
+    margin-top: 4px;
     font-size: 11px;
-    color: #888;
+    font-weight: 600;
+  }
+  .admin-timetable-status--scheduled {
+    color: #1b5e20;
+  }
+  .admin-timetable-status--unscheduled {
+    color: #b71c1c;
+  }
+  a.admin-timetable-teacher,
+  .admin-timetable-teacher {
+    color: #417690;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  a.admin-timetable-teacher:hover {
+    text-decoration: underline;
+  }
+  .admin-snapshot-tz-line {
+    margin-top: 0.35em;
+  }
+  .admin-snapshot-tz-line .admin-snapshot-tz-link {
+    font-weight: 600;
+  }
+  .admin-snapshot-tz-line .admin-snapshot-tz-set {
+    margin-left: 0.35em;
   }
 </style>
 {% endblock %}
@@ -95,11 +119,26 @@
 {% admin_dashboard_snapshot as snapshot %}
 
 <div id="content-main">
-  <h2>{% trans "Admin Snapshot" %}</h2>
-  <p class="help">
-    {% blocktrans with today=snapshot.today week_start=snapshot.week_start week_end=snapshot.week_end tz=snapshot.timezone_name %}
-      Quick pulse for {{ today }} (week: {{ week_start }} – {{ week_end }}). Timetable times use <strong>{{ tz }}</strong> — your Admin calendar timezone on your user account if set, otherwise System Settings calendar timezone (then Django TIME_ZONE if needed).
-    {% endblocktrans %}
+  <p class="help admin-snapshot-tz-line">
+    {% if snapshot.calendar_timezone_from_user %}
+      <span class="admin-snapshot-tz-label">{% trans "User time zone" %}:</span>
+      {% if snapshot.calendar_timezone_edit_url %}
+        <a href="{{ snapshot.calendar_timezone_edit_url }}" class="admin-snapshot-tz-link"><strong>{{ snapshot.timezone_name }}</strong></a>
+      {% else %}
+        <strong>{{ snapshot.timezone_name }}</strong>
+      {% endif %}
+    {% else %}
+      {% trans "Admin time zone not set" %} —
+      {% if snapshot.calendar_timezone_source == "system_settings" %}
+        {% trans "using system time zone" %}
+      {% else %}
+        {% trans "using server time zone" %}
+      {% endif %}
+      <strong>{{ snapshot.timezone_name }}</strong>.
+      {% if snapshot.calendar_timezone_edit_url %}
+        <a href="{{ snapshot.calendar_timezone_edit_url }}" class="admin-snapshot-tz-link admin-snapshot-tz-set">{% trans "Set admin time zone" %}</a>
+      {% endif %}
+    {% endif %}
   </p>
 
   <div class="admin-snapshot-grid">
@@ -112,7 +151,7 @@
           {% trans "Ongoing" %}: {{ snapshot.timetable_ongoing_count }} ·
           {% trans "Upcoming" %}: {{ snapshot.timetable_upcoming_count }} ·
           {% trans "Past" %}: {{ snapshot.timetable_past_count }} ·
-          {{ snapshot.timetable_slots_scheduled }} {% trans "with ClassEvent" %}
+          {{ snapshot.timetable_slots_scheduled }} {% trans "slots with a matching event today" %}
         </p>
         <p class="admin-snapshot-meta">
           {{ snapshot.classes_today_count }} {% trans "classes" %} ·
@@ -128,11 +167,22 @@
             {% for row in snapshot.timetable_ongoing %}
             <div class="admin-timetable-row">
               <strong>{{ row.time_range }}</strong>
-              — {{ row.class_name }} ({{ row.course_title }}) — {{ row.teacher_label }}
-              <span class="admin-timetable-source">
-                {% if row.from_timetable and row.scheduled %}{% trans "Set timetable + scheduled" %}{% elif row.from_timetable %}{% trans "Set timetable only" %}{% else %}{% trans "Scheduled only" %}{% endif %}
-                · {% trans "ClassEvent" %}:
-                {% if row.scheduled %}{% trans "Yes" %}{% if row.event_title %} ({{ row.event_title }}){% endif %}{% else %}{% trans "No" %}{% endif %}
+              — {{ row.class_name }} ({{ row.course_title }}) —
+              {% if row.teacher_admin_url %}
+              <a href="{{ row.teacher_admin_url }}" class="admin-timetable-teacher">{{ row.teacher_label }}</a>
+              {% else %}
+              <span class="admin-timetable-teacher">{{ row.teacher_label }}</span>
+              {% endif %}
+              <span class="admin-timetable-source{% if row.from_timetable %}{% if row.scheduled %} admin-timetable-status--scheduled{% else %} admin-timetable-status--unscheduled{% endif %}{% else %} admin-timetable-status--scheduled{% endif %}">
+                {% if row.from_timetable %}
+                  {% if row.scheduled %}
+                    {% trans "Scheduled" %}{% if row.event_title %} — {{ row.event_title }}{% endif %}
+                  {% else %}
+                    {% trans "Not scheduled" %}
+                  {% endif %}
+                {% else %}
+                  {% trans "Scheduled" %} · {% trans "Different time than weekly timetable" %}{% if row.event_title %} — {{ row.event_title }}{% endif %}
+                {% endif %}
               </span>
             </div>
             {% endfor %}
@@ -144,11 +194,22 @@
             {% for row in snapshot.timetable_upcoming %}
             <div class="admin-timetable-row">
               <strong>{{ row.time_range }}</strong>
-              — {{ row.class_name }} ({{ row.course_title }}) — {{ row.teacher_label }}
-              <span class="admin-timetable-source">
-                {% if row.from_timetable and row.scheduled %}{% trans "Set timetable + scheduled" %}{% elif row.from_timetable %}{% trans "Set timetable only" %}{% else %}{% trans "Scheduled only" %}{% endif %}
-                · {% trans "ClassEvent" %}:
-                {% if row.scheduled %}{% trans "Yes" %}{% if row.event_title %} ({{ row.event_title }}){% endif %}{% else %}{% trans "No" %}{% endif %}
+              — {{ row.class_name }} ({{ row.course_title }}) —
+              {% if row.teacher_admin_url %}
+              <a href="{{ row.teacher_admin_url }}" class="admin-timetable-teacher">{{ row.teacher_label }}</a>
+              {% else %}
+              <span class="admin-timetable-teacher">{{ row.teacher_label }}</span>
+              {% endif %}
+              <span class="admin-timetable-source{% if row.from_timetable %}{% if row.scheduled %} admin-timetable-status--scheduled{% else %} admin-timetable-status--unscheduled{% endif %}{% else %} admin-timetable-status--scheduled{% endif %}">
+                {% if row.from_timetable %}
+                  {% if row.scheduled %}
+                    {% trans "Scheduled" %}{% if row.event_title %} — {{ row.event_title }}{% endif %}
+                  {% else %}
+                    {% trans "Not scheduled" %}
+                  {% endif %}
+                {% else %}
+                  {% trans "Scheduled" %} · {% trans "Different time than weekly timetable" %}{% if row.event_title %} — {{ row.event_title }}{% endif %}
+                {% endif %}
               </span>
             </div>
             {% endfor %}
@@ -160,11 +221,22 @@
             {% for row in snapshot.timetable_past %}
             <div class="admin-timetable-row">
               <strong>{{ row.time_range }}</strong>
-              — {{ row.class_name }} ({{ row.course_title }}) — {{ row.teacher_label }}
-              <span class="admin-timetable-source">
-                {% if row.from_timetable and row.scheduled %}{% trans "Set timetable + scheduled" %}{% elif row.from_timetable %}{% trans "Set timetable only" %}{% else %}{% trans "Scheduled only" %}{% endif %}
-                · {% trans "ClassEvent" %}:
-                {% if row.scheduled %}{% trans "Yes" %}{% if row.event_title %} ({{ row.event_title }}){% endif %}{% else %}{% trans "No" %}{% endif %}
+              — {{ row.class_name }} ({{ row.course_title }}) —
+              {% if row.teacher_admin_url %}
+              <a href="{{ row.teacher_admin_url }}" class="admin-timetable-teacher">{{ row.teacher_label }}</a>
+              {% else %}
+              <span class="admin-timetable-teacher">{{ row.teacher_label }}</span>
+              {% endif %}
+              <span class="admin-timetable-source{% if row.from_timetable %}{% if row.scheduled %} admin-timetable-status--scheduled{% else %} admin-timetable-status--unscheduled{% endif %}{% else %} admin-timetable-status--scheduled{% endif %}">
+                {% if row.from_timetable %}
+                  {% if row.scheduled %}
+                    {% trans "Scheduled" %}{% if row.event_title %} — {{ row.event_title }}{% endif %}
+                  {% else %}
+                    {% trans "Not scheduled" %}
+                  {% endif %}
+                {% else %}
+                  {% trans "Scheduled" %} · {% trans "Different time than weekly timetable" %}{% if row.event_title %} — {{ row.event_title }}{% endif %}
+                {% endif %}
               </span>
             </div>
             {% endfor %}

@@ -5,18 +5,40 @@ from zoneinfo import ZoneInfo
 
 from django import template
 from django.db.models import Sum
+from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
 
 from billings.models import Payment, Subscribers
 from courses.models import ClassEvent, ClassSession
-from settings.models import get_calendar_timezone_fallback_name
+from settings.models import get_calendar_timezone_fallback_detail
 from student.models import EnrolledCourse
-from users.admin_calendar_tz import resolve_admin_calendar_timezone_name
+from users.admin_calendar_tz import resolve_admin_calendar_timezone_detail
 from users.models import User
 
 register = template.Library()
 
-_SCHEDULABLE_EVENT_TYPES = frozenset({"lesson", "meeting", "break", "test", "exam"})
+_SCHEDULABLE_EVENT_TYPES = frozenset(
+    {
+        "lesson",
+        "meeting",
+        "break",
+        "test",
+        "exam",
+    },
+)
+
+
+def _teacher_admin_change_url(teacher):
+    if teacher is None:
+        return ""
+    try:
+        opts = User._meta
+        return reverse(
+            f"admin:{opts.app_label}_{opts.model_name}_change",
+            args=[teacher.pk],
+        )
+    except NoReverseMatch:
+        return ""
 
 
 def _session_time_key(t):
@@ -158,6 +180,7 @@ def _build_timetable_sections(cal_now, today, weekday, cal_tz):
                 "class_name": cls.name,
                 "course_title": cls.course.title,
                 "teacher_label": teacher_label,
+                "teacher_admin_url": _teacher_admin_change_url(teacher),
                 "session_number": session.session_number,
                 "from_timetable": True,
                 "scheduled": scheduled,
@@ -203,6 +226,7 @@ def _build_timetable_sections(cal_now, today, weekday, cal_tz):
                 "class_name": cls.name,
                 "course_title": cls.course.title,
                 "teacher_label": teacher_label,
+                "teacher_admin_url": _teacher_admin_change_url(teacher),
                 "session_number": None,
                 "from_timetable": False,
                 "scheduled": True,
@@ -238,10 +262,23 @@ def _build_timetable_sections(cal_now, today, weekday, cal_tz):
 @register.simple_tag(takes_context=True)
 def admin_dashboard_snapshot(context):
     request = context.get("request")
+    calendar_tz_edit_url = ""
     if request is None:
-        cal_tz_name = get_calendar_timezone_fallback_name()
+        cal_tz_name, cal_tz_source = get_calendar_timezone_fallback_detail()
+        calendar_tz_from_user = False
     else:
-        cal_tz_name = resolve_admin_calendar_timezone_name(request)
+        cal_tz_name, cal_tz_source = resolve_admin_calendar_timezone_detail(request)
+        calendar_tz_from_user = cal_tz_source == "user"
+        user = getattr(request, "user", None)
+        if user is not None and user.is_authenticated:
+            try:
+                opts = User._meta
+                calendar_tz_edit_url = reverse(
+                    f"admin:{opts.app_label}_{opts.model_name}_change",
+                    args=[user.pk],
+                )
+            except NoReverseMatch:
+                calendar_tz_edit_url = ""
     cal_tz = ZoneInfo(cal_tz_name)
     cal_now = timezone.now().astimezone(cal_tz)
     today = cal_now.date()
@@ -347,6 +384,9 @@ def admin_dashboard_snapshot(context):
         "week_start": week_start,
         "week_end": week_end,
         "timezone_name": cal_tz_name,
+        "calendar_timezone_source": cal_tz_source,
+        "calendar_timezone_from_user": calendar_tz_from_user,
+        "calendar_timezone_edit_url": calendar_tz_edit_url,
         "timetable_rows_total": timetable_rows_total,
         "timetable_slots_today": timetable_slots_today,
         "timetable_slots_scheduled": scheduled_count,
