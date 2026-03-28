@@ -1,10 +1,11 @@
+from calendar import monthrange
 from collections import Counter
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from django import template
-from django.db.models import Sum
+from django.db.models import Count, Sum
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
 
@@ -13,9 +14,11 @@ from courses.models import ClassEvent, ClassSession
 from settings.models import get_calendar_timezone_fallback_detail
 from student.models import EnrolledCourse
 from users.admin_calendar_tz import resolve_admin_calendar_timezone_detail
-from users.models import User
+from users.models import StudentProfile, User
 
 register = template.Library()
+
+_PAYMENT_CARD_LIST_LIMIT = 200
 
 _SCHEDULABLE_EVENT_TYPES = frozenset(
     {
@@ -39,6 +42,91 @@ def _teacher_admin_change_url(teacher):
         )
     except NoReverseMatch:
         return ""
+
+
+def _user_display_label(user) -> str:
+    if user is None:
+        return "—"
+    name = (user.get_full_name() or "").strip()
+    return name or user.email or str(user.pk)
+
+
+def _subscriber_due_rows(qs):
+    rows = []
+    for sub in (
+        qs.select_related("user", "course")
+        .order_by("user__last_name", "user__first_name", "user__email")[
+            :_PAYMENT_CARD_LIST_LIMIT
+        ]
+    ):
+        rows.append(
+            {
+                "label": _user_display_label(sub.user),
+                "course": sub.course.title if sub.course_id else "",
+                "amount": sub.next_invoice_amount,
+            }
+        )
+    return rows
+
+
+def _payment_paid_rows(qs):
+    rows = []
+    for p in qs.order_by("-paid_at")[:_PAYMENT_CARD_LIST_LIMIT]:
+        rows.append(
+            {
+                "label": _user_display_label(p.user),
+                "amount": p.amount,
+            }
+        )
+    return rows
+
+
+def _new_enrollment_rows(enrollments_qs):
+    rows = []
+    for ec in (
+        enrollments_qs.select_related("student_profile__user", "course")
+        .order_by(
+            "-enrollment_date",
+            "student_profile__user__last_name",
+            "student_profile__user__email",
+            "course__title",
+        )[:_PAYMENT_CARD_LIST_LIMIT]
+    ):
+        user = ec.student_profile.user
+        rows.append(
+            {
+                "label": _user_display_label(user),
+                "course": ec.course.title if ec.course_id else "",
+                "date": ec.enrollment_date,
+            }
+        )
+    return rows
+
+
+def _new_student_rows(enrollments_qs):
+    counts_by_sp = {
+        sid: c
+        for sid, c in enrollments_qs.values("student_profile_id")
+        .annotate(c=Count("id"))
+        .values_list("student_profile_id", "c")
+    }
+    if not counts_by_sp:
+        return []
+    rows = []
+    for sp in (
+        StudentProfile.objects.filter(pk__in=counts_by_sp.keys())
+        .select_related("user")
+        .order_by("user__last_name", "user__first_name", "user__email")[
+            :_PAYMENT_CARD_LIST_LIMIT
+        ]
+    ):
+        rows.append(
+            {
+                "label": _user_display_label(sp.user),
+                "enrollments_this_week": counts_by_sp.get(sp.pk, 0),
+            }
+        )
+    return rows
 
 
 def _session_time_key(t):
@@ -299,6 +387,12 @@ def admin_dashboard_snapshot(context):
     week_start_dt = datetime.combine(week_start, time.min).replace(tzinfo=cal_tz)
     week_end_dt = datetime.combine(week_end, time.max).replace(tzinfo=cal_tz)
 
+    month_first = today.replace(day=1)
+    _last_dom = monthrange(month_first.year, month_first.month)[1]
+    month_last = month_first.replace(day=_last_dom)
+    month_start_dt = datetime.combine(month_first, time.min).replace(tzinfo=cal_tz)
+    month_end_dt = datetime.combine(month_last, time.max).replace(tzinfo=cal_tz)
+
     tt = _build_timetable_sections(cal_now, today, weekday, cal_tz)
     ongoing = tt["ongoing"]
     upcoming = tt["upcoming"]
@@ -364,12 +458,44 @@ def admin_dashboard_snapshot(context):
     )
     new_enrollments_count = enrollments_this_week.count()
     new_students_count = enrollments_this_week.values("student_profile").distinct().count()
+    new_enrollment_items = _new_enrollment_rows(enrollments_this_week)
+    new_student_items = _new_student_rows(enrollments_this_week)
 
-    paid_payments_this_week = Payment.objects.filter(
+    paid_today_qs = Payment.objects.filter(
+        paid_at__gte=day_start,
+        paid_at__lte=day_end,
+        status=Payment.STATUS_SUCCEEDED,
+    ).select_related("user")
+    paid_week_qs = Payment.objects.filter(
         paid_at__gte=week_start_dt,
         paid_at__lte=week_end_dt,
         status=Payment.STATUS_SUCCEEDED,
-    ).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
+    ).select_related("user")
+    paid_month_qs = Payment.objects.filter(
+        paid_at__gte=month_start_dt,
+        paid_at__lte=month_end_dt,
+        status=Payment.STATUS_SUCCEEDED,
+    ).select_related("user")
+
+    paid_today_total = paid_today_qs.aggregate(total=Sum("amount"))["total"] or Decimal(
+        "0.00"
+    )
+    paid_payments_this_week = paid_week_qs.aggregate(total=Sum("amount"))[
+        "total"
+    ] or Decimal("0.00")
+    paid_payments_this_month = paid_month_qs.aggregate(total=Sum("amount"))[
+        "total"
+    ] or Decimal("0.00")
+
+    paid_today_count = paid_today_qs.count()
+    paid_week_count = paid_week_qs.count()
+    paid_month_count = paid_month_qs.count()
+
+    due_today_items = _subscriber_due_rows(payments_due_today)
+    due_week_items = _subscriber_due_rows(payments_due_week)
+    paid_today_items = _payment_paid_rows(paid_today_qs)
+    paid_week_items = _payment_paid_rows(paid_week_qs)
+    paid_month_items = _payment_paid_rows(paid_month_qs)
     new_users_this_week = User.objects.filter(
         date_joined__gte=week_start_dt,
         date_joined__lte=week_end_dt,
@@ -385,6 +511,14 @@ def admin_dashboard_snapshot(context):
         .distinct()
         .count()
     )
+
+    # Admin Messages card (placeholder counts/lists until messaging is modeled).
+    teacher_message_count = 0
+    student_message_count = 0
+    parent_message_count = 0
+    teacher_message_items: list[dict] = []
+    student_message_items: list[dict] = []
+    parent_message_items: list[dict] = []
 
     return {
         "today": today,
@@ -410,9 +544,27 @@ def admin_dashboard_snapshot(context):
         "payments_due_week_count": payments_due_week.count(),
         "due_today_total": due_today_total,
         "due_week_total": due_week_total,
+        "due_today_items": due_today_items,
+        "due_week_items": due_week_items,
+        "paid_today_total": paid_today_total,
+        "paid_today_count": paid_today_count,
+        "paid_week_count": paid_week_count,
+        "paid_month_count": paid_month_count,
+        "paid_today_items": paid_today_items,
+        "paid_week_items": paid_week_items,
+        "paid_month_items": paid_month_items,
         "new_enrollments_count": new_enrollments_count,
         "new_students_count": new_students_count,
+        "new_enrollment_items": new_enrollment_items,
+        "new_student_items": new_student_items,
         "paid_payments_this_week": paid_payments_this_week,
+        "paid_payments_this_month": paid_payments_this_month,
         "new_users_this_week": new_users_this_week,
         "active_classes_next_7_days": active_classes,
+        "teacher_message_count": teacher_message_count,
+        "student_message_count": student_message_count,
+        "parent_message_count": parent_message_count,
+        "teacher_message_items": teacher_message_items,
+        "student_message_items": student_message_items,
+        "parent_message_items": parent_message_items,
     }

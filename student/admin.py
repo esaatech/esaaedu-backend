@@ -10,7 +10,7 @@ from .models import (
     Conversation, Message, CodeSnippet
 )
 from courses.models import Class, Lesson
-from .utils import complete_enrollment_without_stripe
+from .utils import complete_enrollment_without_stripe, sync_manual_payment_from_enrollment
 
 logger = logging.getLogger(__name__)
 
@@ -374,8 +374,16 @@ class EnrolledCourseAdmin(admin.ModelAdmin):
                 # Fall back to normal save if there's an error
                 super().save_model(request, obj, form, change)
         else:
-            # Editing existing enrollment - use normal Django save
+            # Editing existing enrollment - use normal Django save, then mirror to billing.Payment
             super().save_model(request, obj, form, change)
+            try:
+                sync_manual_payment_from_enrollment(obj)
+            except Exception as e:
+                logger.exception("sync_manual_payment_from_enrollment failed after EnrolledCourse save")
+                messages.warning(
+                    request,
+                    f"Enrollment saved, but billing payment could not be synced: {e}",
+                )
     
     def mark_completed(self, request, queryset):
         for enrollment in queryset:

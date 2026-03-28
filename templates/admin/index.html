@@ -6,26 +6,46 @@
 <style>
   .admin-snapshot-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 16px;
-    margin-bottom: 20px;
+    margin-bottom: 40px;
     align-items: stretch;
   }
+  @media (max-width: 1100px) {
+    .admin-snapshot-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 560px) {
+    .admin-snapshot-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  /* One shared height from the viewport (minus typical admin chrome); scroll inside cards. */
   .admin-snapshot-card {
     background: #fff;
     border: 1px solid #d9d9d9;
     border-radius: 8px;
     padding: 14px;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-    min-height: 400px;
-    height: 100%;
+    height: max(280px, calc(100vh - 260px));
+    height: max(280px, calc(100dvh - 260px));
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    min-height: 0;
   }
   .admin-snapshot-card h3 {
     margin: 0 0 8px;
     font-size: 16px;
+    flex-shrink: 0;
+  }
+  .admin-snapshot-card-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 4px;
   }
   .admin-snapshot-value {
     font-size: 28px;
@@ -52,10 +72,6 @@
     padding: 8px 10px;
     margin-top: 10px;
     background: #fafafa;
-  }
-  .admin-snapshot-card-spacer {
-    flex: 1 1 auto;
-    min-height: 8px;
   }
   .admin-timetable-section {
     margin-bottom: 14px;
@@ -111,6 +127,102 @@
   }
   .admin-snapshot-tz-line .admin-snapshot-tz-set {
     margin-left: 0.35em;
+  }
+  .admin-payment-card .admin-payment-head,
+  .admin-enrollment-card .admin-payment-head {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+    flex-shrink: 0;
+  }
+  .admin-payment-head-col {
+    flex: 1;
+    min-width: 0;
+  }
+  .admin-payment-head-col--left {
+    text-align: left;
+  }
+  .admin-payment-head-col--right {
+    text-align: right;
+  }
+  .admin-payment-card .admin-payment-head-col--center {
+    text-align: center;
+  }
+  .admin-payment-card .admin-payment-head .admin-payment-head-label {
+    font-size: 10px;
+    line-height: 1.2;
+  }
+  .admin-payment-card .admin-payment-head .admin-payment-head-amount {
+    font-size: 22px;
+  }
+  .admin-payment-head-label {
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #417690;
+    margin-bottom: 4px;
+  }
+  .admin-payment-head-amount {
+    display: block;
+    font-size: 24px;
+    font-weight: 600;
+    color: #0c4b33;
+    line-height: 1.15;
+  }
+  .admin-payment-section {
+    margin-bottom: 14px;
+  }
+  .admin-payment-section:last-child {
+    margin-bottom: 0;
+  }
+  .admin-payment-count {
+    margin: 0 0 6px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #333;
+  }
+  .admin-payment-list-row {
+    padding: 6px 2px;
+    border-bottom: 1px solid #ececec;
+    font-size: 12px;
+    line-height: 1.35;
+    color: #444;
+  }
+  .admin-payment-list-row:last-child {
+    border-bottom: none;
+  }
+  .admin-messages-card .admin-messages-head {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-shrink: 0;
+  }
+  .admin-messages-head-col {
+    flex: 1;
+    min-width: 0;
+  }
+  .admin-messages-head-col--left {
+    text-align: left;
+  }
+  .admin-messages-head-col--center {
+    text-align: center;
+  }
+  .admin-messages-head-col--right {
+    text-align: right;
+  }
+  .admin-messages-card .admin-messages-head .admin-payment-head-label {
+    font-size: 10px;
+    line-height: 1.2;
+    hyphens: auto;
+  }
+  .admin-messages-card .admin-messages-head-value {
+    font-size: 22px;
+    font-weight: 600;
+    color: #0c4b33;
+    line-height: 1.15;
+    display: block;
   }
 </style>
 {% endblock %}
@@ -266,39 +378,160 @@
       </div>
     </section>
 
-    <section class="admin-snapshot-card">
-      <h3>{% trans "Payments Due" %}</h3>
-      <p class="admin-snapshot-value">${{ snapshot.due_today_total }}</p>
-      <p class="admin-snapshot-meta">
-        {{ snapshot.payments_due_today_count }} due today
-      </p>
-      <p class="admin-snapshot-meta">
-        {{ snapshot.payments_due_week_count }} this week (${% firstof snapshot.due_week_total "0.00" %})
-      </p>
-      <div class="admin-snapshot-card-spacer" aria-hidden="true"></div>
+    <section class="admin-snapshot-card admin-payment-card">
+      <h3>{% trans "Payment" %}</h3>
+      <div class="admin-payment-head">
+        <div class="admin-payment-head-col admin-payment-head-col--left">
+          <span class="admin-payment-head-label">{% trans "Paid today" %}</span>
+          <span class="admin-payment-head-amount">${{ snapshot.paid_today_total|floatformat:2 }}</span>
+        </div>
+        <div class="admin-payment-head-col admin-payment-head-col--center">
+          <span class="admin-payment-head-label">{% trans "Paid this week" %}</span>
+          <span class="admin-payment-head-amount">${{ snapshot.paid_payments_this_week|floatformat:2 }}</span>
+        </div>
+        <div class="admin-payment-head-col admin-payment-head-col--right">
+          <span class="admin-payment-head-label">{% trans "Paid this month" %}</span>
+          <span class="admin-payment-head-amount">${{ snapshot.paid_payments_this_month|floatformat:2 }}</span>
+        </div>
+      </div>
+      <div class="admin-snapshot-card-scroll">
+        <div class="admin-payment-section">
+          <h4 class="admin-timetable-section-title">{% trans "Due today" %}</h4>
+          <p class="admin-payment-count">{{ snapshot.payments_due_today_count }}</p>
+          {% for item in snapshot.due_today_items %}
+          <div class="admin-payment-list-row">
+            {{ item.label }}{% if item.course %} — {{ item.course }}{% endif %}{% if item.amount is not None %} · ${{ item.amount|floatformat:2 }}{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        <div class="admin-payment-section">
+          <h4 class="admin-timetable-section-title">{% trans "Due this week" %}</h4>
+          <p class="admin-payment-count">{{ snapshot.payments_due_week_count }}</p>
+          {% for item in snapshot.due_week_items %}
+          <div class="admin-payment-list-row">
+            {{ item.label }}{% if item.course %} — {{ item.course }}{% endif %}{% if item.amount is not None %} · ${{ item.amount|floatformat:2 }}{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        <div class="admin-payment-section">
+          <h4 class="admin-timetable-section-title">{% trans "Paid today" %}</h4>
+          <p class="admin-payment-count">{{ snapshot.paid_today_count }}</p>
+          {% for item in snapshot.paid_today_items %}
+          <div class="admin-payment-list-row">
+            {{ item.label }} · ${{ item.amount|floatformat:2 }}
+          </div>
+          {% endfor %}
+        </div>
+        <div class="admin-payment-section">
+          <h4 class="admin-timetable-section-title">{% trans "Paid this week" %}</h4>
+          <p class="admin-payment-count">{{ snapshot.paid_week_count }}</p>
+          {% for item in snapshot.paid_week_items %}
+          <div class="admin-payment-list-row">
+            {{ item.label }} · ${{ item.amount|floatformat:2 }}
+          </div>
+          {% endfor %}
+        </div>
+        <div class="admin-payment-section">
+          <h4 class="admin-timetable-section-title">{% trans "Paid this month" %}</h4>
+          <p class="admin-payment-count">{{ snapshot.paid_month_count }}</p>
+          {% for item in snapshot.paid_month_items %}
+          <div class="admin-payment-list-row">
+            {{ item.label }} · ${{ item.amount|floatformat:2 }}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
     </section>
 
-    <section class="admin-snapshot-card">
-      <h3>{% trans "New Enrollments This Week" %}</h3>
-      <p class="admin-snapshot-value">{{ snapshot.new_enrollments_count }}</p>
-      <p class="admin-snapshot-meta">
-        {{ snapshot.new_students_count }} unique students enrolled
-      </p>
-      <div class="admin-snapshot-card-spacer" aria-hidden="true"></div>
+    <section class="admin-snapshot-card admin-enrollment-card">
+      <h3>{% trans "New enrollment and student" %}</h3>
+      <div class="admin-payment-head">
+        <div class="admin-payment-head-col admin-payment-head-col--left">
+          <span class="admin-payment-head-label">{% trans "New enrollment" %}</span>
+          <span class="admin-payment-head-amount">{{ snapshot.new_enrollments_count }}</span>
+        </div>
+        <div class="admin-payment-head-col admin-payment-head-col--right">
+          <span class="admin-payment-head-label">{% trans "Students" %}</span>
+          <span class="admin-payment-head-amount">{{ snapshot.new_students_count }}</span>
+        </div>
+      </div>
+      <div class="admin-snapshot-card-scroll">
+        <div class="admin-payment-section">
+          <h4 class="admin-timetable-section-title">{% trans "New enrollments" %}</h4>
+          <p class="admin-payment-count">{{ snapshot.new_enrollments_count }}</p>
+          {% for item in snapshot.new_enrollment_items %}
+          <div class="admin-payment-list-row">
+            {{ item.label }}{% if item.course %} — {{ item.course }}{% endif %} · {{ item.date|date:"M j, Y" }}
+          </div>
+          {% endfor %}
+        </div>
+        <div class="admin-payment-section">
+          <h4 class="admin-timetable-section-title">{% trans "Students" %}</h4>
+          <p class="admin-payment-count">{{ snapshot.new_students_count }}</p>
+          {% for item in snapshot.new_student_items %}
+          <div class="admin-payment-list-row">
+            {{ item.label }}{% if item.enrollments_this_week > 1 %}
+            · {% blocktrans trimmed count counter=item.enrollments_this_week %}
+              {{ counter }} enrollment this week
+            {% plural %}
+              {{ counter }} enrollments this week
+            {% endblocktrans %}
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
     </section>
 
-    <section class="admin-snapshot-card">
-      <h3>{% trans "Activity Snapshot" %}</h3>
-      <p class="admin-snapshot-meta">Paid this week: ${{ snapshot.paid_payments_this_week }}</p>
-      <p class="admin-snapshot-meta">New users this week: {{ snapshot.new_users_this_week }}</p>
-      <p class="admin-snapshot-meta">Classes in next 7 days: {{ snapshot.active_classes_next_7_days }}</p>
-      <div class="admin-snapshot-card-spacer" aria-hidden="true"></div>
+    <section class="admin-snapshot-card admin-messages-card">
+      <h3>{% trans "Messages" %}</h3>
+      <div class="admin-messages-head">
+        <div class="admin-messages-head-col admin-messages-head-col--left">
+          <span class="admin-payment-head-label">{% trans "Teacher message" %}</span>
+          <span class="admin-messages-head-value">{{ snapshot.teacher_message_count }}</span>
+        </div>
+        <div class="admin-messages-head-col admin-messages-head-col--center">
+          <span class="admin-payment-head-label">{% trans "Student message" %}</span>
+          <span class="admin-messages-head-value">{{ snapshot.student_message_count }}</span>
+        </div>
+        <div class="admin-messages-head-col admin-messages-head-col--right">
+          <span class="admin-payment-head-label">{% trans "Parent message" %}</span>
+          <span class="admin-messages-head-value">{{ snapshot.parent_message_count }}</span>
+        </div>
+      </div>
+      <div class="admin-snapshot-card-scroll">
+        <div class="admin-payment-section">
+          <h4 class="admin-timetable-section-title">{% trans "Teacher messages" %}</h4>
+          <p class="admin-payment-count">{{ snapshot.teacher_message_count }}</p>
+          {% for item in snapshot.teacher_message_items %}
+          <div class="admin-payment-list-row">
+            {% if item.label %}{{ item.label }}{% endif %}{% if item.detail %} — {{ item.detail }}{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        <div class="admin-payment-section">
+          <h4 class="admin-timetable-section-title">{% trans "Student messages" %}</h4>
+          <p class="admin-payment-count">{{ snapshot.student_message_count }}</p>
+          {% for item in snapshot.student_message_items %}
+          <div class="admin-payment-list-row">
+            {% if item.label %}{{ item.label }}{% endif %}{% if item.detail %} — {{ item.detail }}{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        <div class="admin-payment-section">
+          <h4 class="admin-timetable-section-title">{% trans "Parent messages" %}</h4>
+          <p class="admin-payment-count">{{ snapshot.parent_message_count }}</p>
+          {% for item in snapshot.parent_message_items %}
+          <div class="admin-payment-list-row">
+            {% if item.label %}{{ item.label }}{% endif %}{% if item.detail %} — {{ item.detail }}{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
     </section>
   </div>
 
-  {% if app_list %}
-    {% include "admin/app_list.html" with app_list=app_list show_changelinks=True %}
-  {% else %}
+  {% if not app_list %}
     <p>{% trans "You don't have permission to view or edit anything." %}</p>
   {% endif %}
 </div>

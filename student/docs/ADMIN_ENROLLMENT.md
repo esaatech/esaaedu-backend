@@ -19,13 +19,13 @@ Created a shared utility function `complete_enrollment_without_stripe()` that ha
 - Assigns students to classes (if specified)
 - Handles different payment statuses (free, paid, scholarship)
 - Is idempotent (can be called multiple times safely)
-- Optionally creates Payment records for cash payments
+- Syncs **`billings.Payment`** for manual/cash paid state via **`sync_manual_payment_from_enrollment()`** (see **[billings/docs/admin_manual_payment_sync.md](../../billings/docs/admin_manual_payment_sync.md)**)
 
 **Key Features:**
 - Atomic transactions for data integrity
 - Automatic class assignment (if class is not full)
 - Progress tracking initialization
-- Payment record creation for cash payments (optional)
+- Billing sync after create/reactivate: one manual **`Payment`** per enrollment when paid + positive amount (linked via **`Payment.enrolled_course`**)
 
 ### Phase 2: Admin Interface Integration
 
@@ -110,6 +110,8 @@ To ensure fast form loading even with large datasets, the following optimization
    - **Amount paid**: Enter amount if payment_status is "paid"
    - **Payment due date**: Set if applicable
 8. Click "Save"
+
+**Editing an existing enrollment:** Changing Financial fields (e.g. to **Paid** with an amount) runs the same billing sync after save, so **`billing.Payment`** and the admin dashboard paid widgets stay aligned.
 
 ### Payment Status Options
 
@@ -293,12 +295,12 @@ if (course.is_free || course.price === 0) {
 }
 ```
 
-## Future Enhancements (Phase 4)
+## Phase 4: Billing sync (implemented)
 
-### Phase 4: Payment Record Creation
-- Automatically create Payment records for cash payments
-- Link Payment records to enrollments
-- Track payment history
+Manual/cash payments are mirrored to **`billings.Payment`** and linked with **`Payment.enrolled_course`**.
+
+- **Code:** `sync_manual_payment_from_enrollment` in **`student/utils.py`**; called from **`complete_enrollment_without_stripe`** and **`EnrolledCourseAdmin.save_model`** (edits).
+- **Documentation:** **[billings/docs/admin_manual_payment_sync.md](../../billings/docs/admin_manual_payment_sync.md)** (troubleshooting, behavior, migration).
 
 ## Testing
 
@@ -332,7 +334,9 @@ To test the admin enrollment functionality:
 
 ## Related Files
 
-- `student/utils.py` - Shared enrollment function
+- `student/utils.py` - Shared enrollment function and **`sync_manual_payment_from_enrollment`**
+- `billings/models.py` - **`Payment.enrolled_course`**
+- `billings/docs/admin_manual_payment_sync.md` - Sync behavior and troubleshooting
 - `student/admin.py` - Admin form and interface
 - `student/views.py` - API endpoints
 - `student/urls.py` - URL configuration

@@ -25,7 +25,7 @@ class CustomerAccountAdmin(admin.ModelAdmin):
 
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
-    list_display = ("user", "course", "amount", "currency", "status", "paid_at")
+    list_display = ("user", "course", "enrolled_course", "amount", "currency", "status", "paid_at")
     list_filter = ("status", "currency")
     search_fields = ("user__email", "stripe_payment_intent_id", "stripe_invoice_id")
 

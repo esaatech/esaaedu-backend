@@ -80,6 +80,14 @@ class Payment(models.Model):
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='payments')
     course = models.ForeignKey('courses.Course', on_delete=models.SET_NULL, null=True, blank=True, related_name='payments')
+    enrolled_course = models.OneToOneField(
+        'student.EnrolledCourse',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='manual_billing_payment',
+        help_text='Admin/cash payment tied to this enrollment; keeps one Payment row per enrollment.',
+    )
     stripe_payment_intent_id = models.CharField(max_length=255, blank=True)
     stripe_invoice_id = models.CharField(max_length=255, blank=True)
     stripe_charge_id = models.CharField(max_length=255, blank=True)
