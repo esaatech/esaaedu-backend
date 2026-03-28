@@ -1,0 +1,215 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static admin_dashboard %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+  .admin-snapshot-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+    align-items: stretch;
+  }
+  .admin-snapshot-card {
+    background: #fff;
+    border: 1px solid #d9d9d9;
+    border-radius: 8px;
+    padding: 14px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    min-height: 400px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .admin-snapshot-card h3 {
+    margin: 0 0 8px;
+    font-size: 16px;
+  }
+  .admin-snapshot-value {
+    font-size: 28px;
+    line-height: 1.1;
+    margin: 0 0 8px;
+    color: #0c4b33;
+    font-weight: 600;
+  }
+  .admin-snapshot-meta {
+    margin: 0;
+    color: #666;
+    font-size: 13px;
+  }
+  .admin-timetable-card .admin-timetable-head {
+    flex-shrink: 0;
+  }
+  .admin-timetable-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-top: 10px;
+    background: #fafafa;
+  }
+  .admin-snapshot-card-spacer {
+    flex: 1 1 auto;
+    min-height: 8px;
+  }
+  .admin-timetable-section {
+    margin-bottom: 14px;
+  }
+  .admin-timetable-section:last-child {
+    margin-bottom: 0;
+  }
+  .admin-timetable-section-title {
+    margin: 0 0 6px;
+    padding-bottom: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #417690;
+    border-bottom: 1px solid #dce6eb;
+  }
+  .admin-timetable-row {
+    padding: 8px 4px;
+    border-bottom: 1px solid #ececec;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  .admin-timetable-row:last-child {
+    border-bottom: none;
+  }
+  .admin-timetable-source {
+    display: block;
+    margin-top: 2px;
+    font-size: 11px;
+    color: #888;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+{% admin_dashboard_snapshot as snapshot %}
+
+<div id="content-main">
+  <h2>{% trans "Admin Snapshot" %}</h2>
+  <p class="help">
+    {% blocktrans with today=snapshot.today week_start=snapshot.week_start week_end=snapshot.week_end tz=snapshot.timezone_name %}
+      Quick pulse for {{ today }} (week: {{ week_start }} – {{ week_end }}). Timetable times use <strong>{{ tz }}</strong> — your Admin calendar timezone on your user account if set, otherwise System Settings calendar timezone (then Django TIME_ZONE if needed).
+    {% endblocktrans %}
+  </p>
+
+  <div class="admin-snapshot-grid">
+    <section class="admin-snapshot-card admin-timetable-card">
+      <div class="admin-timetable-head">
+        <h3>{% trans "Classes — today" %}</h3>
+        <p class="admin-snapshot-value">{{ snapshot.timetable_rows_total }}</p>
+        <p class="admin-snapshot-meta">
+          {{ snapshot.timetable_slots_today }} {% trans "weekly timetable slots" %} ·
+          {% trans "Ongoing" %}: {{ snapshot.timetable_ongoing_count }} ·
+          {% trans "Upcoming" %}: {{ snapshot.timetable_upcoming_count }} ·
+          {% trans "Past" %}: {{ snapshot.timetable_past_count }} ·
+          {{ snapshot.timetable_slots_scheduled }} {% trans "with ClassEvent" %}
+        </p>
+        <p class="admin-snapshot-meta">
+          {{ snapshot.classes_today_count }} {% trans "classes" %} ·
+          {{ snapshot.teachers_with_classes_today }} {% trans "teachers" %} ·
+          {{ snapshot.students_with_classes_today }} {% trans "students (enrolled)" %}
+        </p>
+      </div>
+      <div class="admin-timetable-scroll">
+        {% if snapshot.timetable_ongoing or snapshot.timetable_upcoming or snapshot.timetable_past %}
+          {% if snapshot.timetable_ongoing %}
+          <div class="admin-timetable-section">
+            <h4 class="admin-timetable-section-title">{% trans "Ongoing now" %} ({{ snapshot.timetable_ongoing_count }})</h4>
+            {% for row in snapshot.timetable_ongoing %}
+            <div class="admin-timetable-row">
+              <strong>{{ row.time_range }}</strong>
+              — {{ row.class_name }} ({{ row.course_title }}) — {{ row.teacher_label }}
+              <span class="admin-timetable-source">
+                {% if row.from_timetable and row.scheduled %}{% trans "Set timetable + scheduled" %}{% elif row.from_timetable %}{% trans "Set timetable only" %}{% else %}{% trans "Scheduled only" %}{% endif %}
+                · {% trans "ClassEvent" %}:
+                {% if row.scheduled %}{% trans "Yes" %}{% if row.event_title %} ({{ row.event_title }}){% endif %}{% else %}{% trans "No" %}{% endif %}
+              </span>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+          {% if snapshot.timetable_upcoming %}
+          <div class="admin-timetable-section">
+            <h4 class="admin-timetable-section-title">{% trans "Upcoming" %} ({{ snapshot.timetable_upcoming_count }})</h4>
+            {% for row in snapshot.timetable_upcoming %}
+            <div class="admin-timetable-row">
+              <strong>{{ row.time_range }}</strong>
+              — {{ row.class_name }} ({{ row.course_title }}) — {{ row.teacher_label }}
+              <span class="admin-timetable-source">
+                {% if row.from_timetable and row.scheduled %}{% trans "Set timetable + scheduled" %}{% elif row.from_timetable %}{% trans "Set timetable only" %}{% else %}{% trans "Scheduled only" %}{% endif %}
+                · {% trans "ClassEvent" %}:
+                {% if row.scheduled %}{% trans "Yes" %}{% if row.event_title %} ({{ row.event_title }}){% endif %}{% else %}{% trans "No" %}{% endif %}
+              </span>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+          {% if snapshot.timetable_past %}
+          <div class="admin-timetable-section">
+            <h4 class="admin-timetable-section-title">{% trans "Past" %} ({{ snapshot.timetable_past_count }})</h4>
+            {% for row in snapshot.timetable_past %}
+            <div class="admin-timetable-row">
+              <strong>{{ row.time_range }}</strong>
+              — {{ row.class_name }} ({{ row.course_title }}) — {{ row.teacher_label }}
+              <span class="admin-timetable-source">
+                {% if row.from_timetable and row.scheduled %}{% trans "Set timetable + scheduled" %}{% elif row.from_timetable %}{% trans "Set timetable only" %}{% else %}{% trans "Scheduled only" %}{% endif %}
+                · {% trans "ClassEvent" %}:
+                {% if row.scheduled %}{% trans "Yes" %}{% if row.event_title %} ({{ row.event_title }}){% endif %}{% else %}{% trans "No" %}{% endif %}
+              </span>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+        {% else %}
+          <p class="admin-snapshot-meta">{% trans "No weekly timetable slots for this weekday." %}</p>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="admin-snapshot-card">
+      <h3>{% trans "Payments Due" %}</h3>
+      <p class="admin-snapshot-value">${{ snapshot.due_today_total }}</p>
+      <p class="admin-snapshot-meta">
+        {{ snapshot.payments_due_today_count }} due today
+      </p>
+      <p class="admin-snapshot-meta">
+        {{ snapshot.payments_due_week_count }} this week (${% firstof snapshot.due_week_total "0.00" %})
+      </p>
+      <div class="admin-snapshot-card-spacer" aria-hidden="true"></div>
+    </section>
+
+    <section class="admin-snapshot-card">
+      <h3>{% trans "New Enrollments This Week" %}</h3>
+      <p class="admin-snapshot-value">{{ snapshot.new_enrollments_count }}</p>
+      <p class="admin-snapshot-meta">
+        {{ snapshot.new_students_count }} unique students enrolled
+      </p>
+      <div class="admin-snapshot-card-spacer" aria-hidden="true"></div>
+    </section>
+
+    <section class="admin-snapshot-card">
+      <h3>{% trans "Activity Snapshot" %}</h3>
+      <p class="admin-snapshot-meta">Paid this week: ${{ snapshot.paid_payments_this_week }}</p>
+      <p class="admin-snapshot-meta">New users this week: {{ snapshot.new_users_this_week }}</p>
+      <p class="admin-snapshot-meta">Classes in next 7 days: {{ snapshot.active_classes_next_7_days }}</p>
+      <div class="admin-snapshot-card-spacer" aria-hidden="true"></div>
+    </section>
+  </div>
+
+  {% if app_list %}
+    {% include "admin/app_list.html" with app_list=app_list show_changelinks=True %}
+  {% else %}
+    <p>{% trans "You don't have permission to view or edit anything." %}</p>
+  {% endif %}
+</div>
+{% endblock %}

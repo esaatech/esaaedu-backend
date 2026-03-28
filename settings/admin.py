@@ -1,5 +1,61 @@
+from django import forms
 from django.contrib import admin
-from .models import UserDashboardSettings, CourseSettings, ClassroomToolDefaults, UserTutorXInstruction
+
+from users.validators import get_all_timezone_choices_cached
+
+from .models import (
+    ClassroomToolDefaults,
+    CourseSettings,
+    SystemSettings,
+    UserDashboardSettings,
+    UserTutorXInstruction,
+)
+
+
+class SystemSettingsAdminForm(forms.ModelForm):
+    calendar_timezone = forms.ChoiceField(
+        choices=get_all_timezone_choices_cached(),
+        required=True,
+        label="Calendar timezone",
+    )
+
+    class Meta:
+        model = SystemSettings
+        fields = ("calendar_timezone",)
+
+
+@admin.register(SystemSettings)
+class SystemSettingsAdmin(admin.ModelAdmin):
+    form = SystemSettingsAdminForm
+    list_display = ("calendar_timezone", "updated_at")
+    readonly_fields = ("id", "created_at", "updated_at")
+
+    fieldsets = (
+        (
+            "Calendar",
+            {
+                "fields": ("calendar_timezone",),
+                "description": (
+                    "Default IANA timezone for weekly ClassSession wall times and "
+                    "the admin timetable when the logged-in user has no "
+                    "Admin calendar timezone set on their user account."
+                ),
+            },
+        ),
+        (
+            "Metadata",
+            {
+                "fields": ("id", "created_at", "updated_at"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
+
+    def has_add_permission(self, request):
+        return not SystemSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(CourseSettings)

@@ -3,7 +3,49 @@ from django.contrib.auth import get_user_model
 from django.core.validators import MinValueValidator, MaxValueValidator
 import uuid
 
+from users.validators import validate_iana_timezone
+
 User = get_user_model()
+
+
+class SystemSettings(models.Model):
+    """
+    Organization-wide settings (singleton — one row).
+
+    Used for values that should not be per-user, e.g. the official calendar
+    timezone for ClassSession wall-clock times and admin timetable fallbacks.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    calendar_timezone = models.CharField(
+        max_length=63,
+        default="UTC",
+        validators=[validate_iana_timezone],
+        help_text=(
+            "Default IANA timezone for weekly ClassSession wall times and the admin "
+            "timetable when the logged-in user has not set Admin calendar timezone "
+            "(e.g. America/Toronto, Africa/Lagos)."
+        ),
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "System Settings"
+        verbose_name_plural = "System Settings"
+
+    def __str__(self):
+        return f"System Settings ({self.calendar_timezone})"
+
+    @classmethod
+    def get_solo(cls):
+        """Return the single row, creating it with defaults if missing."""
+        row = cls.objects.first()
+        if row:
+            return row
+        return cls.objects.create(calendar_timezone="UTC")
 
 
 class CourseSettings(models.Model):
@@ -481,3 +523,25 @@ class UserTutorXInstruction(models.Model):
             return self.user_instruction != default_config.default_user_instruction
         except Exception:
             return True  # If we can't find default, assume it's customized
+
+
+def get_calendar_timezone_fallback_name():
+    """
+    IANA zone for admin timetable when the user has no admin_calendar_timezone set.
+
+    Order: SystemSettings.calendar_timezone → Django TIME_ZONE → UTC.
+    Safe if the DB table is missing (e.g. during migrations).
+    """
+    from django.conf import settings as django_settings
+    from zoneinfo import available_timezones
+
+    try:
+        row = SystemSettings.objects.only("calendar_timezone").first()
+        if row and row.calendar_timezone:
+            s = str(row.calendar_timezone).strip()
+            if s and s in available_timezones():
+                return s
+    except Exception:
+        pass
+    s = str(django_settings.TIME_ZONE)
+    return s if s in available_timezones() else "UTC"

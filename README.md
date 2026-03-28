@@ -18,7 +18,9 @@ Django REST API backend for the Little Learners Tech educational platform.
    poetry install
    ```
 
-2. Set up environment variables in `.env` file
+2. Set up environment variables in `.env` file (see [`.env.example`](.env.example) for keys).
+
+   **Admin timetable / Classes — today:** timezone comes from the logged-in user’s **Admin calendar timezone** (optional, on the User in Django admin) if set; otherwise **System settings → Calendar timezone** in Django admin. If that row is missing or invalid, Django’s **`TIME_ZONE`** (default UTC in `settings.py`) is used.
 
 3. Run migrations:
    ```bash

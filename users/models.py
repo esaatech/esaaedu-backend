@@ -52,7 +52,18 @@ class User(AbstractUser):
         ],
         help_text="Short unique handle for hosted app URLs (e.g. john243).",
     )
-    
+
+    admin_calendar_timezone = models.CharField(
+        max_length=63,
+        blank=True,
+        default="",
+        validators=[validate_iana_timezone],
+        help_text=(
+            "IANA timezone for Django admin dashboard calendar/timetable (e.g. "
+            "America/Toronto). Empty = System Settings calendar timezone, then TIME_ZONE."
+        ),
+    )
+
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['firebase_uid']
     

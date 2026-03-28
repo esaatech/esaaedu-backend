@@ -89,6 +89,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "backend.admin_calendar_timezone_middleware.AdminCalendarTimezoneMiddleware",
     "authentication.middleware.FirebaseAuthenticationMiddleware",  # Custom Firebase auth
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -100,7 +101,9 @@ ROOT_URLCONF = "backend.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        # Project-level templates override bundled app templates (e.g. admin/index.html)
+        # when listed before APP_DIRS resolution order.
+        "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -152,6 +155,9 @@ TIME_ZONE = "UTC"
 USE_I18N = True
 
 USE_TZ = True
+
+# Admin timetable calendar zone: per-user (User.admin_calendar_timezone) and
+# SystemSettings.calendar_timezone in the database; if neither applies, TIME_ZONE below.
 
 # Lesson chat (TutorX): cache TTL for lesson context (seconds). Default 10 min; use Redis in prod.
 LESSON_CHAT_CACHE_TTL_SECONDS = config('LESSON_CHAT_CACHE_TTL_SECONDS', default=600, cast=int)

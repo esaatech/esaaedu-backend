@@ -1,6 +1,7 @@
 from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.contrib.auth.forms import UserChangeForm
 from .models import User, TeacherProfile, StudentProfile
 from .validators import get_all_timezone_choices_cached
 
@@ -11,8 +12,38 @@ except Exception:
     StudentWeeklyPerformance = None
 
 
+class UserAdminChangeForm(UserChangeForm):
+    """Dropdown for admin calendar IANA timezone (optional)."""
+
+    admin_calendar_timezone = forms.ChoiceField(
+        choices=get_all_timezone_choices_cached(),
+        required=False,
+        label="Admin calendar timezone",
+        help_text=(
+            "IANA zone for the admin dashboard class timetable. "
+            "Leave blank to use System Settings calendar timezone (or Django TIME_ZONE)."
+        ),
+    )
+
+    class Meta(UserChangeForm.Meta):
+        model = User
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk and self.instance.admin_calendar_timezone:
+            current = self.instance.admin_calendar_timezone
+            choices = list(self.fields["admin_calendar_timezone"].choices)
+            if not any(c[0] == current for c in choices if c[0]):
+                self.fields["admin_calendar_timezone"].choices = [
+                    ("", "---------"),
+                    (current, current),
+                ] + [c for c in choices if c[0]]
+
+
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
+    form = UserAdminChangeForm
     list_display = ['email', 'public_handle', 'first_name', 'last_name', 'role', 'is_active', 'is_staff', 'date_joined']
     list_filter = ['role', 'is_active', 'is_staff', 'is_superuser', 'date_joined']
     search_fields = ['email', 'public_handle', 'first_name', 'last_name', 'firebase_uid']
@@ -27,6 +58,14 @@ class UserAdmin(BaseUserAdmin):
         }),
         ('Role & Permissions', {
             'fields': ('role', 'is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')
+        }),
+        ('Admin calendar', {
+            'classes': ('collapse',),
+            'fields': ('admin_calendar_timezone',),
+            'description': (
+                'Timezone for the Django admin dashboard timetable (staff). '
+                'Empty means: System Settings calendar timezone, then Django TIME_ZONE.'
+            ),
         }),
         ('Important Dates', {
             'fields': ('last_login', 'date_joined', 'last_login_at')
