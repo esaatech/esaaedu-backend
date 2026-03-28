@@ -363,6 +363,24 @@ class ClassAdmin(admin.ModelAdmin):
     search_fields = ['name', 'course__title', 'teacher__email', 'description']
     readonly_fields = ['id', 'student_count', 'is_full', 'available_spots', 'session_count', 'formatted_schedule', 'created_at', 'updated_at']
     filter_horizontal = ['students']
+
+    def get_urls(self):
+        from django.urls import path
+
+        from . import admin_class_detail
+
+        return [
+            path(
+                "<uuid:class_id>/detail/section/",
+                self.admin_site.admin_view(admin_class_detail.class_detail_section_view),
+                name="courses_class_detail_section",
+            ),
+            path(
+                "<uuid:class_id>/detail/",
+                self.admin_site.admin_view(admin_class_detail.class_detail_view),
+                name="courses_class_detail",
+            ),
+        ] + super().get_urls()
     
     fieldsets = (
         ('Basic Information', {

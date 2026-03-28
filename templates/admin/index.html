@@ -167,7 +167,13 @@
             {% for row in snapshot.timetable_ongoing %}
             <div class="admin-timetable-row">
               <strong>{{ row.time_range }}</strong>
-              — {{ row.class_name }} ({{ row.course_title }}) —
+              —
+              {% if row.class_detail_url %}
+              <a href="{{ row.class_detail_url }}">{{ row.class_name }}</a>
+              {% else %}
+              {{ row.class_name }}
+              {% endif %}
+              ({{ row.course_title }}) —
               {% if row.teacher_admin_url %}
               <a href="{{ row.teacher_admin_url }}" class="admin-timetable-teacher">{{ row.teacher_label }}</a>
               {% else %}
@@ -194,7 +200,13 @@
             {% for row in snapshot.timetable_upcoming %}
             <div class="admin-timetable-row">
               <strong>{{ row.time_range }}</strong>
-              — {{ row.class_name }} ({{ row.course_title }}) —
+              —
+              {% if row.class_detail_url %}
+              <a href="{{ row.class_detail_url }}">{{ row.class_name }}</a>
+              {% else %}
+              {{ row.class_name }}
+              {% endif %}
+              ({{ row.course_title }}) —
               {% if row.teacher_admin_url %}
               <a href="{{ row.teacher_admin_url }}" class="admin-timetable-teacher">{{ row.teacher_label }}</a>
               {% else %}
@@ -221,7 +233,13 @@
             {% for row in snapshot.timetable_past %}
             <div class="admin-timetable-row">
               <strong>{{ row.time_range }}</strong>
-              — {{ row.class_name }} ({{ row.course_title }}) —
+              —
+              {% if row.class_detail_url %}
+              <a href="{{ row.class_detail_url }}">{{ row.class_name }}</a>
+              {% else %}
+              {{ row.class_name }}
+              {% endif %}
+              ({{ row.course_title }}) —
               {% if row.teacher_admin_url %}
               <a href="{{ row.teacher_admin_url }}" class="admin-timetable-teacher">{{ row.teacher_label }}</a>
               {% else %}

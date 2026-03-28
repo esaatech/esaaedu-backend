@@ -249,7 +249,14 @@ def _build_timetable_sections(cal_now, today, weekday, cal_tz):
         for r in group:
             del r["bucket"]
             del r["start_sort"]
+            cid = r["class_instance_id"]
             del r["class_instance_id"]
+            try:
+                r["class_detail_url"] = reverse(
+                    "admin:courses_class_detail", args=[cid]
+                )
+            except NoReverseMatch:
+                r["class_detail_url"] = ""
 
     return {
         "ongoing": ongoing,

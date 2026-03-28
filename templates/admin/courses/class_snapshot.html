@@ -1,0 +1,172 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}{{ title }} | {{ block.super }}{% endblock %}
+
+{# Base admin template also prints {{ title }} in content_title and breadcrumbs; clear those. #}
+{% block content_title %}{% endblock %}
+{% block content_subtitle %}{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% trans "Home" %}</a>
+  &rsaquo;
+  <a href="{% url 'admin:courses_class_changelist' %}">{% trans "Classes" %}</a>
+  &rsaquo;
+  {% trans "Class detail" %}
+</div>
+{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+  .admin-class-detail-heading {
+    margin: 0 0 8px;
+    font-size: 20px;
+  }
+  .admin-class-detail-heading .quiet {
+    font-weight: 400;
+    color: #666;
+    font-size: 16px;
+  }
+  .admin-class-detail-meta {
+    margin: 0 0 20px;
+    color: #555;
+    font-size: 13px;
+  }
+  .admin-class-detail-meta a {
+    font-weight: 600;
+  }
+  .admin-class-detail-block h3 {
+    margin: 20px 0 8px;
+    font-size: 14px;
+    color: #417690;
+  }
+  .admin-class-detail-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-bottom: 8px;
+  }
+  .admin-class-detail-table th,
+  .admin-class-detail-table td {
+    border: 1px solid #e0e0e0;
+    padding: 8px 10px;
+    text-align: left;
+  }
+  .admin-class-detail-table th {
+    background: #f6f6f6;
+  }
+  .admin-class-detail-table--attendance th,
+  .admin-class-detail-table--attendance td {
+    text-align: center;
+  }
+  .admin-class-detail-table--attendance td:first-child,
+  .admin-class-detail-table--attendance th:first-child {
+    text-align: left;
+  }
+  .quiet {
+    color: #666;
+  }
+  .admin-class-detail-peers {
+    margin: 24px 0 12px;
+    padding: 12px;
+    background: #f9f9f9;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+  }
+  .admin-class-detail-peers h3 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #417690;
+  }
+  .admin-class-detail-peer-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .admin-class-detail-load-peer {
+    cursor: pointer;
+    padding: 6px 12px;
+    border: 1px solid #417690;
+    background: #fff;
+    color: #417690;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .admin-class-detail-load-peer:hover:not(:disabled) {
+    background: #e8f4f8;
+  }
+  .admin-class-detail-load-peer:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  .admin-class-detail-peer-mount {
+    margin-top: 8px;
+  }
+  .admin-class-detail-peer-rule {
+    margin: 24px 0;
+    border: none;
+    border-top: 1px solid #ddd;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  {% include "admin/courses/_class_detail_block.html" %}
+
+  {% if peer_classes %}
+  <div class="admin-class-detail-peers">
+    <h3>{{ class_obj.course.title }} — {% trans "Classes" %}</h3>
+    <p class="quiet" style="margin:0 0 10px;font-size:12px;">
+      {% trans "Choose another class section for this course." %}
+    </p>
+    <div class="admin-class-detail-peer-buttons">
+      {% for p in peer_classes %}
+      <button
+        type="button"
+        class="admin-class-detail-load-peer"
+        data-section-url="{% url 'admin:courses_class_detail_section' p.id %}"
+        data-class-name="{{ p.name|escape }}"
+      >
+        {{ p.name }}
+      </button>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div id="admin-class-detail-peer-mount" class="admin-class-detail-peer-mount"></div>
+</div>
+
+<script>
+(function () {
+  var mount = document.getElementById("admin-class-detail-peer-mount");
+  if (!mount) return;
+  document.querySelectorAll(".admin-class-detail-load-peer").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var url = btn.getAttribute("data-section-url");
+      if (!url || btn.disabled) return;
+      btn.disabled = true;
+      fetch(url, { credentials: "same-origin", headers: { "X-Requested-With": "XMLHttpRequest" } })
+        .then(function (r) {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.text();
+        })
+        .then(function (html) {
+          var wrap = document.createElement("div");
+          wrap.innerHTML = html;
+          mount.appendChild(wrap);
+        })
+        .catch(function () {
+          btn.disabled = false;
+          alert("{% trans 'Could not load section.' %}");
+        });
+    });
+  });
+})();
+</script>
+{% endblock %}

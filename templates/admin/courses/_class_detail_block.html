@@ -1,0 +1,90 @@
+{% load i18n %}
+{# Included for primary and peer fragments. Expects: class_obj, sessions, students, attendance_dates, attendance_rows #}
+<div class="admin-class-detail-block" data-class-id="{{ class_obj.id }}">
+  <h2 class="admin-class-detail-heading">
+    {{ class_obj.name }}
+    <span class="quiet">({{ class_obj.course.title }})</span>
+  </h2>
+  <p class="admin-class-detail-meta">
+    {% trans "Teacher" %}:
+    {% if class_obj.teacher %}
+      {{ class_obj.teacher.get_full_name|default:class_obj.teacher.email }}
+    {% else %}
+      —
+    {% endif %}
+    ·
+    <a href="{% url 'admin:courses_class_change' class_obj.id %}">{% trans "Edit class in admin" %}</a>
+    ·
+    <a href="{% url 'admin:courses_course_change' class_obj.course_id %}">{% trans "Edit course" %}</a>
+  </p>
+
+  <h3>{% trans "Students" %} ({{ students|length }})</h3>
+  {% if students %}
+  <table class="admin-class-detail-table">
+    <thead>
+      <tr>
+        <th>{% trans "Name" %}</th>
+        <th>{% trans "Email" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in students %}
+      <tr>
+        <td>{{ s.get_full_name|default:"—" }}</td>
+        <td>{{ s.email }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="quiet">{% trans "No students enrolled in this class." %}</p>
+  {% endif %}
+
+  <h3>{% trans "Weekly timetable (sessions)" %}</h3>
+  {% if sessions %}
+  <table class="admin-class-detail-table">
+    <thead>
+      <tr>
+        <th>{% trans "Day" %}</th>
+        <th>{% trans "Time" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for se in sessions %}
+      <tr>
+        <td>{{ se.get_day_of_week_display }}</td>
+        <td>{{ se.start_time|time:"g:i A" }} – {{ se.end_time|time:"g:i A" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="quiet">{% trans "No active weekly sessions." %}</p>
+  {% endif %}
+
+  <h3>{% trans "Attendance" %} ({% trans "last" %} {{ attendance_dates|length }} {% trans "dates with records" %})</h3>
+  {% if attendance_dates %}
+  <table class="admin-class-detail-table admin-class-detail-table--attendance">
+    <thead>
+      <tr>
+        <th>{% trans "Student" %}</th>
+        {% for d in attendance_dates %}
+        <th>{{ d|date:"M j" }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in attendance_rows %}
+      <tr>
+        <td>{{ row.student.get_full_name|default:row.student.email }}</td>
+        {% for c in row.cells %}
+        <td>{{ c.label }}</td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="quiet">{% trans "No attendance records yet for this class." %}</p>
+  {% endif %}
+</div>
