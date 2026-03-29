@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://little-learners.local/schemas/billing/payment_list_item.json",
+  "title": "PaymentListItem",
+  "description": "One row from GET /api/billing/payments/ results[]. Matches PaymentListSerializer.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "user",
+    "course",
+    "enrolled_course_id",
+    "amount",
+    "currency",
+    "status",
+    "paid_at",
+    "created_at",
+    "is_manual"
+  ],
+  "properties": {
+    "id": { "type": "integer" },
+    "user": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "email"],
+      "properties": {
+        "id": { "type": "integer" },
+        "email": { "type": "string", "format": "email" }
+      }
+    },
+    "course": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "title"],
+          "properties": {
+            "id": { "type": "string", "format": "uuid" },
+            "title": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "enrolled_course_id": { "type": ["integer", "null"] },
+    "amount": { "type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?$" },
+    "currency": { "type": "string" },
+    "status": { "type": "string" },
+    "paid_at": { "type": ["string", "null"], "format": "date-time" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "is_manual": { "type": "boolean" }
+  }
+}

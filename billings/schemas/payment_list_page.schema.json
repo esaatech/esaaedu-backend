@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://little-learners.local/schemas/billing/payment_list_page.json",
+  "title": "PaymentListPage",
+  "description": "Paginated envelope from GET /api/billing/payments/ (DRF PageNumberPagination).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["count", "next", "previous", "results"],
+  "properties": {
+    "count": { "type": "integer", "minimum": 0 },
+    "next": { "type": ["string", "null"] },
+    "previous": { "type": ["string", "null"] },
+    "results": {
+      "type": "array",
+      "items": { "$ref": "payment_list_item.schema.json" }
+    }
+  }
+}
