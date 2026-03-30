@@ -3013,6 +3013,14 @@ class CourseAssessmentSubmission(models.Model):
         default=list,
         help_text="Individual question grades and feedback - list of {question_id, points_earned, points_possible, teacher_feedback/feedback, correct_answer (optional), is_correct (optional)}"
     )
+
+    # When teacher returns a submitted (not graded) assessment: student resumes in_progress with per-question notes.
+    return_feedback = models.JSONField(
+        default=None,
+        null=True,
+        blank=True,
+        help_text="When status is in_progress after teacher return: optional feedback per question. List of {question_id, feedback}.",
+    )
     
     # Grading History
     grading_history = models.JSONField(

@@ -29,6 +29,7 @@ urlpatterns = [
     # Course Assessment (Test/Exam) Grading URLs
     path('assessments/<uuid:assessment_id>/grading/', views.CourseAssessmentGradingView.as_view(), name='assessment_grading'),
     path('assessments/<uuid:assessment_id>/grading/<uuid:submission_id>/ai-grade/', views.CourseAssessmentAIGradingView.as_view(), name='assessment_ai_grading'),
+    path('assessments/<uuid:assessment_id>/grading/<uuid:submission_id>/return/', views.CourseAssessmentReturnSubmissionView.as_view(), name='assessment_submission_return'),
     path('assessments/<uuid:assessment_id>/grading/<uuid:submission_id>/', views.CourseAssessmentGradingView.as_view(), name='assessment_submission_grading'),
     
     # Student Assessment Submissions (Get all tests/exams for a student in one call)

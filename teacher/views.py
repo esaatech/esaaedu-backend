@@ -944,11 +944,16 @@ class ProjectGradingView(APIView):
             
             if serializer.is_valid():
                 # Update submission with grading data
-                submission.status = serializer.validated_data['status']
-                submission.points_earned = serializer.validated_data.get('points_earned')
+                new_status = serializer.validated_data['status']
+                submission.status = new_status
                 submission.feedback = serializer.validated_data.get('feedback', '')
                 submission.grader = teacher
-                submission.graded_at = timezone.now()
+                if new_status == 'RETURNED':
+                    submission.points_earned = None
+                    submission.graded_at = None
+                else:
+                    submission.points_earned = serializer.validated_data.get('points_earned')
+                    submission.graded_at = timezone.now()
                 submission.save()
                 
                 response_serializer = ProjectSubmissionSerializer(submission)
@@ -1052,10 +1057,15 @@ class ProjectSubmissionDetailView(APIView):
             
             if serializer.is_valid():
                 # Update submission with feedback
-                submission.status = serializer.validated_data['status']
+                new_status = serializer.validated_data['status']
+                submission.status = new_status
                 submission.feedback = serializer.validated_data['feedback']
                 submission.grader = teacher
-                submission.graded_at = timezone.now()
+                if new_status == 'RETURNED':
+                    submission.points_earned = None
+                    submission.graded_at = None
+                else:
+                    submission.graded_at = timezone.now()
                 submission.save()
                 
                 response_serializer = ProjectSubmissionSerializer(submission)
@@ -1095,11 +1105,16 @@ class ProjectSubmissionDetailView(APIView):
             
             if serializer.is_valid():
                 # Update submission with grading data
-                submission.status = serializer.validated_data['status']
-                submission.points_earned = serializer.validated_data.get('points_earned')
+                new_status = serializer.validated_data['status']
+                submission.status = new_status
                 submission.feedback = serializer.validated_data.get('feedback', '')
                 submission.grader = teacher
-                submission.graded_at = timezone.now()
+                if new_status == 'RETURNED':
+                    submission.points_earned = None
+                    submission.graded_at = None
+                else:
+                    submission.points_earned = serializer.validated_data.get('points_earned')
+                    submission.graded_at = timezone.now()
                 submission.save()
                 
                 response_serializer = ProjectSubmissionSerializer(submission)
@@ -2783,6 +2798,111 @@ class CourseAssessmentGradingView(APIView):
             logger.error(f"Error grading assessment submission: {e}", exc_info=True)
             return Response(
                 {'error': f'Error grading assessment submission: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CourseAssessmentReturnSubmissionView(APIView):
+    """
+    Return a submitted (not graded) course assessment (test/exam) to the student as in_progress.
+    Student can edit answers and resubmit. Clears grading progress.
+    Does not touch TutorX-only assignment fields; parallel to AssignmentReturnSubmissionView.
+
+    POST /api/teacher/assessments/{assessment_id}/grading/{submission_id}/return/
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, assessment_id, submission_id):
+        try:
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can return assessments to students'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            try:
+                assessment = CourseAssessment.objects.prefetch_related('questions').select_related('course').get(id=assessment_id)
+                if assessment.course.teacher != request.user:
+                    return Response(
+                        {'error': 'Assessment not found or you do not have permission to access it'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except CourseAssessment.DoesNotExist:
+                return Response(
+                    {'error': 'Assessment not found or you do not have permission to access it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            try:
+                submission = CourseAssessmentSubmission.objects.get(
+                    id=submission_id,
+                    assessment=assessment
+                )
+            except CourseAssessmentSubmission.DoesNotExist:
+                return Response(
+                    {'error': 'Submission not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            if submission.is_graded:
+                return Response(
+                    {'error': 'Cannot return an already graded submission. Return is only for submitted work not yet graded.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if submission.status not in ('submitted', 'auto_submitted'):
+                return Response(
+                    {'error': 'Can only return submissions that are submitted. Current status: {}'.format(submission.status)},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            valid_question_ids = set(str(q.id) for q in assessment.questions.all())
+            return_feedback = None
+            raw_graded_questions = request.data.get('graded_questions')
+            if raw_graded_questions and isinstance(raw_graded_questions, list):
+                return_feedback = []
+                for item in raw_graded_questions:
+                    if not isinstance(item, dict):
+                        continue
+                    qid = item.get('question_id')
+                    if qid is None:
+                        continue
+                    qid_str = str(qid)
+                    if qid_str not in valid_question_ids:
+                        continue
+                    feedback = item.get('feedback') or item.get('teacher_feedback') or ''
+                    return_feedback.append({'question_id': qid_str, 'feedback': feedback})
+                if not return_feedback:
+                    return_feedback = None
+
+            submission.status = 'in_progress'
+            submission.is_graded = False
+            submission.is_teacher_draft = False
+            submission.points_earned = None
+            submission.points_possible = None
+            submission.percentage = None
+            submission.passed = False
+            submission.graded_at = None
+            submission.graded_by = None
+            submission.instructor_feedback = ''
+            submission.graded_questions = []
+            submission.submitted_at = None
+            submission.return_feedback = return_feedback
+            submission.save(update_fields=[
+                'status', 'is_graded', 'is_teacher_draft', 'points_earned', 'points_possible',
+                'percentage', 'passed', 'graded_at', 'graded_by', 'instructor_feedback', 'graded_questions',
+                'submitted_at', 'return_feedback',
+            ])
+
+            response_serializer = CourseAssessmentSubmissionResponseSerializer(submission)
+            return Response({
+                'submission': response_serializer.data,
+                'message': 'Assessment returned to student. They can edit and resubmit.',
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error returning assessment submission: {e}", exc_info=True)
+            return Response(
+                {'error': 'Failed to return assessment to student: {}'.format(str(e))},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

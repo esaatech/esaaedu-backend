@@ -162,6 +162,13 @@ Files are organized in GCS as follows:
 - **Request body**: Optional `graded_questions`: list of `{ question_id, feedback }`. Stored as `return_feedback` on `AssignmentSubmission`.
 - **Docs**: See [courses/docs/assignment_return_and_feedback.md](../courses/docs/assignment_return_and_feedback.md) for model fields, endpoint behavior, and how student lesson attaches feedback to questions.
 
+### Course assessment return (test / exam)
+
+- **URL**: `/api/teacher/assessments/{assessment_id}/grading/{submission_id}/return/`
+- **Method**: POST
+- **Purpose**: Return a submitted (not graded) test or exam to the student as `in_progress` on the **same attempt**; optional per-question feedback stored as `return_feedback` on `CourseAssessmentSubmission`. Clears grading fields and `submitted_at`; student can edit answers and submit again.
+- **Request body**: Same optional shape as assignment return (`graded_questions` with `question_id` + `feedback`).
+
 ### File Upload (Teacher)
 - **URL**: `/api/teacher/files/upload/`
 - **Method**: POST

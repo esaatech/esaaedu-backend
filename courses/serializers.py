@@ -3073,7 +3073,7 @@ class CourseAssessmentSubmissionResponseSerializer(serializers.ModelSerializer):
             'id', 'attempt_number', 'status', 'started_at', 'submitted_at',
             'time_limit_minutes', 'time_remaining_seconds',
             'answers', 'is_graded', 'is_teacher_draft', 'points_earned', 'points_possible', 
-            'percentage', 'passed', 'instructor_feedback', 'graded_questions'
+            'percentage', 'passed', 'instructor_feedback', 'graded_questions', 'return_feedback',
         ]
         read_only_fields = fields
 

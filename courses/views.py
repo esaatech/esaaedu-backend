@@ -4408,6 +4408,7 @@ def student_submit_assessment(request, assessment_id):
         submission.time_remaining_seconds = validated_data.get('time_remaining_seconds', submission.time_remaining_seconds)
         submission.status = 'auto_submitted' if is_auto_submit else 'submitted'
         submission.submitted_at = timezone.now()
+        submission.return_feedback = None  # clear teacher return notes after student resubmits
         submission.save()
         
         # Return response
@@ -4531,6 +4532,12 @@ def student_assessment_submission_detail(request, assessment_id, submission_id):
                 'content': question.content,
                 'explanation': question.explanation,
             })
+
+        if submission.status == 'in_progress':
+            rf = getattr(submission, 'return_feedback', None)
+            if rf and isinstance(rf, list) and len(rf) > 0:
+                from student.views import _attach_return_feedback_to_questions
+                questions_data = _attach_return_feedback_to_questions(questions_data, rf)
         
         # Build graded questions data
         graded_questions_data = []

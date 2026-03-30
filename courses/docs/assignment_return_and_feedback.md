@@ -90,3 +90,11 @@ The teacher assignment overview (e.g. student submissions list / assignment deta
 | Return submission | POST `.../return/` with `graded_questions` → stored as `return_feedback` | Teacher Return dialog builds payload via `assignmentReturnFeedback.ts` |
 | Student sees feedback | Lesson API attaches `return_feedback` to each question (`feedback`, `has_feedback`) | AssignmentDetailView shows “Teacher feedback” for all question types when `currentQuestion.feedback` is set |
 | Teacher overview | Submission includes `graded_questions` and `questions` | Return dialog pre-fills and computes defaults (failed = include by default) |
+
+---
+
+## Course assessments (tests / exams)
+
+- **Model**: `CourseAssessmentSubmission.return_feedback` (JSONField, nullable) — same shape as assignment: list of `{question_id, feedback}`.
+- **Teacher**: `POST /api/teacher/assessments/{assessment_id}/grading/{submission_id}/return/` (`CourseAssessmentReturnSubmissionView`). Allowed when `status` is `submitted` or `auto_submitted` and not graded. Sets `status=in_progress`, clears scores and `graded_questions`, clears `submitted_at`, preserves `answers` and timer fields.
+- **Student**: `GET` assessment submission detail merges `return_feedback` into question payloads when `status=in_progress` (reuses `_attach_return_feedback_to_questions`). Final submit clears `return_feedback`.

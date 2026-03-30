@@ -1309,7 +1309,7 @@ class CourseAssessmentSubmissionAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
         ('Grading', {
-            'fields': ('is_graded', 'is_teacher_draft', 'points_earned', 'points_possible', 'percentage', 'passed', 'graded_by', 'graded_at', 'graded_questions')
+            'fields': ('is_graded', 'is_teacher_draft', 'points_earned', 'points_possible', 'percentage', 'passed', 'graded_by', 'graded_at', 'graded_questions', 'return_feedback')
         }),
         ('Feedback', {
             'fields': ('instructor_feedback', 'feedback_checked', 'feedback_checked_at', 'feedback_response'),
