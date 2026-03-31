@@ -14,7 +14,9 @@ from rest_framework.views import APIView
 
 from courses.admin_class_detail import build_class_detail_context
 from courses.models import Class
-from teacher.calendar_serializers import StaffClassDialogSerializer
+from teacher.calendar_serializers import StaffClassDialogSerializer, StaffTeacherDialogSerializer
+from teacher.roster_serializers import TeacherRosterDetailSerializer
+from teacher.services.roster import get_teacher_roster_detail
 from teacher.services.calendar import get_week_calendar_data, serialize_calendar_events
 
 
@@ -123,6 +125,29 @@ class StaffClassDialogApiView(APIView):
         return Response(serializer.data)
 
 
+class StaffTeacherDialogApiView(APIView):
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request, teacher_id):
+        teacher = get_teacher_roster_detail(teacher_id)
+        if not teacher:
+            return Response({"detail": "Teacher not found."}, status=404)
+        detail_payload = TeacherRosterDetailSerializer(teacher).data
+        dialog_html = render_to_string(
+            "staff/calendar/_teacher_detail_body.html",
+            {"detail": detail_payload},
+            request=request,
+        )
+        payload = {
+            "teacher_id": teacher.pk,
+            "teacher_name": detail_payload.get("full_name") or teacher.email,
+            "dialog_html": dialog_html,
+        }
+        serializer = StaffTeacherDialogSerializer(payload)
+        return Response(serializer.data)
+
+
 @method_decorator(staff_member_required, name="dispatch")
 class StaffCalendarWeekPageView(TemplateView):
     template_name = "staff/calendar/calendar_week_page.html"
@@ -156,7 +181,8 @@ class StaffCalendarWeekPageView(TemplateView):
                 total_grid_minutes = (max_hour - min_hour + 1) * 60
                 top_pct = max(0.0, ((start_minutes - grid_start_minutes) / total_grid_minutes) * 100)
                 duration_minutes = max(30, end_minutes - start_minutes)
-                height_pct = max(4.0, (duration_minutes / total_grid_minutes) * 100)
+                # Keep short classes readable in the chip (title + teacher + meta)
+                height_pct = max(10.0, (duration_minutes / total_grid_minutes) * 100)
                 e["top_pct"] = round(top_pct, 3)
                 e["height_pct"] = round(height_pct, 3)
                 e["start_label"] = start_dt.strftime("%I:%M %p")

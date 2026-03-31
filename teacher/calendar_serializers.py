@@ -22,3 +22,9 @@ class StaffClassDialogSerializer(serializers.Serializer):
     course_title = serializers.CharField()
     teacher_name = serializers.CharField(allow_blank=True)
     dialog_html = serializers.CharField()
+
+
+class StaffTeacherDialogSerializer(serializers.Serializer):
+    teacher_id = serializers.IntegerField()
+    teacher_name = serializers.CharField()
+    dialog_html = serializers.CharField()

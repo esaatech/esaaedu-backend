@@ -1,8 +1,17 @@
+from urllib.parse import urlencode
+
 from django.urls import NoReverseMatch, reverse
 from rest_framework import serializers
 
 from courses.models import Class, Course
-from users.models import User
+from users.models import TeacherPayout, User
+
+
+def _latest_payout_for_user(obj: User) -> TeacherPayout | None:
+    profile = getattr(obj, "teacher_profile", None)
+    if not profile:
+        return None
+    return next(iter(profile.payouts.all()), None)
 
 
 class TeacherRosterListSerializer(serializers.ModelSerializer):
@@ -37,13 +46,14 @@ class TeacherRosterListSerializer(serializers.ModelSerializer):
         return getattr(profile, "phone_number", None)
 
     def get_next_pay_day(self, obj):
-        profile = getattr(obj, "teacher_profile", None)
-        value = getattr(profile, "next_pay_day", None)
-        return value.isoformat() if value else None
+        payout = _latest_payout_for_user(obj)
+        if not payout or not payout.due_date:
+            return None
+        return payout.due_date.isoformat()
 
     def get_pay_status(self, obj):
-        profile = getattr(obj, "teacher_profile", None)
-        return getattr(profile, "pay_status", None)
+        payout = _latest_payout_for_user(obj)
+        return payout.status if payout else None
 
 
 class StudentLiteSerializer(serializers.ModelSerializer):
@@ -98,6 +108,7 @@ class TeacherRosterDetailSerializer(serializers.ModelSerializer):
     pay_status = serializers.SerializerMethodField()
     teacher_profile_admin_url = serializers.SerializerMethodField()
     user_admin_url = serializers.SerializerMethodField()
+    payout_admin_list_url = serializers.SerializerMethodField()
     current_payout = serializers.SerializerMethodField()
     courses = serializers.SerializerMethodField()
 
@@ -118,6 +129,7 @@ class TeacherRosterDetailSerializer(serializers.ModelSerializer):
             "pay_status",
             "teacher_profile_admin_url",
             "user_admin_url",
+            "payout_admin_list_url",
             "current_payout",
             "courses",
         ]
@@ -143,13 +155,14 @@ class TeacherRosterDetailSerializer(serializers.ModelSerializer):
         return str(value) if value is not None else None
 
     def get_next_pay_day(self, obj):
-        profile = getattr(obj, "teacher_profile", None)
-        value = getattr(profile, "next_pay_day", None)
-        return value.isoformat() if value else None
+        payout = _latest_payout_for_user(obj)
+        if not payout or not payout.due_date:
+            return None
+        return payout.due_date.isoformat()
 
     def get_pay_status(self, obj):
-        profile = getattr(obj, "teacher_profile", None)
-        return getattr(profile, "pay_status", None)
+        payout = _latest_payout_for_user(obj)
+        return payout.status if payout else None
 
     def get_teacher_profile_admin_url(self, obj):
         profile = getattr(obj, "teacher_profile", None)
@@ -166,11 +179,18 @@ class TeacherRosterDetailSerializer(serializers.ModelSerializer):
         except NoReverseMatch:
             return None
 
-    def get_current_payout(self, obj):
+    def get_payout_admin_list_url(self, obj):
         profile = getattr(obj, "teacher_profile", None)
-        if not profile:
+        try:
+            base = reverse("admin:users_teacherpayout_changelist")
+        except NoReverseMatch:
             return None
-        payout = next(iter(profile.payouts.all()), None)
+        if not profile:
+            return base
+        return f"{base}?{urlencode({'teacher_profile__id__exact': profile.pk})}"
+
+    def get_current_payout(self, obj):
+        payout = _latest_payout_for_user(obj)
         if payout is None:
             return None
         return {

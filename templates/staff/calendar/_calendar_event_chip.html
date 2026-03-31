@@ -10,7 +10,15 @@
   >
     {{ event.class_name }}
   </button>
-  <div class="calendar-event-meta">{{ event.course_title }} · {{ event.teacher_name }}</div>
+  <div class="calendar-event-meta">{{ event.course_title }}</div>
+  <button
+    type="button"
+    class="calendar-event-teacher-link"
+    data-open-teacher-dialog
+    data-teacher-id="{{ event.teacher_id }}"
+  >
+    {{ event.teacher_name }}
+  </button>
   {% if event.event_title %}
     <div class="calendar-event-submeta">{{ event.event_title }}</div>
   {% endif %}

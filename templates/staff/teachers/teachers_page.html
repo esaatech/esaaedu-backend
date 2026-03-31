@@ -89,12 +89,31 @@
   .teacher-pay-status--pending,
   .teacher-pay-status--processing { background: rgba(65, 118, 144, 0.1); color: var(--teacher-secondary); }
   .teacher-pay-status--failed { background: rgba(183, 28, 28, 0.1); color: #b71c1c; }
+  .teacher-pay-status--unknown { background: rgba(102, 102, 102, 0.12); color: var(--teacher-muted); }
   .teacher-pay-status-btn {
     border: none;
     background: transparent;
     padding: 0;
     cursor: pointer;
     font: inherit;
+  }
+  .teacher-payment-info-btn {
+    border: 1px solid var(--teacher-line);
+    background: #fff;
+    color: var(--teacher-secondary);
+    border-radius: 4px;
+    padding: 2px 8px;
+    margin-right: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.2;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .teacher-payment-info-btn:hover {
+    border-color: var(--teacher-secondary);
+    text-decoration: underline;
   }
   .teacher-payment-dialog {
     border: 1px solid var(--teacher-line);
@@ -179,9 +198,12 @@
       .replace(/'/g, '&#39;');
   }
 
-  function renderPaymentInfoHtml(payout) {
+  function renderPaymentInfoHtml(payout, payoutAdminListUrl) {
     if (!payout) {
-      return '<p class=\"teacher-detail-placeholder\">No payout record yet for this teacher.</p>';
+      return `
+        <p class="teacher-detail-placeholder">No payout record yet for this teacher.</p>
+        ${payoutAdminListUrl ? `<p><a href="${escAttr(payoutAdminListUrl)}">Open payout table</a></p>` : ''}
+      `;
     }
     return `
       <dl class=\"teacher-payment-grid\">
@@ -194,10 +216,11 @@
         <dt>External payment URL</dt><dd>${payout.third_party_payment_url ? `<a href=\"${escAttr(payout.third_party_payment_url)}\" target=\"_blank\" rel=\"noopener noreferrer\">Open payment page</a>` : '-'}</dd>
         <dt>Notes</dt><dd>${escHtml(payout.notes || '-')}</dd>
       </dl>
+      ${payoutAdminListUrl ? `<p><a href="${escAttr(payoutAdminListUrl)}">Open payout table</a></p>` : ''}
     `;
   }
 
-  function bindPaymentInfoActions(container, payout) {
+  function bindPaymentInfoActions(container, payout, payoutAdminListUrl) {
     const dialog = document.getElementById('teacher-payment-dialog');
     const body = document.getElementById('teacher-payment-dialog-body');
     if (!dialog || !body) return;
@@ -209,7 +232,7 @@
           window.open(url, '_blank', 'noopener,noreferrer');
           return;
         }
-        body.innerHTML = renderPaymentInfoHtml(payout);
+        body.innerHTML = renderPaymentInfoHtml(payout, payoutAdminListUrl);
         dialog.showModal();
       });
     });
@@ -241,9 +264,16 @@
       : `<strong>${escHtml(detail.full_name)}</strong>`;
     const paySt = ['paid', 'pending', 'failed', 'processing'].includes(detail.pay_status)
       ? detail.pay_status
-      : 'pending';
+      : 'unknown';
+    const payStLabel = paySt === 'unknown' ? '-' : paySt;
     const payout = detail.current_payout || null;
-    const payStatusHtml = `<button type="button" class="teacher-pay-status-btn" data-open-payment-info><span class="teacher-pay-status teacher-pay-status--${paySt}">${escHtml(paySt)}</span></button>`;
+    const payoutAdminListUrl = detail.payout_admin_list_url || '';
+    const payStatusHtml = `
+      <button type="button" class="teacher-pay-status-btn" data-open-payment-info>
+        <span class="teacher-payment-info-btn">Payment information</span>
+        <span class="teacher-pay-status teacher-pay-status--${paySt}">${escHtml(payStLabel)}</span>
+      </button>
+    `;
 
     let html = `<div class="teacher-detail-header">${nameHtml} · ${escHtml(detail.email)}</div>`;
     html += `<div class="teacher-detail-meta">Department: ${escHtml(detail.department || '-')} | Phone: ${escHtml(detail.phone_number || '-')} | Next pay day: ${escHtml(detail.next_pay_day || '-')} | Pay status: ${payStatusHtml} | Compensation: ${escHtml(detail.compensation_basis || '-')} ${detail.compensation_rate ? `(${escHtml(detail.compensation_rate)})` : ''}</div>`;
@@ -272,7 +302,7 @@
 
     container.innerHTML = html;
     container.dataset.loaded = '1';
-    bindPaymentInfoActions(container, payout);
+    bindPaymentInfoActions(container, payout, payoutAdminListUrl);
   }
 
   document.querySelectorAll('.teacher-open-btn').forEach((btn) => {

@@ -88,13 +88,11 @@ class TeacherProfileAdmin(admin.ModelAdmin):
         'user',
         'compensation_basis',
         'compensation_rate',
-        'next_pay_day',
-        'pay_status',
         'department',
         'years_of_experience',
         'created_at',
     ]
-    list_filter = ['compensation_basis', 'pay_status', 'department', 'years_of_experience', 'created_at']
+    list_filter = ['compensation_basis', 'department', 'years_of_experience', 'created_at']
 
     search_fields = ['user__email', 'user__first_name', 'user__last_name', 'bio', 'department']
     readonly_fields = ['created_at', 'updated_at']
@@ -104,7 +102,7 @@ class TeacherProfileAdmin(admin.ModelAdmin):
             'fields': ('user',)
         }),
         ('Compensation', {
-            'fields': ('compensation_basis', 'compensation_rate', 'next_pay_day', 'pay_status'),
+            'fields': ('compensation_basis', 'compensation_rate'),
             'description': 'Rate meaning depends on basis (hourly / monthly / pay period).',
         }),
         ('Professional Info', {

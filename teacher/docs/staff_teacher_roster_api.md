@@ -20,9 +20,11 @@ Both APIs require `IsAuthenticated + IsAdminUser`.
 - List item schema: `teacher/schemas/teacher_roster_list_item.schema.json`.
 - Detail response is stable serializer shape from `teacher/roster_serializers.py` (`TeacherRosterDetailSerializer`).
 - Operational list columns include `phone_number`, `next_pay_day`, and `pay_status` for quick payroll visibility.
+- `next_pay_day` and `pay_status` are resolved from the teacher's latest `TeacherPayout` record (single payout source of truth), not from `TeacherProfile`.
 
 ## Design notes
 
 - Top-level list keeps payload small for quick page load and agent calls.
 - Detail endpoint is called lazily when a teacher row is opened.
 - This mirrors a reusable tool contract for future orchestration without duplicating business logic.
+- The teacher detail partial is reusable across staff surfaces (roster + calendar dialog) with shared style tokens for consistent rendering.

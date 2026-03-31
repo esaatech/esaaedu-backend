@@ -14,6 +14,12 @@ def get_teacher_roster_queryset(*, q: str | None = None, focus_id: int | None = 
     qs = (
         User.objects.filter(role=User.Role.TEACHER, is_active=True)
         .select_related("teacher_profile")
+        .prefetch_related(
+            Prefetch(
+                "teacher_profile__payouts",
+                queryset=TeacherPayout.objects.order_by("-due_date", "-created_at"),
+            )
+        )
         .annotate(
             courses_count=Count("created_courses", distinct=True),
             classes_active_count=Count(

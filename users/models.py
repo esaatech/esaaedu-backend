@@ -99,12 +99,6 @@ class TeacherProfile(models.Model):
         SEMI_MONTHLY = 'semi_monthly', 'Semi-monthly'
         OTHER = 'other', 'Other'
 
-    class PayStatus(models.TextChoices):
-        PAID = 'paid', 'Paid'
-        PENDING = 'pending', 'Pending'
-        FAILED = 'failed', 'Failed'
-        PROCESSING = 'processing', 'Processing'
-
     user = models.OneToOneField(
         User, 
         on_delete=models.CASCADE, 
@@ -133,12 +127,6 @@ class TeacherProfile(models.Model):
         null=True,
         blank=True,
         help_text='Operational next scheduled pay date for this teacher.',
-    )
-    pay_status = models.CharField(
-        max_length=20,
-        choices=PayStatus.choices,
-        default=PayStatus.PENDING,
-        help_text='Current payout status for the upcoming/current pay cycle.',
     )
 
     bio = models.TextField(blank=True, help_text="Teacher's biography")

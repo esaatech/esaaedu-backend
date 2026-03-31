@@ -6,7 +6,13 @@
     Department: {{ detail.department|default:"-" }} |
     Phone: {{ detail.phone_number|default:"-" }} |
     Next pay day: {{ detail.next_pay_day|default:"-" }} |
-    Pay status: <span class="teacher-pay-status teacher-pay-status--{{ detail.pay_status|default:'pending' }}">{{ detail.pay_status|default:"pending" }}</span> |
+    Pay status:
+    {% if detail.pay_status %}
+      <span class="teacher-pay-status teacher-pay-status--{{ detail.pay_status }}">{{ detail.pay_status }}</span>
+    {% else %}
+      <span class="teacher-pay-status teacher-pay-status--unknown">-</span>
+    {% endif %}
+    |
     Compensation: {{ detail.compensation_basis|default:"-" }} {% if detail.compensation_rate %}(${{ detail.compensation_rate }}){% endif %}
   </div>
   {% for course in detail.courses %}

@@ -3,7 +3,13 @@
   <td>{{ teacher.email }}</td>
   <td>{{ teacher.phone_number|default:"-" }}</td>
   <td>{{ teacher.next_pay_day|default:"-" }}</td>
-  <td><span class="teacher-pay-status teacher-pay-status--{{ teacher.pay_status|default:'pending' }}">{{ teacher.pay_status|default:"pending" }}</span></td>
+  <td>
+    {% if teacher.pay_status %}
+      <span class="teacher-pay-status teacher-pay-status--{{ teacher.pay_status }}">{{ teacher.pay_status }}</span>
+    {% else %}
+      <span class="teacher-pay-status teacher-pay-status--unknown">-</span>
+    {% endif %}
+  </td>
   <td><span class="teacher-count">{{ teacher.courses_count }}</span></td>
   <td><span class="teacher-count">{{ teacher.classes_active_count }}</span></td>
 </tr>
