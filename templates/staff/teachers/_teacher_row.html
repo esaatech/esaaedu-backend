@@ -1,0 +1,16 @@
+<tr class="teacher-row" data-teacher-id="{{ teacher.id }}">
+  <td><button type="button" class="teacher-open-btn" data-teacher-id="{{ teacher.id }}">{{ teacher.full_name }}</button></td>
+  <td>{{ teacher.email }}</td>
+  <td>{{ teacher.phone_number|default:"-" }}</td>
+  <td>{{ teacher.next_pay_day|default:"-" }}</td>
+  <td><span class="teacher-pay-status teacher-pay-status--{{ teacher.pay_status|default:'pending' }}">{{ teacher.pay_status|default:"pending" }}</span></td>
+  <td><span class="teacher-count">{{ teacher.courses_count }}</span></td>
+  <td><span class="teacher-count">{{ teacher.classes_active_count }}</span></td>
+</tr>
+<tr class="teacher-detail-row" id="teacher-detail-{{ teacher.id }}" hidden>
+  <td colspan="7">
+    <div class="teacher-detail-container" data-teacher-id="{{ teacher.id }}">
+      {% include "staff/teachers/_teacher_detail_panel.html" with detail=None %}
+    </div>
+  </td>
+</tr>

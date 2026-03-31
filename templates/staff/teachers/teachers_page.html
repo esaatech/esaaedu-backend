@@ -1,0 +1,294 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+  :root {
+    --teacher-primary: #0c4b33;
+    --teacher-secondary: #417690;
+    --teacher-tertiary: #333;
+    --teacher-muted: #666;
+    --teacher-line: #dce6eb;
+    --teacher-row-line: #ececec;
+    --teacher-bg: #fff;
+  }
+  .teacher-roster-wrap { padding: 12px; }
+  .teacher-roster-wrap h1 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--teacher-tertiary);
+  }
+  .teacher-roster-wrap p {
+    margin: 0 0 12px;
+    color: var(--teacher-muted);
+    font-size: 13px;
+  }
+  .teacher-roster-table { width: 100%; border-collapse: collapse; background: var(--teacher-bg); }
+  .teacher-roster-table th, .teacher-roster-table td {
+    border-bottom: 1px solid var(--teacher-row-line);
+    padding: 8px;
+    vertical-align: top;
+    text-align: left;
+    color: var(--teacher-tertiary);
+  }
+  .teacher-roster-table th {
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.25;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--teacher-secondary);
+    border-bottom: 1px solid var(--teacher-line);
+    background: var(--teacher-bg);
+  }
+  .teacher-roster-table td {
+    font-size: 13px;
+    line-height: 1.35;
+  }
+  .teacher-open-btn {
+    border: none;
+    background: transparent;
+    color: var(--teacher-secondary);
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+  }
+  .teacher-open-btn:hover { text-decoration: underline; }
+  .teacher-count {
+    color: var(--teacher-primary);
+    font-weight: 700;
+  }
+  .teacher-detail-row td { background: #fcfcfc; }
+  .teacher-detail-placeholder { color: var(--teacher-muted); font-style: italic; }
+  .teacher-roster-breadcrumbs { font-size: 12px; margin: 0 0 12px; color: var(--teacher-muted); }
+  .teacher-roster-breadcrumbs a { color: var(--teacher-secondary); font-weight: 600; text-decoration: none; }
+  .teacher-roster-breadcrumbs a:hover { text-decoration: underline; }
+  .teacher-roster-bc-sep { margin: 0 0.35em; color: #999; }
+  .teacher-roster-bc-current { color: var(--teacher-tertiary); font-weight: 600; }
+  .teacher-detail-header { color: var(--teacher-tertiary); margin-bottom: 6px; }
+  .teacher-detail-header .teacher-detail-name-link { color: var(--teacher-secondary); font-weight: 700; text-decoration: none; }
+  .teacher-detail-header .teacher-detail-name-link:hover { text-decoration: underline; }
+  .teacher-detail-meta { color: var(--teacher-muted); font-size: 12px; margin-bottom: 8px; }
+  .teacher-course-block { margin: 10px 0; padding: 8px; border: 1px solid var(--teacher-row-line); border-radius: 4px; }
+  .teacher-course-block h4 { margin: 0 0 6px; color: var(--teacher-secondary); font-size: 13px; }
+  .teacher-class-block { margin: 6px 0; }
+  .teacher-pay-status {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .teacher-pay-status--paid { background: rgba(12, 75, 51, 0.1); color: var(--teacher-primary); }
+  .teacher-pay-status--pending,
+  .teacher-pay-status--processing { background: rgba(65, 118, 144, 0.1); color: var(--teacher-secondary); }
+  .teacher-pay-status--failed { background: rgba(183, 28, 28, 0.1); color: #b71c1c; }
+  .teacher-pay-status-btn {
+    border: none;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+    font: inherit;
+  }
+  .teacher-payment-dialog {
+    border: 1px solid var(--teacher-line);
+    border-radius: 8px;
+    width: min(620px, 90vw);
+    padding: 0;
+  }
+  .teacher-payment-dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+  .teacher-payment-dialog__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--teacher-row-line);
+  }
+  .teacher-payment-dialog__header h3 {
+    margin: 0;
+    font-size: 14px;
+    color: var(--teacher-tertiary);
+  }
+  .teacher-payment-dialog__close {
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 18px;
+    color: var(--teacher-muted);
+  }
+  .teacher-payment-dialog__body {
+    padding: 12px;
+    color: var(--teacher-tertiary);
+    font-size: 13px;
+  }
+  .teacher-payment-grid {
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    gap: 8px 12px;
+  }
+  .teacher-payment-grid dt {
+    color: var(--teacher-secondary);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+  }
+  .teacher-payment-grid dd {
+    margin: 0;
+    color: var(--teacher-tertiary);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="teacher-roster-wrap" data-focus-id="{{ focus_id|default:'' }}">
+  <nav class="teacher-roster-breadcrumbs" aria-label="Breadcrumb">
+    <a href="{% url 'admin:index' %}">Home</a>
+    <span class="teacher-roster-bc-sep">›</span>
+    <span class="teacher-roster-bc-current">Teacher roster</span>
+  </nav>
+  <h1>Teacher roster</h1>
+  <p>All active teachers. Click a name to expand full details.</p>
+  {% include "staff/teachers/_teacher_list_table.html" with teachers=teachers %}
+  {% include "staff/teachers/_payment_info_dialog.html" %}
+</div>
+<script>
+(function () {
+  const focusId = document.querySelector('.teacher-roster-wrap')?.dataset.focusId;
+
+  function escHtml(s) {
+    if (s == null || s === undefined) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function escAttr(s) {
+    if (s == null || s === undefined) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function renderPaymentInfoHtml(payout) {
+    if (!payout) {
+      return '<p class=\"teacher-detail-placeholder\">No payout record yet for this teacher.</p>';
+    }
+    return `
+      <dl class=\"teacher-payment-grid\">
+        <dt>Status</dt><dd>${escHtml(payout.status || '-')}</dd>
+        <dt>Amount</dt><dd>${payout.amount ? '$' + escHtml(payout.amount) : '-'}</dd>
+        <dt>Due date</dt><dd>${escHtml(payout.due_date || '-')}</dd>
+        <dt>Payment method</dt><dd>${escHtml(payout.payment_method || 'bank_transfer')}</dd>
+        <dt>Paid at</dt><dd>${escHtml(payout.paid_at || '-')}</dd>
+        <dt>Receipt image</dt><dd>${payout.receipt_image_url ? `<a href=\"${escAttr(payout.receipt_image_url)}\" target=\"_blank\" rel=\"noopener noreferrer\">Open receipt</a>` : '-'}</dd>
+        <dt>External payment URL</dt><dd>${payout.third_party_payment_url ? `<a href=\"${escAttr(payout.third_party_payment_url)}\" target=\"_blank\" rel=\"noopener noreferrer\">Open payment page</a>` : '-'}</dd>
+        <dt>Notes</dt><dd>${escHtml(payout.notes || '-')}</dd>
+      </dl>
+    `;
+  }
+
+  function bindPaymentInfoActions(container, payout) {
+    const dialog = document.getElementById('teacher-payment-dialog');
+    const body = document.getElementById('teacher-payment-dialog-body');
+    if (!dialog || !body) return;
+    container.querySelectorAll('[data-open-payment-info]').forEach((btn) => {
+      btn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const url = payout?.third_party_payment_url;
+        if (url) {
+          window.open(url, '_blank', 'noopener,noreferrer');
+          return;
+        }
+        body.innerHTML = renderPaymentInfoHtml(payout);
+        dialog.showModal();
+      });
+    });
+  }
+
+  async function loadTeacherDetail(teacherId) {
+    const row = document.getElementById(`teacher-detail-${teacherId}`);
+    const container = row?.querySelector('.teacher-detail-container');
+    if (!row || !container) return;
+
+    const shouldOpen = row.hasAttribute('hidden');
+    document.querySelectorAll('.teacher-detail-row').forEach((r) => r.setAttribute('hidden', 'hidden'));
+    if (!shouldOpen) return;
+
+    row.removeAttribute('hidden');
+    if (container.dataset.loaded === '1') return;
+
+    container.innerHTML = 'Loading teacher details...';
+    const response = await fetch(`/api/teacher/staff/teachers/${teacherId}/`, { credentials: 'same-origin' });
+    if (!response.ok) {
+      container.textContent = 'Failed to load teacher details.';
+      return;
+    }
+    const detail = await response.json();
+
+    const editHref = detail.teacher_profile_admin_url || detail.user_admin_url || '';
+    const nameHtml = editHref
+      ? `<a href="${escAttr(editHref)}" class="teacher-detail-name-link"><strong>${escHtml(detail.full_name)}</strong></a>`
+      : `<strong>${escHtml(detail.full_name)}</strong>`;
+    const paySt = ['paid', 'pending', 'failed', 'processing'].includes(detail.pay_status)
+      ? detail.pay_status
+      : 'pending';
+    const payout = detail.current_payout || null;
+    const payStatusHtml = `<button type="button" class="teacher-pay-status-btn" data-open-payment-info><span class="teacher-pay-status teacher-pay-status--${paySt}">${escHtml(paySt)}</span></button>`;
+
+    let html = `<div class="teacher-detail-header">${nameHtml} · ${escHtml(detail.email)}</div>`;
+    html += `<div class="teacher-detail-meta">Department: ${escHtml(detail.department || '-')} | Phone: ${escHtml(detail.phone_number || '-')} | Next pay day: ${escHtml(detail.next_pay_day || '-')} | Pay status: ${payStatusHtml} | Compensation: ${escHtml(detail.compensation_basis || '-')} ${detail.compensation_rate ? `(${escHtml(detail.compensation_rate)})` : ''}</div>`;
+
+    if (!detail.courses || !detail.courses.length) {
+      html += '<div>No published courses found for this teacher.</div>';
+    } else {
+      detail.courses.forEach((course) => {
+        html += `<div class="teacher-course-block"><h4>${escHtml(course.title)}</h4>`;
+        if (!course.classes || !course.classes.length) {
+          html += '<div>No active classes for this course.</div>';
+        } else {
+          course.classes.forEach((cls) => {
+            html += `<div class="teacher-class-block"><div><strong>${escHtml(cls.name)}</strong> (${escHtml(cls.student_count)}/${escHtml(cls.max_capacity)})</div>`;
+            if (cls.students && cls.students.length) {
+              html += `<div>${cls.students.map((s) => escHtml(s.full_name)).join(', ')}</div>`;
+            } else {
+              html += '<div>No students yet.</div>';
+            }
+            html += '</div>';
+          });
+        }
+        html += '</div>';
+      });
+    }
+
+    container.innerHTML = html;
+    container.dataset.loaded = '1';
+    bindPaymentInfoActions(container, payout);
+  }
+
+  document.querySelectorAll('.teacher-open-btn').forEach((btn) => {
+    btn.addEventListener('click', () => loadTeacherDetail(btn.dataset.teacherId));
+  });
+
+  if (focusId) {
+    loadTeacherDetail(focusId);
+  }
+
+  document.querySelectorAll('[data-close-payment-dialog]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const dialog = document.getElementById('teacher-payment-dialog');
+      if (dialog) dialog.close();
+    });
+  });
+})();
+</script>
+{% endblock %}

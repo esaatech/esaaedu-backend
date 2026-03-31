@@ -1,10 +1,16 @@
 from django.urls import path
 from . import views
+from .calendar_views import StaffCalendarWeekApiView, StaffClassDialogApiView
+from .roster_views import StaffTeacherRosterDetailView, StaffTeacherRosterListView
 from student import views as student_views
 
 app_name = 'teacher'
 
 urlpatterns = [
+    path('staff/teachers/', StaffTeacherRosterListView.as_view(), name='staff_teacher_roster_list'),
+    path('staff/teachers/<int:teacher_id>/', StaffTeacherRosterDetailView.as_view(), name='staff_teacher_roster_detail'),
+    path('staff/calendar/week/', StaffCalendarWeekApiView.as_view(), name='staff_calendar_week'),
+    path('staff/classes/<uuid:class_id>/dialog/', StaffClassDialogApiView.as_view(), name='staff_class_dialog'),
     path('profile/', views.TeacherProfileAPIView.as_view(), name='teacher_profile'),
     path('schedule/', views.TeacherScheduleAPIView.as_view(), name='teacher_schedule'),
     path('timetable/', views.TeacherTimetableAPIView.as_view(), name='teacher_timetable'),

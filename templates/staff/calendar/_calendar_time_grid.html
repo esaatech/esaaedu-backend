@@ -1,0 +1,31 @@
+<div class="staff-calendar-grid-wrap">
+  <div class="staff-calendar-grid-head">
+    <div class="staff-calendar-time-col-head"></div>
+    {% for entry in day_entries %}
+      <div class="staff-calendar-day-head">
+        <div class="staff-calendar-day-name">{{ entry.date|date:"D" }}</div>
+        <div class="staff-calendar-day-date">{{ entry.date|date:"M j" }}</div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="staff-calendar-grid-body">
+    <div class="staff-calendar-time-col">
+      {% for hour in hour_labels %}
+        <div class="staff-calendar-time-slot-label">{{ hour|stringformat:"02d" }}:00</div>
+      {% endfor %}
+    </div>
+
+    {% for entry in day_entries %}
+      <div class="staff-calendar-day-col">
+        {% for hour in hour_labels %}
+          <div class="staff-calendar-hour-line"></div>
+        {% endfor %}
+
+        {% for event in entry.events %}
+          {% include "staff/calendar/_calendar_event_chip.html" with event=event %}
+        {% endfor %}
+      </div>
+    {% endfor %}
+  </div>
+</div>

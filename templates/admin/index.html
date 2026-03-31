@@ -236,6 +236,32 @@
     color: #0c4b33;
     display: block;
   }
+  .admin-quick-nav {
+    display: flex;
+    gap: 8px;
+    margin: 10px 0 12px;
+    flex-wrap: wrap;
+  }
+  .admin-quick-nav-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid #dce6eb;
+    background: #fff;
+    color: #417690;
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .admin-quick-nav-link:hover {
+    border-color: #417690;
+    text-decoration: none;
+  }
 </style>
 {% endblock %}
 
@@ -264,9 +290,14 @@
       {% endif %}
     {% endif %}
   </p>
+  <nav class="admin-quick-nav" aria-label="{% trans 'Admin sections' %}">
+    <a class="admin-quick-nav-link" href="#admin-classes-today">{% trans "Classes" %}</a>
+    <a class="admin-quick-nav-link" href="{% url 'staff-teacher-roster' %}">{% trans "Teachers" %}</a>
+    <a class="admin-quick-nav-link" href="{% url 'staff-calendar-week' %}">{% trans "Calendar" %}</a>
+  </nav>
 
   <div class="admin-snapshot-grid">
-    <section class="admin-snapshot-card admin-timetable-card">
+    <section id="admin-classes-today" class="admin-snapshot-card admin-timetable-card">
       <div class="admin-timetable-head">
         <h3>{% trans "Classes — today" %}</h3>
         <p class="admin-snapshot-value">{{ snapshot.timetable_rows_total }}</p>

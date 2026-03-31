@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TeacherRosterListItem",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "email",
+    "first_name",
+    "last_name",
+    "full_name",
+    "is_active",
+    "phone_number",
+    "next_pay_day",
+    "pay_status",
+    "courses_count",
+    "classes_active_count"
+  ],
+  "properties": {
+    "id": {"type": "integer"},
+    "email": {"type": "string", "format": "email"},
+    "first_name": {"type": "string"},
+    "last_name": {"type": "string"},
+    "full_name": {"type": "string"},
+    "is_active": {"type": "boolean"},
+    "phone_number": {"type": ["string", "null"]},
+    "next_pay_day": {"type": ["string", "null"], "format": "date"},
+    "pay_status": {"type": ["string", "null"], "enum": ["paid", "pending", "failed", "processing", null]},
+    "courses_count": {"type": "integer"},
+    "classes_active_count": {"type": "integer"}
+  }
+}

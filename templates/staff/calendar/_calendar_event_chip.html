@@ -1,0 +1,17 @@
+<div class="calendar-event-chip calendar-event-chip--{{ event.status }}" style="top: {{ event.top_pct }}%; height: {{ event.height_pct }}%; left: calc({{ event.left_pct|default:0 }}% + 6px); width: calc({{ event.width_pct|default:100 }}% - 12px);" title="{{ event.course_title }} · {{ event.class_name }}">
+  <div class="calendar-event-header-row">
+    <span class="calendar-event-time">{{ event.start_label }} – {{ event.end_label }}</span>
+  </div>
+  <button
+    type="button"
+    class="calendar-event-class-link"
+    data-open-class-dialog
+    data-class-id="{{ event.class_id }}"
+  >
+    {{ event.class_name }}
+  </button>
+  <div class="calendar-event-meta">{{ event.course_title }} · {{ event.teacher_name }}</div>
+  {% if event.event_title %}
+    <div class="calendar-event-submeta">{{ event.event_title }}</div>
+  {% endif %}
+</div>

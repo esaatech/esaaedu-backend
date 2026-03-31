@@ -1,0 +1,39 @@
+{% if detail %}
+  <div class="teacher-detail-header">
+    <strong>{{ detail.full_name }}</strong> · {{ detail.email }}
+  </div>
+  <div class="teacher-detail-meta">
+    Department: {{ detail.department|default:"-" }} |
+    Phone: {{ detail.phone_number|default:"-" }} |
+    Next pay day: {{ detail.next_pay_day|default:"-" }} |
+    Pay status: <span class="teacher-pay-status teacher-pay-status--{{ detail.pay_status|default:'pending' }}">{{ detail.pay_status|default:"pending" }}</span> |
+    Compensation: {{ detail.compensation_basis|default:"-" }} {% if detail.compensation_rate %}(${{ detail.compensation_rate }}){% endif %}
+  </div>
+  {% for course in detail.courses %}
+    <div class="teacher-course-block">
+      <h4>{{ course.title }}</h4>
+      {% if course.classes %}
+        {% for cls in course.classes %}
+          <div class="teacher-class-block">
+            <div><strong>{{ cls.name }}</strong> ({{ cls.student_count }}/{{ cls.max_capacity }})</div>
+            {% if cls.students %}
+              <div>
+                {% for student in cls.students %}
+                  <span>{{ student.full_name }}</span>{% if not forloop.last %}, {% endif %}
+                {% endfor %}
+              </div>
+            {% else %}
+              <div>No students yet.</div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      {% else %}
+        <div>No active classes for this course.</div>
+      {% endif %}
+    </div>
+  {% empty %}
+    <div>No published courses found for this teacher.</div>
+  {% endfor %}
+{% else %}
+  <div class="teacher-detail-placeholder">Click a teacher row to load full details.</div>
+{% endif %}

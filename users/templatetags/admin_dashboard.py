@@ -2,6 +2,7 @@ from calendar import monthrange
 from collections import Counter
 from datetime import datetime, time, timedelta
 from decimal import Decimal
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from django import template
@@ -35,11 +36,8 @@ def _teacher_admin_change_url(teacher):
     if teacher is None:
         return ""
     try:
-        opts = User._meta
-        return reverse(
-            f"admin:{opts.app_label}_{opts.model_name}_change",
-            args=[teacher.pk],
-        )
+        base = reverse("staff-teacher-roster")
+        return f"{base}?{urlencode({'focus': teacher.pk})}"
     except NoReverseMatch:
         return ""
 
@@ -199,6 +197,9 @@ def _build_timetable_sections(cal_now, today, weekday, cal_tz):
             is_active=True,
             day_of_week=weekday,
             class_instance__is_active=True,
+            # Only show live/monitorable classes: exclude archived + self-paced courses.
+            class_instance__course__status__in=["draft", "published"],
+            class_instance__course__delivery_type__in=["live", "hybrid"],
         )
         .select_related(
             "class_instance",
@@ -227,6 +228,9 @@ def _build_timetable_sections(cal_now, today, weekday, cal_tz):
                 start_time__gte=range_start,
                 start_time__lt=range_end,
                 start_time__isnull=False,
+                class_instance__is_active=True,
+                class_instance__course__status__in=["draft", "published"],
+                class_instance__course__delivery_type__in=["live", "hybrid"],
             ).select_related("class_instance", "class_instance__course", "lesson")
         )
 

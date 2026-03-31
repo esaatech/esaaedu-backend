@@ -1,7 +1,7 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.db.models import Avg, Sum, Count, Q
-from django.core.validators import RegexValidator
+from django.core.validators import MinValueValidator, RegexValidator
 from django.utils import timezone
 from decimal import Decimal
 from datetime import datetime, timedelta
@@ -39,7 +39,7 @@ class User(AbstractUser):
     # e.g. sbtyacademy.com/apps/john243/calculator
     # Note: This is independent from `username` (which is not unique in this project).
     public_handle = models.SlugField(
-        max_length=20,
+        max_length=20,  
         unique=True,
         null=True,
         blank=True,
@@ -90,12 +90,57 @@ class TeacherProfile(models.Model):
     """
     Extended profile information for teachers
     """
+
+    class CompensationBasis(models.TextChoices):
+        HOURLY = 'hourly', 'Hourly'
+        MONTHLY = 'monthly', 'Monthly'
+        WEEKLY = 'weekly', 'Weekly'
+        BI_WEEKLY = 'bi_weekly', 'Bi-weekly'
+        SEMI_MONTHLY = 'semi_monthly', 'Semi-monthly'
+        OTHER = 'other', 'Other'
+
+    class PayStatus(models.TextChoices):
+        PAID = 'paid', 'Paid'
+        PENDING = 'pending', 'Pending'
+        FAILED = 'failed', 'Failed'
+        PROCESSING = 'processing', 'Processing'
+
     user = models.OneToOneField(
         User, 
         on_delete=models.CASCADE, 
         related_name='teacher_profile'
     )
     
+    compensation_basis = models.CharField(
+        max_length=32,
+        choices=CompensationBasis.choices,
+        blank=True,
+        null=True,
+        help_text=(
+            'How to interpret compensation_rate: hourly = per hour; monthly = per calendar month; '
+            'bi_weekly / semi_monthly = per paycheck for that cadence (define consistently in ops docs).'
+        ),
+    )
+    compensation_rate = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0)],
+        help_text='Compensation amount in USD; meaning depends on compensation_basis.',
+    )
+    next_pay_day = models.DateField(
+        null=True,
+        blank=True,
+        help_text='Operational next scheduled pay date for this teacher.',
+    )
+    pay_status = models.CharField(
+        max_length=20,
+        choices=PayStatus.choices,
+        default=PayStatus.PENDING,
+        help_text='Current payout status for the upcoming/current pay cycle.',
+    )
+
     bio = models.TextField(blank=True, help_text="Teacher's biography")
     qualifications = models.TextField(blank=True, help_text="Educational qualifications and certifications")
     department = models.CharField(max_length=100, blank=True, help_text="Department or subject area")
@@ -118,6 +163,81 @@ class TeacherProfile(models.Model):
         
     def __str__(self):
         return f"Teacher Profile: {self.user.get_full_name() or self.user.email}"
+
+
+class TeacherPayout(models.Model):
+    """Per-cycle payout record for teacher compensation operations."""
+
+    class Status(models.TextChoices):
+        PAID = 'paid', 'Paid'
+        PENDING = 'pending', 'Pending'
+        FAILED = 'failed', 'Failed'
+        PROCESSING = 'processing', 'Processing'
+
+    class PaymentMethod(models.TextChoices):
+        BANK_TRANSFER = 'bank_transfer', 'Bank transfer'
+        CASH = 'cash', 'Cash'
+        CHECK = 'check', 'Check'
+        CARD = 'card', 'Card'
+        OTHER = 'other', 'Other'
+
+    teacher_profile = models.ForeignKey(
+        TeacherProfile,
+        on_delete=models.CASCADE,
+        related_name='payouts',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0)],
+        help_text='Optional payout amount for this cycle.',
+    )
+    due_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text='Scheduled payout date for this record.',
+    )
+    payment_method = models.CharField(
+        max_length=30,
+        choices=PaymentMethod.choices,
+        default=PaymentMethod.BANK_TRANSFER,
+        help_text='Settlement method used for this payout.',
+    )
+    receipt_image_url = models.URLField(
+        blank=True,
+        help_text='Optional receipt/proof image URL.',
+    )
+    third_party_payment_url = models.URLField(
+        blank=True,
+        help_text='Optional external payment link (processor transaction page).',
+    )
+    notes = models.TextField(blank=True)
+    paid_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='Timestamp when payout was marked paid.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'teacher_payouts'
+        ordering = ['-due_date', '-created_at']
+        indexes = [
+            models.Index(fields=['teacher_profile', 'status']),
+            models.Index(fields=['due_date']),
+        ]
+
+    def __str__(self):
+        teacher_label = self.teacher_profile.user.get_full_name() or self.teacher_profile.user.email
+        return f"Payout {teacher_label} [{self.status}]"
 
 
 class StudentProfile(models.Model):

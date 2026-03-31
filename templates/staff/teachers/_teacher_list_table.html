@@ -1,0 +1,20 @@
+<table class="teacher-roster-table">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Email</th>
+      <th>Phone</th>
+      <th>Operational next_pay_day</th>
+      <th>Pay status</th>
+      <th>Courses</th>
+      <th>Active classes</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for teacher in teachers %}
+      {% include "staff/teachers/_teacher_row.html" with teacher=teacher %}
+    {% empty %}
+      <tr><td colspan="7">No active teachers found.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

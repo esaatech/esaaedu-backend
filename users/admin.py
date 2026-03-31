@@ -2,7 +2,7 @@ from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.forms import UserChangeForm
-from .models import User, TeacherProfile, StudentProfile
+from .models import User, TeacherProfile, TeacherPayout, StudentProfile
 from .validators import get_all_timezone_choices_cached
 
 # Lazy import for StudentWeeklyPerformance to avoid errors if migration hasn't been run
@@ -84,14 +84,28 @@ class UserAdmin(BaseUserAdmin):
 
 @admin.register(TeacherProfile)
 class TeacherProfileAdmin(admin.ModelAdmin):
-    list_display = ['user', 'department', 'years_of_experience', 'created_at']
-    list_filter = ['department', 'years_of_experience', 'created_at']
+    list_display = [
+        'user',
+        'compensation_basis',
+        'compensation_rate',
+        'next_pay_day',
+        'pay_status',
+        'department',
+        'years_of_experience',
+        'created_at',
+    ]
+    list_filter = ['compensation_basis', 'pay_status', 'department', 'years_of_experience', 'created_at']
+
     search_fields = ['user__email', 'user__first_name', 'user__last_name', 'bio', 'department']
     readonly_fields = ['created_at', 'updated_at']
     
     fieldsets = (
         ('User Info', {
             'fields': ('user',)
+        }),
+        ('Compensation', {
+            'fields': ('compensation_basis', 'compensation_rate', 'next_pay_day', 'pay_status'),
+            'description': 'Rate meaning depends on basis (hourly / monthly / pay period).',
         }),
         ('Professional Info', {
             'fields': ('bio', 'qualifications', 'department', 'specializations', 'years_of_experience')
@@ -102,6 +116,43 @@ class TeacherProfileAdmin(admin.ModelAdmin):
         ('Metadata', {
             'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(TeacherPayout)
+class TeacherPayoutAdmin(admin.ModelAdmin):
+    list_display = [
+        'teacher_profile',
+        'status',
+        'amount',
+        'due_date',
+        'payment_method',
+        'paid_at',
+        'created_at',
+    ]
+    list_filter = ['status', 'payment_method', 'due_date', 'created_at']
+    search_fields = [
+        'teacher_profile__user__email',
+        'teacher_profile__user__first_name',
+        'teacher_profile__user__last_name',
+        'third_party_payment_url',
+    ]
+    readonly_fields = ['created_at', 'updated_at']
+
+    fieldsets = (
+        ('Teacher', {
+            'fields': ('teacher_profile',),
+        }),
+        ('Payout status', {
+            'fields': ('status', 'amount', 'due_date', 'payment_method', 'paid_at'),
+        }),
+        ('Proof / external references', {
+            'fields': ('receipt_image_url', 'third_party_payment_url', 'notes'),
+        }),
+        ('Metadata', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',),
         }),
     )
 

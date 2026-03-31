@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StaffClassDialogResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["class_id", "class_name", "course_title", "teacher_name", "dialog_html"],
+  "properties": {
+    "class_id": {"type": "string"},
+    "class_name": {"type": "string"},
+    "course_title": {"type": "string"},
+    "teacher_name": {"type": "string"},
+    "dialog_html": {"type": "string"}
+  }
+}

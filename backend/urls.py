@@ -20,12 +20,16 @@ from django.http import JsonResponse
 from rest_framework.routers import DefaultRouter
 from api_docs import api_documentation, course_creation_contract, contact_contract, landing_page_contract, teacher_project_contract, teacher_assignment_contract, class_events_contract, teacher_student_record_contract, student_lesson_detail_contract, student_assignment_submission_contract
 from student import views as student_views
+from teacher.calendar_views import StaffCalendarWeekPageView
+from teacher.roster_views import StaffTeacherRosterPageView
 
 # Create API router
 router = DefaultRouter()
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("staff/calendar/", StaffCalendarWeekPageView.as_view(), name="staff-calendar-week"),
+    path("staff/teachers/", StaffTeacherRosterPageView.as_view(), name="staff-teacher-roster"),
     
     # API endpoints
     path("api/auth/", include('authentication.urls')),
