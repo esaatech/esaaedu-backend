@@ -44,6 +44,8 @@ urlpatterns = [
     path("api/tutorx/", include('tutorx.urls')),
     path("api/blog/", include('blog.urls')),
     path("api/lead-magnet/", include('lead_magnet.urls')),
+    path("api/communication/", include("communication.urls")),
+    path("api/webhooks/", include("communication.webhook_urls")),
     path(
         "api/public/flask-app/<str:public_handle>/<str:flask_slug>/",
         student_views.PublicFlaskAppView.as_view(),

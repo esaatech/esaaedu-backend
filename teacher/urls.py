@@ -3,6 +3,7 @@ from . import views
 from .calendar_views import StaffCalendarWeekApiView, StaffClassDialogApiView, StaffTeacherDialogApiView
 from .roster_views import StaffTeacherRosterDetailView, StaffTeacherRosterListView
 from student import views as student_views
+from communication.views import TeacherSmsSendView
 
 app_name = 'teacher'
 
@@ -75,6 +76,7 @@ urlpatterns = [
     path('files/upload/', views.AllFileUploadView.as_view(), name='all_file_upload'),
     
     # Messaging URLs
+    path('sms/send/', TeacherSmsSendView.as_view(), name='teacher_sms_send'),
     path('students/<int:student_id>/conversations/', views.StudentConversationsListView.as_view(), name='student_conversations'),
     path('conversations/<uuid:conversation_id>/messages/', views.ConversationMessagesView.as_view(), name='conversation_messages'),
     path('messages/<uuid:message_id>/read/', views.MarkMessageReadView.as_view(), name='mark_message_read'),

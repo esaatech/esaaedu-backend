@@ -34,7 +34,17 @@ SECRET_KEY = config('SECRET_KEY', default="django-insecure-*%%)uc!v428r3q#r_dbt$
 DEBUG = config('DEBUG', default=True, cast=bool)
 
 # ALLOWED_HOSTS configuration for Cloud Run
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,8e3840a22bf0.ngrok-free.app', cast=lambda v: [s.strip() for s in v.split(',')])
+#ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,0c4d-187-190-229-247.ngrok-free.app', cast=lambda v: [s.strip() for s in v.split(',')])
+ALLOWED_HOSTS = config(
+    'ALLOWED_HOSTS',
+    default='localhost,127.0.0.1',
+    cast=lambda v: [s.strip() for s in v.split(',') if s.strip()],
+)
+
+# DEBUG: allow any ngrok tunnel hostname (suffix match) without editing .env each restart
+if DEBUG:
+    _ngrok_suffixes = ['.ngrok-free.app', '.ngrok.io', '.ngrok.app', '.ngrok.dev']
+    ALLOWED_HOSTS = list(dict.fromkeys(list(ALLOWED_HOSTS) + _ngrok_suffixes))
 
 # Add Cloud Run specific hosts if running on Cloud Run
 if config('K_SERVICE', default=None):  # Cloud Run environment variable
@@ -45,6 +55,11 @@ if config('K_SERVICE', default=None):  # Cloud Run environment variable
         '*.us-west1.run.app',
         '*',  # Allow all hosts in Cloud Run for debugging
     ])
+
+# Twilio/Stripe webhooks sign the public https URL. ngrok and Cloud Run terminate TLS and
+# forward to Django over HTTP with X-Forwarded-Proto: https — without this, build_absolute_uri()
+# is http://... and signature validation fails with 403.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 
 # Application definition
@@ -79,6 +94,7 @@ INSTALLED_APPS = [
     "marketing",
     "blog",
     "lead_magnet",
+    "communication",
 ]
 
 MIDDLEWARE = [
@@ -409,6 +425,17 @@ stripe_config = get_stripe_config()
 STRIPE_SECRET_KEY = stripe_config['STRIPE_SECRET_KEY']
 STRIPE_PUBLISHABLE_KEY = stripe_config['STRIPE_PUBLISHABLE_KEY']
 STRIPE_WEBHOOK_SECRET = stripe_config['STRIPE_WEBHOOK_SECRET']
+
+# Twilio SMS (communication app — masked routing / outbound)
+TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID', default='')
+TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN', default='')
+TWILIO_FROM_NUMBER = config('TWILIO_FROM_NUMBER', default='')
+# When True, inbound webhook runs routing/processing in-process (dev); when False, enqueue Cloud Task (production).
+COMMUNICATION_PROCESS_SMS_INLINE = config(
+    'COMMUNICATION_PROCESS_SMS_INLINE',
+    default=DEBUG,
+    cast=bool,
+)
 
 # Custom User Model
 AUTH_USER_MODEL = 'users.User'
