@@ -11,7 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from communication.models import SmsRoutingLog
+from communication.models import MessageTemplate, SmsRoutingLog
 from communication.services.inbound_processing import process_inbound_sms_routing
 from communication.services.outbound import send_teacher_sms_to_student
 from communication.services.phone import normalize_to_e164
@@ -28,6 +28,46 @@ logger = logging.getLogger(__name__)
 def communication_health(request):
     """Lightweight check that the communication app URLConf is mounted."""
     return JsonResponse({"app": "communication", "status": "ok"})
+
+
+class TeacherMessageTemplateListView(APIView):
+    """
+    GET ?channel=sms|email|whatsapp — active message templates for the teacher UI.
+    Frontend substitutes body_template using variables (e.g. course_title from Class.course.title).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if not user.is_teacher:
+            return Response(
+                {"error": "Only teachers can list message templates"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        raw = (request.query_params.get("channel") or MessageTemplate.Channel.SMS).lower()
+        valid = {c.value for c in MessageTemplate.Channel}
+        if raw not in valid:
+            return Response(
+                {"error": f"channel must be one of: {', '.join(sorted(valid))}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        qs = MessageTemplate.objects.filter(channel=raw, is_active=True).order_by(
+            "sort_order", "label"
+        )
+        templates = [
+            {
+                "slug": t.slug,
+                "label": t.label,
+                "body_template": t.body_template,
+                "subject_template": t.subject_template or None,
+                "variables": t.variables or [],
+            }
+            for t in qs
+        ]
+        return Response({"channel": raw, "templates": templates})
 
 
 class TeacherSmsSendView(APIView):

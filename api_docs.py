@@ -3862,3 +3862,158 @@ class BookReader extends React.Component {
     }
     
     return JsonResponse(contract, json_dumps_params={'indent': 2})
+
+
+@require_http_methods(["GET"])
+def teacher_sms_messaging_contract(request):
+    """
+    API contract: teacher message templates (multi-channel) + outbound SMS send.
+    """
+    contract = {
+        "title": "Teacher SMS & message templates API",
+        "version": "1.0.0",
+        "description": (
+            "List reusable message templates from the database (SMS, email, WhatsApp channels) "
+            "and send SMS to a student via Twilio. Templates use Python-style placeholders in "
+            "body_template; the frontend substitutes values (e.g. course_title) then POSTs the final text."
+        ),
+        "base_path": "/api/teacher/",
+        "authentication": {
+            "type": "Firebase ID Token (or session per your stack)",
+            "header": "Authorization: Bearer <firebase_id_token>",
+            "roles": "Teacher only for both endpoints below",
+        },
+        "placeholders": {
+            "description": (
+                "Standard placeholder names are listed per template in the `variables` array. "
+                "SMS templates currently use `{course_title}` only (maps to Course.title for the class context). "
+                "Use str.format or equivalent: body_template.format(course_title=course.title)."
+            ),
+            "example": (
+                "Template: 'Hello — {course_title} has started.' "
+                "→ format(course_title='Intro to Python') "
+                "→ 'Hello — Intro to Python has started.'"
+            ),
+        },
+        "server_sms_prefix": {
+            "description": (
+                "When class_id is sent with POST /sms/send/, the server prepends a branded prefix to the "
+                "message body before Twilio sends, e.g. "
+                "'[SBTY Academy - {Class.name}] {Teacher display name}: ' + your rendered message. "
+                "Keep template body focused on course messaging; avoid duplicating 'SBTY Academy' in the template."
+            ),
+        },
+        "endpoints": {
+            "list_message_templates": {
+                "method": "GET",
+                "url": "/api/teacher/message-templates/",
+                "query_parameters": {
+                    "channel": {
+                        "type": "string",
+                        "required": False,
+                        "default": "sms",
+                        "allowed_values": ["sms", "email", "whatsapp"],
+                        "description": "Which channel's active templates to return",
+                    }
+                },
+                "success_response": {
+                    "status": 200,
+                    "body": {
+                        "channel": "string (echo of requested channel)",
+                        "templates": [
+                            {
+                                "slug": "string (stable id, e.g. class-started)",
+                                "label": "string (UI title)",
+                                "body_template": "string (may contain {placeholders})",
+                                "subject_template": "string | null (for email; null for SMS)",
+                                "variables": ["array of strings, e.g. course_title"],
+                            }
+                        ],
+                    },
+                },
+                "error_responses": {
+                    "403": {"body": {"error": "Only teachers can list message templates"}},
+                    "400": {
+                        "body": {
+                            "error": "channel must be one of: email, sms, whatsapp",
+                        }
+                    },
+                },
+            },
+            "send_sms": {
+                "method": "POST",
+                "url": "/api/teacher/sms/send/",
+                "content_type": "application/json",
+                "request_body": {
+                    "student_user_id": {
+                        "type": "integer",
+                        "required": True,
+                        "description": "Target student's User.pk (role must be student)",
+                    },
+                    "message": {
+                        "type": "string",
+                        "required": True,
+                        "description": "Final SMS body after template substitution (inner message; server may add prefix)",
+                    },
+                    "class_id": {
+                        "type": "UUID string",
+                        "required": False,
+                        "description": (
+                            "Class instance id. When set: validates teacher owns class and student is enrolled; "
+                            "used for branded prefix. Omit only if product allows; server still requires a shared class with student when omitted."
+                        ),
+                    },
+                },
+                "success_response": {
+                    "status": 201,
+                    "body": {
+                        "id": "string (UUID of SmsRoutingLog)",
+                        "twilio_message_sid": "string",
+                        "student_phone": "string (E.164)",
+                    },
+                },
+                "error_responses": {
+                    "400": {
+                        "examples": [
+                            {"error": "student_user_id and message are required"},
+                            {"error": "student_user_id must be an integer"},
+                            {"error": "class_id must be a UUID"},
+                            {"error": "No child_phone or parent_phone on student profile"},
+                            {"error": "Student has no profile"},
+                        ]
+                    },
+                    "403": {
+                        "examples": [
+                            {"error": "Only teachers can send SMS"},
+                            {"error": "You do not teach this class"},
+                            {"error": "Student is not in this class"},
+                            {"error": "You have no shared class with this student"},
+                        ]
+                    },
+                    "404": {"description": "student or class not found"},
+                    "503": {
+                        "body": {
+                            "error": "TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER must be set"
+                        }
+                    },
+                },
+            },
+        },
+        "frontend_flow": [
+            "1. GET /api/teacher/message-templates/?channel=sms with auth.",
+            "2. User picks a template; load course_title from current class context (e.g. class.course.title).",
+            "3. Render: message = template.body_template.format(course_title=course.title) — include any other keys listed in template.variables.",
+            "4. POST /api/teacher/sms/send/ with { student_user_id, message, class_id }.",
+        ],
+        "example_requests": {
+            "list_templates": "GET /api/teacher/message-templates/?channel=sms",
+            "send_sms": {
+                "student_user_id": 42,
+                "message": "Hello from SBTY Academy — just to let you know that Intro to Python has started. Welcome!",
+                "class_id": "550e8400-e29b-41d4-a716-446655440000",
+            },
+        },
+        "machine_readable_contract_url": "/api/docs/teacher-sms-messaging/",
+    }
+
+    return JsonResponse(contract, json_dumps_params={"indent": 2})

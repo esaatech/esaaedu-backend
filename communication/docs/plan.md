@@ -15,6 +15,7 @@ This file is the **in-repository** copy of the communication-channel plan (Twili
 - [ ] Cloud Tasks enqueue + OIDC worker (replace inline when `COMMUNICATION_PROCESS_SMS_INLINE=false`)
 - [ ] OIDC-protected internal worker: AI + LIFO prior, `Conversation`/`Message` or admin, FCM
 - [x] Teacher outbound SMS API `POST /api/teacher/sms/send/`
+- [x] `MessageTemplate` table (`message_templates`) — channels: `sms`, `email`, `whatsapp`; placeholders documented in `variables` (SMS seeds use `{course_title}` only). Admin-editable. `GET /api/teacher/message-templates/?channel=sms`
 - [ ] Admin inbox for uncertain / no-match inbounds
 - [ ] FCM data payload contract with mobile/web client
 
@@ -105,7 +106,8 @@ Use **`firebase_admin.messaging`** (project already uses `firebase_admin` in `ba
 
 ## Outbound API (suggested)
 
-- `POST /api/teacher/sms/send/` with `student_user_id` or E.164, `message`, optional `class_id`.
+- `GET /api/teacher/message-templates/?channel=sms` — returns `{ "channel", "templates": [ { slug, label, body_template, subject_template?, variables } ] }`. UI fills `{course_title}` from `Class.course.title` (one class per course per teacher is assumed); still send `class_id` on `POST /api/teacher/sms/send/` for access checks and SMS prefix branding (`Class.name` in bracket — optional product tweak later to use course title only in prefix).
+- `POST /api/teacher/sms/send/` with `student_user_id`, rendered `message`, optional `class_id`.
 
 ---
 

@@ -1,6 +1,14 @@
 from django.contrib import admin
 
-from communication.models import SmsRoutingLog
+from communication.models import MessageTemplate, SmsRoutingLog
+
+
+@admin.register(MessageTemplate)
+class MessageTemplateAdmin(admin.ModelAdmin):
+    list_display = ("label", "channel", "slug", "is_active", "sort_order", "updated_at")
+    list_filter = ("channel", "is_active")
+    search_fields = ("label", "slug", "body_template")
+    ordering = ("channel", "sort_order", "label")
 
 
 @admin.register(SmsRoutingLog)
