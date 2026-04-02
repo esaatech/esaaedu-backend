@@ -1,7 +1,10 @@
 import uuid
+from string import Formatter
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils.text import slugify
 
 
 class SmsRoutingLog(models.Model):
@@ -93,6 +96,12 @@ class MessageTemplate(models.Model):
         EMAIL = "email", "Email"
         WHATSAPP = "whatsapp", "WhatsApp"
 
+    CHANNEL_ALLOWED_VARIABLES = {
+        Channel.SMS: ("course_title", "student_name"),
+        Channel.EMAIL: ("course_title", "student_name"),
+        Channel.WHATSAPP: ("course_title", "student_name"),
+    }
+
     channel = models.CharField(max_length=20, choices=Channel.choices, db_index=True)
     slug = models.SlugField(
         max_length=80,
@@ -130,3 +139,49 @@ class MessageTemplate(models.Model):
 
     def __str__(self):
         return f"{self.get_channel_display()}: {self.label} ({self.slug})"
+
+    @classmethod
+    def allowed_variables_for_channel(cls, channel: str) -> tuple[str, ...]:
+        return cls.CHANNEL_ALLOWED_VARIABLES.get(channel, ())
+
+    def _extract_variables(self) -> list[str]:
+        vars_found: set[str] = set()
+        for _, field_name, _, _ in Formatter().parse(self.body_template or ""):
+            if not field_name:
+                continue
+            # Keep simple names only. Attribute/index expressions are unsupported.
+            cleaned = field_name.strip()
+            if cleaned:
+                vars_found.add(cleaned)
+        return sorted(vars_found)
+
+    def clean(self):
+        extracted = self._extract_variables()
+        allowed = set(self.allowed_variables_for_channel(self.channel))
+        unknown = sorted(v for v in extracted if v not in allowed)
+        if unknown:
+            raise ValidationError(
+                {
+                    "body_template": (
+                        f"Unsupported variables: {', '.join(unknown)}. "
+                        f"Allowed variables: {', '.join(sorted(allowed))}."
+                    )
+                }
+            )
+        # Derived from template body to avoid manual drift.
+        self.variables = extracted
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base = slugify((self.label or "").strip())[:80] or "template"
+            candidate = base
+            i = 2
+            while MessageTemplate.objects.filter(channel=self.channel, slug=candidate).exclude(
+                pk=self.pk
+            ).exists():
+                suffix = f"-{i}"
+                candidate = f"{base[: max(1, 80 - len(suffix))]}{suffix}"
+                i += 1
+            self.slug = candidate
+        self.full_clean()
+        return super().save(*args, **kwargs)

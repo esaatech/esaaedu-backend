@@ -49,6 +49,13 @@ Fetch preset copy for SMS (or other channels later).
 - **`body_template`**: use **Python-style** placeholders (`{course_title}`). Substitute every name listed in **`variables`** before sending SMS.
 - **`subject_template`**: for `channel=email` later; `null` for SMS.
 
+### Allowed SMS placeholders (fixed)
+
+- `{course_title}` - resolved to the selected course title.
+- `{student_name}` - resolved to the student first name.
+
+Unknown placeholders are rejected at template save time in admin/API.
+
 ### Errors
 
 - **`403`**: `{ "error": "Only teachers can list message templates" }`
@@ -109,7 +116,7 @@ Twilio receives **`message` exactly as you send it** after template substitution
 1. `GET /api/teacher/message-templates/?channel=sms`
 2. User selects a template.
 3. From your course context, read **`course_title`** (e.g. `Course.title` for the selected course).
-4. `message = body_template.format(course_title=course_title)` (add any other keys from `variables`).
+4. `message = body_template.format(course_title=course_title, student_name=studentFirstName)` (include only allowed placeholders).
 5. `POST /api/teacher/sms/send/` with `{ student_user_id, message, course_id }` (use `class_id` as well if you need to disambiguate).
 
 ---

@@ -3885,15 +3885,18 @@ def teacher_sms_messaging_contract(request):
         },
         "placeholders": {
             "description": (
-                "Standard placeholder names are listed per template in the `variables` array. "
-                "SMS templates currently use `{course_title}` only (maps to Course.title for the class context). "
-                "Use str.format or equivalent: body_template.format(course_title=course.title)."
+                "Standard placeholder names are fixed and listed per template in the `variables` array. "
+                "Allowed SMS placeholders are `{course_title}` and `{student_name}` only. "
+                "Use str.format or equivalent: body_template.format("
+                "course_title=course.title, student_name=student.first_name). "
+                "Unknown placeholders are rejected at template save."
             ),
             "example": (
-                "Template: 'Hello — {course_title} has started.' "
-                "→ format(course_title='Intro to Python') "
-                "→ 'Hello — Intro to Python has started.'"
+                "Template: 'Hello {student_name} — {course_title} has started.' "
+                "→ format(student_name='Ama', course_title='Intro to Python') "
+                "→ 'Hello Ama — Intro to Python has started.'"
             ),
+            "allowed_sms_placeholders": ["course_title", "student_name"],
         },
         "sms_body": {
             "description": (
