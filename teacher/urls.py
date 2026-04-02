@@ -1,5 +1,10 @@
 from django.urls import path
-from communication.views import TeacherMessageTemplateListView, TeacherSmsSendView
+from communication.views import (
+    TeacherMessageTemplateListView,
+    TeacherSmsInboundMarkReadView,
+    TeacherSmsInboundUnreadCountView,
+    TeacherSmsSendView,
+)
 from . import views
 from student import views as student_views
 
@@ -76,6 +81,16 @@ urlpatterns = [
     # Messaging URLs (templates + SMS; conversations below)
     path('message-templates/', TeacherMessageTemplateListView.as_view(), name='teacher_message_templates'),
     path('sms/send/', TeacherSmsSendView.as_view(), name='teacher_sms_send'),
+    path(
+        'sms/inbound/unread-count/',
+        TeacherSmsInboundUnreadCountView.as_view(),
+        name='teacher_sms_inbound_unread_count',
+    ),
+    path(
+        'sms/inbound/<uuid:log_id>/read/',
+        TeacherSmsInboundMarkReadView.as_view(),
+        name='teacher_sms_inbound_mark_read',
+    ),
     path('students/<int:student_id>/conversations/', views.StudentConversationsListView.as_view(), name='student_conversations'),
     path('conversations/<uuid:conversation_id>/messages/', views.ConversationMessagesView.as_view(), name='conversation_messages'),
     path('messages/<uuid:message_id>/read/', views.MarkMessageReadView.as_view(), name='mark_message_read'),

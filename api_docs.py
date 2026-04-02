@@ -3867,21 +3867,23 @@ class BookReader extends React.Component {
 @require_http_methods(["GET"])
 def teacher_sms_messaging_contract(request):
     """
-    API contract: teacher message templates (multi-channel) + outbound SMS send.
+    API contract: teacher message templates (multi-channel), outbound SMS send,
+    and inbound SMS read state (unread count + mark read).
     """
     contract = {
         "title": "Teacher SMS & message templates API",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "description": (
-            "List reusable message templates from the database (SMS, email, WhatsApp channels) "
-            "and send SMS to a student via Twilio. Templates use Python-style placeholders in "
-            "body_template; the frontend substitutes values (e.g. course_title) then POSTs the final text."
+            "List reusable message templates from the database (SMS, email, WhatsApp channels), "
+            "send SMS to a student via Twilio, and mark inbound SMS logs read / fetch unread counts "
+            "for notification badges. Templates use Python-style placeholders in body_template; "
+            "the frontend substitutes values (e.g. course_title) then POSTs the final text."
         ),
         "base_path": "/api/teacher/",
         "authentication": {
             "type": "Firebase ID Token (or session per your stack)",
             "header": "Authorization: Bearer <firebase_id_token>",
-            "roles": "Teacher only for both endpoints below",
+            "roles": "Teacher only for all endpoints below",
         },
         "placeholders": {
             "description": (
@@ -4014,12 +4016,54 @@ def teacher_sms_messaging_contract(request):
                     },
                 },
             },
+            "inbound_sms_unread_count": {
+                "method": "GET",
+                "url": "/api/teacher/sms/inbound/unread-count/",
+                "description": (
+                    "Count of inbound SmsRoutingLog rows assigned to this teacher with read_at null. "
+                    "Use for badges; generic_admin rows have no teacher and are not included."
+                ),
+                "success_response": {
+                    "status": 200,
+                    "body": {"unread_inbound_sms_count": "integer"},
+                },
+                "error_responses": {
+                    "403": {"body": {"error": "Only teachers can access this endpoint"}},
+                },
+            },
+            "inbound_sms_mark_read": {
+                "method": "PATCH",
+                "url": "/api/teacher/sms/inbound/{log_id}/read/",
+                "path_parameters": {
+                    "log_id": {
+                        "type": "UUID string",
+                        "description": "SmsRoutingLog primary key (inbound row)",
+                    }
+                },
+                "description": (
+                    "Sets read_at to now for an inbound log owned by this teacher. "
+                    "Idempotent if already read. 404 if log is outbound, missing, or assigned to another teacher."
+                ),
+                "success_response": {
+                    "status": 200,
+                    "body": {
+                        "id": "string (UUID)",
+                        "read_at": "string (ISO 8601 datetime)",
+                    },
+                },
+                "error_responses": {
+                    "400": {"body": {"error": "log_id must be a UUID"}},
+                    "403": {"body": {"error": "Only teachers can access this endpoint"}},
+                    "404": {"description": "No matching inbound log for this teacher"},
+                },
+            },
         },
         "frontend_flow": [
             "1. GET /api/teacher/message-templates/?channel=sms with auth.",
             "2. User picks a template; load course_title from course context (e.g. Course.title from your filter).",
             "3. Render: message = template.body_template.format(course_title=course.title) — include any other keys listed in template.variables.",
             "4. POST /api/teacher/sms/send/ with { student_user_id, message, course_id } (preferred) and optionally class_id.",
+            "5. For inbound replies: poll or refresh GET /api/teacher/sms/inbound/unread-count/ for badges; after the teacher opens a thread, PATCH /api/teacher/sms/inbound/{log_id}/read/.",
         ],
         "example_requests": {
             "list_templates": "GET /api/teacher/message-templates/?channel=sms",

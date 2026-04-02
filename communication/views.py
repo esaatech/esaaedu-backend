@@ -4,6 +4,7 @@ import uuid
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status
@@ -173,6 +174,66 @@ class TeacherSmsSendView(APIView):
                 "student_phone": log.student_phone,
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class TeacherSmsInboundUnreadCountView(APIView):
+    """
+    GET — count inbound SMS rows assigned to this teacher that are not yet read (read_at is null).
+    Use for notification badges; hide/suppress UI when count is 0 for a given log after mark-read.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if not user.is_teacher:
+            return Response(
+                {"error": "Only teachers can access this endpoint"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        n = SmsRoutingLog.objects.filter(
+            direction=SmsRoutingLog.Direction.INBOUND,
+            teacher=user,
+            read_at__isnull=True,
+        ).count()
+        return Response({"unread_inbound_sms_count": n})
+
+
+class TeacherSmsInboundMarkReadView(APIView):
+    """
+    PATCH — set read_at on an inbound SmsRoutingLog for the current teacher.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, log_id):
+        user = request.user
+        if not user.is_teacher:
+            return Response(
+                {"error": "Only teachers can access this endpoint"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            lid = uuid.UUID(str(log_id))
+        except (ValueError, TypeError):
+            return Response({"error": "log_id must be a UUID"}, status=status.HTTP_400_BAD_REQUEST)
+
+        log = get_object_or_404(
+            SmsRoutingLog,
+            pk=lid,
+            direction=SmsRoutingLog.Direction.INBOUND,
+            teacher=user,
+        )
+        if log.read_at is None:
+            log.read_at = timezone.now()
+            log.save(update_fields=["read_at"])
+        return Response(
+            {
+                "id": str(log.id),
+                "read_at": log.read_at.isoformat() if log.read_at else None,
+            },
+            status=status.HTTP_200_OK,
         )
 
 

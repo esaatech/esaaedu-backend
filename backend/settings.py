@@ -436,6 +436,12 @@ COMMUNICATION_PROCESS_SMS_INLINE = config(
     default=DEBUG,
     cast=bool,
 )
+# Inbound reply correlation: only outbounds newer than (inbound_time - N seconds) qualify; 0 = no time limit.
+COMMUNICATION_SMS_REPLY_MAX_AGE_SECONDS = config(
+    "COMMUNICATION_SMS_REPLY_MAX_AGE_SECONDS",
+    default=3600,
+    cast=int,
+)
 
 # Custom User Model
 AUTH_USER_MODEL = 'users.User'

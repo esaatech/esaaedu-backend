@@ -3,6 +3,7 @@ from django import forms
 from django.utils.html import format_html
 
 from communication.models import MessageTemplate, SmsRoutingLog
+from communication.services.inbound_processing import process_inbound_sms_routing
 
 
 class MessageTemplateAdminForm(forms.ModelForm):
@@ -58,12 +59,33 @@ class MessageTemplateAdmin(admin.ModelAdmin):
         )
 
 
+@admin.action(description="Re-run inbound SMS correlation (reset pending, then match)")
+def recorrelate_inbound_sms(modeladmin, request, queryset):
+    """Fix stale rows or test after deploy: only inbound logs."""
+    inbound = queryset.filter(direction=SmsRoutingLog.Direction.INBOUND)
+    n = 0
+    for log in inbound:
+        SmsRoutingLog.objects.filter(pk=log.pk).update(
+            inbound_routing=SmsRoutingLog.InboundRouting.PENDING,
+            teacher_id=None,
+            course_id=None,
+            course_class_id=None,
+            related_outbound_id=None,
+        )
+        process_inbound_sms_routing(log.pk)
+        n += 1
+    modeladmin.message_user(request, f"Re-correlated {n} inbound SMS log(s).")
+
+
 @admin.register(SmsRoutingLog)
 class SmsRoutingLogAdmin(admin.ModelAdmin):
+    actions = (recorrelate_inbound_sms,)
     list_display = (
         "created_at",
         "direction",
         "inbound_routing",
+        "read_at",
+        "related_outbound",
         "student_phone",
         "teacher",
         "course",
@@ -72,4 +94,4 @@ class SmsRoutingLogAdmin(admin.ModelAdmin):
     list_filter = ("direction", "inbound_routing")
     search_fields = ("student_phone", "twilio_message_sid", "body")
     readonly_fields = ("id", "created_at")
-    raw_id_fields = ("teacher", "course", "course_class")
+    raw_id_fields = ("teacher", "course", "course_class", "related_outbound")

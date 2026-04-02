@@ -72,13 +72,38 @@ class SmsRoutingLog(models.Model):
         blank=True,
         help_text="Twilio Message SID for idempotency and support.",
     )
+    related_outbound = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="inbound_replies",
+        limit_choices_to={"direction": Direction.OUTBOUND},
+        help_text="Inbound only: outbound row this SMS replies to when correlation succeeds.",
+    )
+    read_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Inbound only: when this inbound SMS was read or acknowledged in the UI "
+            "(null while still notifying). Applies to every inbound row; who may set it depends on routing "
+            "(e.g. assigned teacher, admin for generic handling)."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "sms_routing_logs"
         ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=["student_phone", "-created_at"]),
+            models.Index(
+                fields=["student_phone", "-created_at"],
+                name="sms_routing_student_a140fb_idx",
+            ),
+            models.Index(
+                fields=["teacher", "direction", "read_at"],
+                name="sms_rt_tch_dir_read_idx",
+            ),
         ]
 
     def __str__(self):
