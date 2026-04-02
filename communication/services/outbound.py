@@ -30,6 +30,7 @@ def send_teacher_sms_to_student(
     message_body: str,
     course: Course | None = None,
     course_class: Class | None = None,
+    target_phone: str | None = None,
 ) -> SmsRoutingLog:
     """
     Validate access, normalize destination phone, send branded SMS, persist outbound log.
@@ -87,11 +88,26 @@ def send_teacher_sms_to_student(
     except StudentProfile.DoesNotExist:
         raise ValueError("Student has no profile") from None
 
-    raw_phone = (profile.child_phone or "").strip() or (profile.parent_phone or "").strip()
-    if not raw_phone:
-        raise ValueError("No child_phone or parent_phone on student profile")
+    child_raw = (profile.child_phone or "").strip()
+    parent_raw = (profile.parent_phone or "").strip()
 
-    to_e164 = normalize_to_e164(raw_phone)
+    if target_phone:
+        target_e164 = normalize_to_e164(target_phone)
+        allowed: set[str] = set()
+        if child_raw:
+            allowed.add(normalize_to_e164(child_raw))
+        if parent_raw:
+            allowed.add(normalize_to_e164(parent_raw))
+        if not allowed:
+            raise ValueError("No child_phone or parent_phone on student profile")
+        if target_e164 not in allowed:
+            raise PermissionError("target_phone is not an allowed student/parent phone for this student")
+        to_e164 = target_e164
+    else:
+        raw_phone = child_raw or parent_raw
+        if not raw_phone:
+            raise ValueError("No child_phone or parent_phone on student profile")
+        to_e164 = normalize_to_e164(raw_phone)
     _, _, from_number = get_twilio_credentials()
     twilio_number_e164 = normalize_to_e164(from_number)
 

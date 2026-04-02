@@ -92,6 +92,7 @@ class TeacherSmsSendView(APIView):
         message = (request.data.get("message") or "").strip()
         raw_course_id = request.data.get("course_id")
         raw_class_id = request.data.get("class_id")
+        raw_target_phone = (request.data.get("target_phone") or "").strip()
         has_course = raw_course_id not in (None, "")
         has_class = raw_class_id not in (None, "")
 
@@ -156,6 +157,7 @@ class TeacherSmsSendView(APIView):
                 message_body=message,
                 course=course_arg,
                 course_class=course_class,
+                target_phone=raw_target_phone or None,
             )
         except PermissionError as e:
             return Response({"error": str(e)}, status=status.HTTP_403_FORBIDDEN)
