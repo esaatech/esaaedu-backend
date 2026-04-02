@@ -3895,12 +3895,10 @@ def teacher_sms_messaging_contract(request):
                 "→ 'Hello — Intro to Python has started.'"
             ),
         },
-        "server_sms_prefix": {
+        "sms_body": {
             "description": (
-                "When class_id is sent with POST /sms/send/, the server prepends a branded prefix to the "
-                "message body before Twilio sends, e.g. "
-                "'[SBTY Academy - {Class.name}] {Teacher display name}: ' + your rendered message. "
-                "Keep template body focused on course messaging; avoid duplicating 'SBTY Academy' in the template."
+                "The `message` field is sent to Twilio verbatim (no server-side prefix). "
+                "course_id / class_id are for authorization and SmsRoutingLog only."
             ),
         },
         "endpoints": {
@@ -3955,12 +3953,21 @@ def teacher_sms_messaging_contract(request):
                         "required": True,
                         "description": "Final SMS body after template substitution (inner message; server may add prefix)",
                     },
+                    "course_id": {
+                        "type": "UUID string",
+                        "required": False,
+                        "description": (
+                            "Course primary key (preferred for Student Management / course filter). "
+                            "Teacher must own the course; student must be on exactly one of the teacher's classes for that course "
+                            "(otherwise send class_id to disambiguate)."
+                        ),
+                    },
                     "class_id": {
                         "type": "UUID string",
                         "required": False,
                         "description": (
-                            "Class instance id. When set: validates teacher owns class and student is enrolled; "
-                            "used for branded prefix. Omit only if product allows; server still requires a shared class with student when omitted."
+                            "Class instance UUID. Optional; use with or without course_id. "
+                            "If both are sent, class must belong to the given course."
                         ),
                     },
                 },
@@ -3978,6 +3985,9 @@ def teacher_sms_messaging_contract(request):
                             {"error": "student_user_id and message are required"},
                             {"error": "student_user_id must be an integer"},
                             {"error": "class_id must be a UUID"},
+                            {"error": "course_id must be a UUID"},
+                            {"error": "course_id and class_id must be UUIDs"},
+                            {"error": "class_id does not belong to the given course_id"},
                             {"error": "No child_phone or parent_phone on student profile"},
                             {"error": "Student has no profile"},
                         ]
@@ -3986,11 +3996,14 @@ def teacher_sms_messaging_contract(request):
                         "examples": [
                             {"error": "Only teachers can send SMS"},
                             {"error": "You do not teach this class"},
+                            {"error": "You do not teach this course"},
                             {"error": "Student is not in this class"},
+                            {"error": "Student is not in your class for this course"},
+                            {"error": "Multiple classes match this course and student; send class_id to disambiguate"},
                             {"error": "You have no shared class with this student"},
                         ]
                     },
-                    "404": {"description": "student or class not found"},
+                    "404": {"description": "student, class, or course not found"},
                     "503": {
                         "body": {
                             "error": "TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER must be set"
@@ -4001,16 +4014,16 @@ def teacher_sms_messaging_contract(request):
         },
         "frontend_flow": [
             "1. GET /api/teacher/message-templates/?channel=sms with auth.",
-            "2. User picks a template; load course_title from current class context (e.g. class.course.title).",
+            "2. User picks a template; load course_title from course context (e.g. Course.title from your filter).",
             "3. Render: message = template.body_template.format(course_title=course.title) — include any other keys listed in template.variables.",
-            "4. POST /api/teacher/sms/send/ with { student_user_id, message, class_id }.",
+            "4. POST /api/teacher/sms/send/ with { student_user_id, message, course_id } (preferred) and optionally class_id.",
         ],
         "example_requests": {
             "list_templates": "GET /api/teacher/message-templates/?channel=sms",
             "send_sms": {
                 "student_user_id": 42,
                 "message": "Hello from SBTY Academy — just to let you know that Intro to Python has started. Welcome!",
-                "class_id": "550e8400-e29b-41d4-a716-446655440000",
+                "course_id": "550e8400-e29b-41d4-a716-446655440000",
             },
         },
         "machine_readable_contract_url": "/api/docs/teacher-sms-messaging/",

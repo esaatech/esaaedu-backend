@@ -96,7 +96,7 @@ Use **`firebase_admin.messaging`** (project already uses `firebase_admin` in `ba
 
 ## Business logic (existing data)
 
-- **Outbound:** Same access rules as `teacher/views.py` — `ConversationMessagesView`. Optional class branding: `[SBTY Academy - {Class.name}] {Teacher}: {body}`.
+- **Outbound:** Same access rules as `teacher/views.py` — `ConversationMessagesView`. SMS body is the client-rendered `message` only (no server prefix); `course_id`/`class_id` are for access + `SmsRoutingLog`.
 - **Inbound candidates:** `SmsRoutingLog` outbounds to `From` in window, ordered by time — full list to the model.
 - **Teacher UX:** In-app message + FCM ping (optional SMS to teacher later).
 
@@ -106,8 +106,8 @@ Use **`firebase_admin.messaging`** (project already uses `firebase_admin` in `ba
 
 ## Outbound API (suggested)
 
-- `GET /api/teacher/message-templates/?channel=sms` — returns `{ "channel", "templates": [ { slug, label, body_template, subject_template?, variables } ] }`. UI fills `{course_title}` from `Class.course.title` (one class per course per teacher is assumed); still send `class_id` on `POST /api/teacher/sms/send/` for access checks and SMS prefix branding (`Class.name` in bracket — optional product tweak later to use course title only in prefix).
-- `POST /api/teacher/sms/send/` with `student_user_id`, rendered `message`, optional `class_id`.
+- `GET /api/teacher/message-templates/?channel=sms` — returns `{ "channel", "templates": [ { slug, label, body_template, subject_template?, variables } ] }`. UI fills `{course_title}` from course context; send `course_id` (and optionally `class_id`) on `POST /api/teacher/sms/send/` for access checks and logging — Twilio body is the rendered `message` only.
+- `POST /api/teacher/sms/send/` with `student_user_id`, rendered `message`, optional `course_id` / `class_id`.
 
 ---
 

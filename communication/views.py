@@ -19,7 +19,7 @@ from communication.services.twilio_sms import (
     TwilioNotConfiguredError,
     validate_inbound_webhook_signature,
 )
-from courses.models import Class
+from courses.models import Class, Course
 from users.models import User
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,9 @@ class TeacherMessageTemplateListView(APIView):
 
 class TeacherSmsSendView(APIView):
     """
-    POST JSON: student_user_id (int), message (str), optional class_id (UUID string).
+    POST JSON: student_user_id (int), message (str),
+    optional course_id (Course UUID, preferred for Student Management),
+    optional class_id (Class UUID, legacy / disambiguation).
     Sends branded SMS via Twilio and records SmsRoutingLog outbound.
     """
 
@@ -88,7 +90,10 @@ class TeacherSmsSendView(APIView):
 
         student_user_id = request.data.get("student_user_id")
         message = (request.data.get("message") or "").strip()
-        class_id = request.data.get("class_id")
+        raw_course_id = request.data.get("course_id")
+        raw_class_id = request.data.get("class_id")
+        has_course = raw_course_id not in (None, "")
+        has_class = raw_class_id not in (None, "")
 
         if not student_user_id or not message:
             return Response(
@@ -105,22 +110,51 @@ class TeacherSmsSendView(APIView):
             )
 
         student = get_object_or_404(User, pk=student_pk, role=User.Role.STUDENT)
+        course_arg = None
         course_class = None
-        if class_id:
+
+        if has_course and has_class:
             try:
-                cid = uuid.UUID(str(class_id))
+                cuid = uuid.UUID(str(raw_course_id))
+                clid = uuid.UUID(str(raw_class_id))
+            except (ValueError, TypeError):
+                return Response(
+                    {"error": "course_id and class_id must be UUIDs"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            course_arg = get_object_or_404(Course, id=cuid, teacher=user)
+            course_class = get_object_or_404(Class, id=clid, teacher=user)
+            if course_class.course_id != course_arg.id:
+                return Response(
+                    {"error": "class_id does not belong to the given course_id"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        elif has_class:
+            try:
+                clid = uuid.UUID(str(raw_class_id))
             except (ValueError, TypeError):
                 return Response(
                     {"error": "class_id must be a UUID"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            course_class = get_object_or_404(Class, id=cid, teacher=user)
+            course_class = get_object_or_404(Class, id=clid, teacher=user)
+            course_arg = course_class.course
+        elif has_course:
+            try:
+                cuid = uuid.UUID(str(raw_course_id))
+            except (ValueError, TypeError):
+                return Response(
+                    {"error": "course_id must be a UUID"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            course_arg = get_object_or_404(Course, id=cuid, teacher=user)
 
         try:
             log = send_teacher_sms_to_student(
                 teacher=user,
                 student=student,
                 message_body=message,
+                course=course_arg,
                 course_class=course_class,
             )
         except PermissionError as e:
@@ -182,7 +216,9 @@ class TwilioInboundSmsWebhookView(APIView):
             twilio_number=twilio_number,
             student_phone=student_phone,
             teacher=None,
+            course=None,
             course_class=None,
+            inbound_routing=SmsRoutingLog.InboundRouting.PENDING,
             direction=SmsRoutingLog.Direction.INBOUND,
             body=body,
             twilio_message_sid=message_sid,

@@ -70,7 +70,12 @@ Fetch preset copy for SMS (or other channels later).
 |-------|------|----------|-------------|
 | `student_user_id` | integer | Yes | Target student’s `User.id` (`role` must be `student`). |
 | `message` | string | Yes | **Final** body after you applied template placeholders (this is the “inner” message). |
-| `class_id` | UUID string | No* | Class UUID. *Strongly recommended:* ensures the teacher teaches that class, the student is enrolled, and enables server-side SMS branding. |
+| `course_id` | UUID string | No* | **`courses.Course` primary key** — preferred when the UI is filtered by course (e.g. Student Management). Teacher must own the course; the student must be on exactly **one** of that teacher’s classes for that course, unless you also send `class_id`. |
+| `class_id` | UUID string | No* | **`courses.Class` primary key** — optional; use for legacy clients or to disambiguate when multiple classes match the same course + student. If both `course_id` and `class_id` are sent, the class must belong to that course. |
+
+\*At least one of `course_id` or `class_id` is **recommended** so the server can attach course context to the log and brand the SMS. If **neither** is sent, the server still allows send when the teacher shares **any** class with the student (first match used for logging and branding).
+
+**Important:** Do **not** send `EnrolledCourse.id` or any other UUID here — only `Course.id` or `Class.id`.
 
 ### Success `201` body
 
@@ -82,21 +87,19 @@ Fetch preset copy for SMS (or other channels later).
 }
 ```
 
-### Server-side SMS prefix
+### SMS body as sent
 
-If `class_id` is present, the backend may prepend something like:
+Twilio receives **`message` exactly as you send it** after template substitution. The server does **not** prepend teacher name, course title, or an extra “SBTY Academy” line — your template and UI copy are the full SMS.
 
-`[SBTY Academy - {Class.name}] {Teacher name}: ` + your `message`.
-
-So template text should focus on **course** wording (e.g. `{course_title}`); avoid repeating long “SBTY Academy” lines in the template.
+`course_id` / `class_id` are still used for **permission checks** and **logging** (`SmsRoutingLog`), not to alter the message text.
 
 ### Common errors
 
 | Status | Meaning |
 |--------|---------|
-| `400` | Missing `student_user_id` / `message`, bad UUID, bad student id type, student has no phone on profile, etc. |
-| `403` | Not a teacher, or teacher/student/class permission failure. |
-| `404` | Student or class not found. |
+| `400` | Missing `student_user_id` / `message`, bad UUID, `class_id` not matching `course_id`, etc. |
+| `403` | Not a teacher; student not in class for this course; multiple classes match and `class_id` omitted; no shared class (when no ids sent). |
+| `404` | Student, class, or course not found. |
 | `503` | Twilio not configured on the server. |
 
 ---
@@ -105,9 +108,19 @@ So template text should focus on **course** wording (e.g. `{course_title}`); avo
 
 1. `GET /api/teacher/message-templates/?channel=sms`
 2. User selects a template.
-3. From the current class context, read **`course_title`** (e.g. `class.course.title` from your existing class API).
+3. From your course context, read **`course_title`** (e.g. `Course.title` for the selected course).
 4. `message = body_template.format(course_title=course_title)` (add any other keys from `variables`).
-5. `POST /api/teacher/sms/send/` with `{ student_user_id, message, class_id }`.
+5. `POST /api/teacher/sms/send/` with `{ student_user_id, message, course_id }` (use `class_id` as well if you need to disambiguate).
+
+---
+
+## Inbound SMS (Twilio webhook — reference only)
+
+Inbound rows are stored on `SmsRoutingLog` with `direction=inbound` and `inbound_routing`:
+
+- `pending` — just received; routing not finished.
+- `routed` — correlated to a prior **outbound** to the same student/from number (reply thread); `teacher`, `course`, and `course_class` may be filled from that outbound.
+- `generic_admin` — no matching prior outbound; treat as generic/admin handling.
 
 ---
 

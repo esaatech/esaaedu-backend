@@ -14,6 +14,11 @@ class SmsRoutingLog(models.Model):
         INBOUND = "inbound", "Inbound"
         OUTBOUND = "outbound", "Outbound"
 
+    class InboundRouting(models.TextChoices):
+        PENDING = "pending", "Pending"
+        ROUTED = "routed", "Routed"
+        GENERIC_ADMIN = "generic_admin", "Generic / admin"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     twilio_number = models.CharField(
         max_length=20,
@@ -33,12 +38,27 @@ class SmsRoutingLog(models.Model):
         blank=True,
         help_text="Teacher on outbound; set on inbound after routing (optional until processed).",
     )
+    course = models.ForeignKey(
+        "courses.Course",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="sms_routing_logs",
+        help_text="Course context for outbound and routed inbound.",
+    )
     course_class = models.ForeignKey(
         "courses.Class",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="sms_routing_logs",
+    )
+    inbound_routing = models.CharField(
+        max_length=20,
+        choices=InboundRouting.choices,
+        null=True,
+        blank=True,
+        help_text="Inbound only: pending until routing runs; routed if matched to prior outbound; generic_admin otherwise. Null for outbound.",
     )
     direction = models.CharField(max_length=10, choices=Direction.choices)
     body = models.TextField(help_text="Message text as sent/received (after branding for outbound).")

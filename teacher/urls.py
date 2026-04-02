@@ -1,18 +1,11 @@
 from django.urls import path
-from . import views
-from .calendar_views import StaffCalendarWeekApiView, StaffClassDialogApiView, StaffTeacherDialogApiView
-from .roster_views import StaffTeacherRosterDetailView, StaffTeacherRosterListView
-from student import views as student_views
 from communication.views import TeacherMessageTemplateListView, TeacherSmsSendView
+from . import views
+from student import views as student_views
 
 app_name = 'teacher'
 
 urlpatterns = [
-    path('staff/teachers/', StaffTeacherRosterListView.as_view(), name='staff_teacher_roster_list'),
-    path('staff/teachers/<int:teacher_id>/', StaffTeacherRosterDetailView.as_view(), name='staff_teacher_roster_detail'),
-    path('staff/calendar/week/', StaffCalendarWeekApiView.as_view(), name='staff_calendar_week'),
-    path('staff/classes/<uuid:class_id>/dialog/', StaffClassDialogApiView.as_view(), name='staff_class_dialog'),
-    path('staff/teachers/<int:teacher_id>/dialog/', StaffTeacherDialogApiView.as_view(), name='staff_teacher_dialog'),
     path('profile/', views.TeacherProfileAPIView.as_view(), name='teacher_profile'),
     path('schedule/', views.TeacherScheduleAPIView.as_view(), name='teacher_schedule'),
     path('timetable/', views.TeacherTimetableAPIView.as_view(), name='teacher_timetable'),
@@ -44,6 +37,11 @@ urlpatterns = [
     path('students/<int:student_id>/assessments/', views.StudentAssessmentSubmissionsView.as_view(), name='student_assessment_submissions'),
     # Student Project Submissions (Get all projects for a student in one call)
     path('students/<int:student_id>/projects/', views.StudentProjectSubmissionsView.as_view(), name='student_project_submissions'),
+    path(
+        'students/<int:student_id>/messaging-context/',
+        views.TeacherStudentMessagingContextView.as_view(),
+        name='teacher_student_messaging_context',
+    ),
     
     # Code Snippet URLs (for teacher Tools page)
     path('code-snippets/', student_views.TeacherCodeSnippetListView.as_view(), name='teacher_code_snippet_list'),
@@ -75,12 +73,8 @@ urlpatterns = [
     # All File Upload URLs (generic endpoint for all file types)
     path('files/upload/', views.AllFileUploadView.as_view(), name='all_file_upload'),
     
-    # Messaging URLs
-    path(
-        'message-templates/',
-        TeacherMessageTemplateListView.as_view(),
-        name='teacher_message_templates',
-    ),
+    # Messaging URLs (templates + SMS; conversations below)
+    path('message-templates/', TeacherMessageTemplateListView.as_view(), name='teacher_message_templates'),
     path('sms/send/', TeacherSmsSendView.as_view(), name='teacher_sms_send'),
     path('students/<int:student_id>/conversations/', views.StudentConversationsListView.as_view(), name='student_conversations'),
     path('conversations/<uuid:conversation_id>/messages/', views.ConversationMessagesView.as_view(), name='conversation_messages'),

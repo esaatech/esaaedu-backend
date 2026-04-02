@@ -5081,6 +5081,92 @@ class MessagePagination(PageNumberPagination):
     max_page_size = 100
 
 
+class TeacherStudentMessagingContextView(APIView):
+    """
+    Lightweight contact + course context for teacher messaging (app / SMS / email / WhatsApp UIs).
+    Same enrollment scope as teacher-student-record; avoids heavy aggregates.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, student_id):
+        try:
+            teacher = request.user
+            if not teacher.is_teacher:
+                return Response(
+                    {"error": "Only teachers can access this endpoint"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            course_id = request.GET.get("course_id") or None
+
+            try:
+                student_profile = StudentProfile.objects.select_related("user").get(
+                    user_id=student_id
+                )
+            except StudentProfile.DoesNotExist:
+                return Response(
+                    {"error": "Student not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            enrollments = EnrolledCourse.objects.filter(
+                student_profile__user_id=student_id,
+                course__teacher=teacher,
+            ).select_related("course")
+
+            if course_id:
+                enrollments = enrollments.filter(course_id=course_id)
+
+            if not enrollments.exists():
+                return Response(
+                    {"error": "No enrollments found for this student in your courses"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            enrollment = enrollments.first()
+            course = enrollment.course
+            user = student_profile.user
+
+            from communication.models import MessageTemplate
+
+            sms_templates = [
+                {
+                    "slug": t.slug,
+                    "label": t.label,
+                    "body_template": t.body_template,
+                    "subject_template": t.subject_template or None,
+                    "variables": t.variables or [],
+                }
+                for t in MessageTemplate.objects.filter(
+                    channel=MessageTemplate.Channel.SMS, is_active=True
+                ).order_by("sort_order", "label")
+            ]
+
+            payload = {
+                "student_user_id": user.id,
+                "account_email": user.email or "",
+                "parent_email": (student_profile.parent_email or "").strip(),
+                "parent_phone": (student_profile.parent_phone or "").strip(),
+                "parent_name": (student_profile.parent_name or "").strip(),
+                "child_email": (student_profile.child_email or "").strip(),
+                "child_phone": (student_profile.child_phone or "").strip(),
+                "student_display_name": user.get_full_name() or user.email or "",
+                "course_id": str(course.id),
+                "course_title": course.title or "",
+                "sms_templates": sms_templates,
+            }
+
+            return Response(payload, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.exception("TeacherStudentMessagingContextView failed")
+            return Response(
+                {"error": "Failed to load messaging context", "details": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
 class StudentConversationsListView(APIView):
     """
     List or create conversations for a specific student.

@@ -59,16 +59,3 @@ def send_sms(*, to_e164: str, body: str) -> str:
     client = Client(sid, token)
     msg = client.messages.create(to=to_e164, from_=from_number, body=body)
     return msg.sid
-
-
-def format_branded_outbound(
-    *,
-    class_name: str | None,
-    teacher_display_name: str,
-    message_body: str,
-) -> str:
-    if class_name:
-        prefix = f"[SBTY Academy - {class_name}]"
-    else:
-        prefix = "[SBTY Academy]"
-    return f"{prefix} {teacher_display_name}: {message_body}"
