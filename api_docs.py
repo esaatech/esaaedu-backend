@@ -3975,6 +3975,15 @@ def teacher_sms_messaging_contract(request):
                             "If both are sent, class must belong to the given course."
                         ),
                     },
+                    "target_phone": {
+                        "type": "string",
+                        "required": False,
+                        "description": (
+                            "Optional E.164 (or normalizable) destination. When set, must match "
+                            "the student's StudentProfile child_phone or parent_phone after normalization; "
+                            "otherwise 403. Omit for default child-then-parent routing."
+                        ),
+                    },
                 },
                 "success_response": {
                     "status": 201,
@@ -4006,6 +4015,9 @@ def teacher_sms_messaging_contract(request):
                             {"error": "Student is not in your class for this course"},
                             {"error": "Multiple classes match this course and student; send class_id to disambiguate"},
                             {"error": "You have no shared class with this student"},
+                            {
+                                "error": "target_phone is not an allowed student/parent phone for this student"
+                            },
                         ]
                     },
                     "404": {"description": "student, class, or course not found"},
@@ -4062,7 +4074,7 @@ def teacher_sms_messaging_contract(request):
             "1. GET /api/teacher/message-templates/?channel=sms with auth.",
             "2. User picks a template; load course_title from course context (e.g. Course.title from your filter).",
             "3. Render: message = template.body_template.format(course_title=course.title) — include any other keys listed in template.variables.",
-            "4. POST /api/teacher/sms/send/ with { student_user_id, message, course_id } (preferred) and optionally class_id.",
+            "4. POST /api/teacher/sms/send/ with { student_user_id, message, course_id } (preferred), optional class_id, optional target_phone for explicit child/parent destination.",
             "5. For inbound replies: poll or refresh GET /api/teacher/sms/inbound/unread-count/ for badges; after the teacher opens a thread, PATCH /api/teacher/sms/inbound/{log_id}/read/.",
         ],
         "example_requests": {
@@ -4071,6 +4083,7 @@ def teacher_sms_messaging_contract(request):
                 "student_user_id": 42,
                 "message": "Hello from SBTY Academy — just to let you know that Intro to Python has started. Welcome!",
                 "course_id": "550e8400-e29b-41d4-a716-446655440000",
+                "target_phone": "+15551234567",
             },
         },
         "machine_readable_contract_url": "/api/docs/teacher-sms-messaging/",
