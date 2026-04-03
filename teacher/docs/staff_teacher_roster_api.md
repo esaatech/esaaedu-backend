@@ -25,6 +25,6 @@ Both APIs require `IsAuthenticated + IsAdminUser`.
 ## Design notes
 
 - Top-level list keeps payload small for quick page load and agent calls.
-- Detail endpoint is called lazily when a teacher row is opened.
+- Detail endpoint is called lazily when a teacher row is opened; it resolves by user `id` (any existing user) so staff views do not 404 after role or `TeacherProfile` drift. Only staff should call it.
 - This mirrors a reusable tool contract for future orchestration without duplicating business logic.
 - The teacher detail partial is reusable across staff surfaces (roster + calendar dialog) with shared style tokens for consistent rendering.

@@ -49,7 +49,14 @@ def get_teacher_roster_queryset(*, q: str | None = None, focus_id: int | None = 
 
 
 def get_teacher_roster_detail(teacher_id: int):
-    """Selected teacher detail payload input with prefetched courses/classes/students."""
+    """Selected teacher detail payload input with prefetched courses/classes/students.
+
+    Staff-only (caller must enforce IsAdminUser). Resolves by user primary key only:
+    - List still shows active role=teacher users only.
+    - Detail loads any existing user id so staff links do not 404 after role/profile drift
+      (e.g. user teaches or is in roster history but role is no longer ``teacher`` and
+      there is no ``TeacherProfile`` row).
+    """
     class_qs = (
         Class.objects.filter(is_active=True)
         .select_related("course")
@@ -63,7 +70,7 @@ def get_teacher_roster_detail(teacher_id: int):
     )
 
     return (
-        User.objects.filter(role=User.Role.TEACHER, is_active=True, pk=teacher_id)
+        User.objects.filter(pk=teacher_id)
         .select_related("teacher_profile")
         .prefetch_related(
             Prefetch("created_courses", queryset=course_qs),
