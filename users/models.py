@@ -123,11 +123,6 @@ class TeacherProfile(models.Model):
         validators=[MinValueValidator(0)],
         help_text='Compensation amount in USD; meaning depends on compensation_basis.',
     )
-    next_pay_day = models.DateField(
-        null=True,
-        blank=True,
-        help_text='Operational next scheduled pay date for this teacher.',
-    )
 
     bio = models.TextField(blank=True, help_text="Teacher's biography")
     qualifications = models.TextField(blank=True, help_text="Educational qualifications and certifications")

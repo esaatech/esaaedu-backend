@@ -159,7 +159,10 @@ class MessageTemplate(models.Model):
         ordering = ["channel", "sort_order", "label"]
         unique_together = [["channel", "slug"]]
         indexes = [
-            models.Index(fields=["channel", "is_active", "sort_order"]),
+            models.Index(
+                fields=["channel", "is_active", "sort_order"],
+                name="message_tem_channel_ffe528_idx",
+            ),
         ]
 
     def __str__(self):
