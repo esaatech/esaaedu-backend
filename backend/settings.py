@@ -430,10 +430,11 @@ STRIPE_WEBHOOK_SECRET = stripe_config['STRIPE_WEBHOOK_SECRET']
 TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID', default='')
 TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN', default='')
 TWILIO_FROM_NUMBER = config('TWILIO_FROM_NUMBER', default='')
-# When True, inbound webhook runs routing/processing in-process (dev); when False, enqueue Cloud Task (production).
+# When True, inbound webhook runs process_inbound_sms_routing in the same request (pending → routed/generic_admin).
+# Set False only when a worker (e.g. Cloud Tasks) runs routing instead; do not tie this to DEBUG.
 COMMUNICATION_PROCESS_SMS_INLINE = config(
-    'COMMUNICATION_PROCESS_SMS_INLINE',
-    default=DEBUG,
+    "COMMUNICATION_PROCESS_SMS_INLINE",
+    default=True,
     cast=bool,
 )
 # Inbound reply correlation: only outbounds newer than (inbound_time - N seconds) qualify; 0 = no time limit.
