@@ -16,6 +16,7 @@ from communication.models import MessageTemplate, SmsRoutingLog
 from communication.services.inbound_processing import process_inbound_sms_routing
 from communication.services.outbound import send_teacher_sms_to_student
 from communication.services.phone import normalize_to_e164
+from communication.services.twilio_delivery import apply_twilio_message_status
 from communication.services.twilio_sms import (
     TwilioNotConfiguredError,
     validate_inbound_webhook_signature,
@@ -285,6 +286,9 @@ class TwilioInboundSmsWebhookView(APIView):
             direction=SmsRoutingLog.Direction.INBOUND,
             body=body,
             twilio_message_sid=message_sid,
+            delivery_status="",
+            delivery_error_code="",
+            delivery_error_message="",
         )
 
         if getattr(settings, "COMMUNICATION_PROCESS_SMS_INLINE", True):
@@ -293,4 +297,34 @@ class TwilioInboundSmsWebhookView(APIView):
             except Exception:
                 logger.exception("Inbound SMS inline processing failed log_id=%s", log.id)
 
+        return HttpResponse("", status=200, content_type="text/plain")
+
+
+@method_decorator(csrf_exempt, name="dispatch")
+class TwilioSmsStatusWebhookView(APIView):
+    """
+    Twilio status callback: MessageSid, MessageStatus, optional ErrorCode / ErrorMessage.
+    Point your Twilio number or Messaging Service "Status callback URL" to this path
+    (same host as inbound webhook; signature validation uses the full request URL).
+    """
+
+    permission_classes = []
+    authentication_classes = []
+
+    def post(self, request):
+        if not validate_inbound_webhook_signature(request):
+            return HttpResponse("Forbidden", status=403)
+        sid = (request.POST.get("MessageSid") or "").strip()
+        st = (request.POST.get("MessageStatus") or "").strip()
+        code = (request.POST.get("ErrorCode") or "").strip()
+        err = (request.POST.get("ErrorMessage") or "").strip()[:500]
+        if not sid:
+            return HttpResponse("Bad Request", status=400)
+        n = apply_twilio_message_status(
+            message_sid=sid,
+            status=st,
+            error_code=code,
+            error_message=err,
+        )
+        logger.debug("Twilio SMS status sid=%s status=%s rows_updated=%s", sid, st, n)
         return HttpResponse("", status=200, content_type="text/plain")

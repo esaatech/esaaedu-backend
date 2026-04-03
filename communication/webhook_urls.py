@@ -13,4 +13,9 @@ urlpatterns = [
         views.TwilioInboundSmsWebhookView.as_view(),
         name="twilio-sms-inbound",
     ),
+    path(
+        "twilio/sms/status/",
+        views.TwilioSmsStatusWebhookView.as_view(),
+        name="twilio-sms-status",
+    ),
 ]

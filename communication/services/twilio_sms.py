@@ -51,11 +51,13 @@ def validate_inbound_webhook_signature(request) -> bool:
     return True
 
 
-def send_sms(*, to_e164: str, body: str) -> str:
+def send_sms(*, to_e164: str, body: str) -> tuple[str, str]:
     """
-    Send SMS via Twilio. Returns Message SID.
+    Send SMS via Twilio. Returns (message_sid, initial_status).
+    Status is Twilio's Message.status (e.g. queued, accepted); final delivery uses the status callback.
     """
     sid, token, from_number = get_twilio_credentials()
     client = Client(sid, token)
     msg = client.messages.create(to=to_e164, from_=from_number, body=body)
-    return msg.sid
+    initial_status = (getattr(msg, "status", None) or "").strip().lower()[:24]
+    return msg.sid, initial_status

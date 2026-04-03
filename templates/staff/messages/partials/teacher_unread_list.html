@@ -1,0 +1,16 @@
+{% load i18n %}
+<section class="staff-msg-section" aria-labelledby="staff-msg-teacher-heading">
+  <h2 id="staff-msg-teacher-heading" class="staff-msg-section-title">{% trans "Teacher routed" %}</h2>
+  <p class="staff-msg-section-meta">
+    {% trans "One conversation per phone. Numbers with unread admin-queue SMS appear only under Admin until cleared. Unread routed threads first; then earlier read threads (load more in pages of 10)." %}
+  </p>
+  <h3 class="staff-msg-subheading">{% trans "Unread" %}</h3>
+  <div id="staff-msg-teacher-unread-list" class="staff-msg-list" role="list"></div>
+  <p id="staff-msg-teacher-unread-empty" class="staff-msg-quiet" hidden>{% trans "No unread teacher-routed threads." %}</p>
+  <h3 class="staff-msg-subheading">{% trans "Earlier" %}</h3>
+  <div id="staff-msg-teacher-recent-list" class="staff-msg-list" role="list"></div>
+  <p id="staff-msg-teacher-recent-empty" class="staff-msg-quiet" hidden>{% trans "No earlier threads loaded." %}</p>
+  <button type="button" id="staff-msg-teacher-load-more" class="staff-msg-button staff-msg-button--secondary" hidden>
+    {% trans "Load more" %}
+  </button>
+</section>

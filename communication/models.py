@@ -90,6 +90,32 @@ class SmsRoutingLog(models.Model):
             "(e.g. assigned teacher, admin for generic handling)."
         ),
     )
+    delivery_status = models.CharField(
+        max_length=24,
+        blank=True,
+        default="",
+        help_text=(
+            "Outbound only: Twilio MessageStatus (e.g. queued, sent, delivered, undelivered, failed). "
+            "Updated from the REST response and the status callback webhook."
+        ),
+    )
+    delivery_error_code = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        help_text="Outbound only: Twilio ErrorCode when delivery failed or was not completed.",
+    )
+    delivery_error_message = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+        help_text="Outbound only: optional provider error text.",
+    )
+    delivery_updated_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When delivery_status was last updated (send response or status callback).",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -103,6 +129,10 @@ class SmsRoutingLog(models.Model):
             models.Index(
                 fields=["teacher", "direction", "read_at"],
                 name="sms_rt_tch_dir_read_idx",
+            ),
+            models.Index(
+                fields=["direction", "delivery_status", "delivery_updated_at"],
+                name="sms_rt_dir_deliver_idx",
             ),
         ]
 

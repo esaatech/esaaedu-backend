@@ -6,20 +6,24 @@ from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from django import template
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
 
 from billings.models import Payment, Subscribers
+from communication.models import SmsRoutingLog
+from communication.services.staff_sms_ui import admin_queue_inbound_queryset
 from courses.models import ClassEvent, ClassSession
 from settings.models import get_calendar_timezone_fallback_detail
-from student.models import EnrolledCourse
+from student.models import EnrolledCourse, Message
 from users.admin_calendar_tz import resolve_admin_calendar_timezone_detail
 from users.models import StudentProfile, User
 
 register = template.Library()
 
 _PAYMENT_CARD_LIST_LIMIT = 200
+_MESSAGE_CARD_PREVIEW_LIMIT = 3
+_MESSAGE_PREVIEW_CHARS = 120
 
 _SCHEDULABLE_EVENT_TYPES = frozenset(
     {
@@ -47,6 +51,56 @@ def _user_display_label(user) -> str:
         return "—"
     name = (user.get_full_name() or "").strip()
     return name or user.email or str(user.pk)
+
+
+def _truncate_message_preview(text: str, max_len: int = _MESSAGE_PREVIEW_CHARS) -> str:
+    t = (text or "").strip().replace("\n", " ")
+    if len(t) <= max_len:
+        return t
+    return f"{t[: max_len - 1]}…"
+
+
+def _staff_sms_inbox_url(*, bucket: str, log_id: str) -> str:
+    try:
+        base = reverse("staff-messages-inbox")
+    except NoReverseMatch:
+        return ""
+    return f"{base}?{urlencode({'bucket': bucket, 'log': log_id})}"
+
+
+def _sms_routing_preview_items(
+    qs,
+    *,
+    limit: int = _MESSAGE_CARD_PREVIEW_LIMIT,
+    bucket: str | None = None,
+) -> list[dict]:
+    rows: list[dict] = []
+    for row in qs.order_by("-created_at")[:limit]:
+        log_id = str(row.pk)
+        item: dict = {
+            "label": row.student_phone or "—",
+            "detail": _truncate_message_preview(row.body),
+            "log_id": log_id,
+        }
+        if bucket:
+            url = _staff_sms_inbox_url(bucket=bucket, log_id=log_id)
+            if url:
+                item["inbox_url"] = url
+        rows.append(item)
+    return rows
+
+
+def _inapp_message_preview_items(qs, *, limit: int = _MESSAGE_CARD_PREVIEW_LIMIT) -> list[dict]:
+    rows: list[dict] = []
+    qs = qs.select_related("sender", "conversation").order_by("-created_at")
+    for msg in qs[:limit]:
+        rows.append(
+            {
+                "label": _user_display_label(msg.sender),
+                "detail": _truncate_message_preview(msg.content),
+            }
+        )
+    return rows
 
 
 def _subscriber_due_rows(qs):
@@ -516,13 +570,36 @@ def admin_dashboard_snapshot(context):
         .count()
     )
 
-    # Admin Messages card (placeholder counts/lists until messaging is modeled).
-    teacher_message_count = 0
-    student_message_count = 0
-    parent_message_count = 0
-    teacher_message_items: list[dict] = []
-    student_message_items: list[dict] = []
-    parent_message_items: list[dict] = []
+    # Admin Messages card: SMS via SmsRoutingLog (read_at) + in-app via Message (read_at).
+    # Counts = unread (read_at is null). Preview rows = latest 3 per bucket.
+    admin_sms_base = admin_queue_inbound_queryset()
+    teacher_sms_base = SmsRoutingLog.objects.filter(
+        direction=SmsRoutingLog.Direction.INBOUND,
+        inbound_routing=SmsRoutingLog.InboundRouting.ROUTED,
+    )
+    student_msg_base = Message.objects.filter(
+        conversation__recipient_type="student",
+        sender__role=User.Role.STUDENT,
+    )
+    parent_msg_base = Message.objects.filter(
+        conversation__recipient_type="parent",
+        sender__role=User.Role.PARENT,
+    )
+
+    admin_message_count = admin_sms_base.filter(read_at__isnull=True).count()
+    teacher_message_count = teacher_sms_base.filter(read_at__isnull=True).count()
+    student_message_count = student_msg_base.filter(read_at__isnull=True).count()
+    parent_message_count = parent_msg_base.filter(read_at__isnull=True).count()
+
+    try:
+        staff_messages_inbox_url = reverse("staff-messages-inbox")
+    except NoReverseMatch:
+        staff_messages_inbox_url = ""
+
+    admin_message_items = _sms_routing_preview_items(admin_sms_base, bucket="admin")
+    teacher_message_items = _sms_routing_preview_items(teacher_sms_base, bucket="teacher")
+    student_message_items = _inapp_message_preview_items(student_msg_base)
+    parent_message_items = _inapp_message_preview_items(parent_msg_base)
 
     return {
         "today": today,
@@ -565,9 +642,12 @@ def admin_dashboard_snapshot(context):
         "paid_payments_this_month": paid_payments_this_month,
         "new_users_this_week": new_users_this_week,
         "active_classes_next_7_days": active_classes,
+        "admin_message_count": admin_message_count,
         "teacher_message_count": teacher_message_count,
         "student_message_count": student_message_count,
         "parent_message_count": parent_message_count,
+        "staff_messages_inbox_url": staff_messages_inbox_url,
+        "admin_message_items": admin_message_items,
         "teacher_message_items": teacher_message_items,
         "student_message_items": student_message_items,
         "parent_message_items": parent_message_items,

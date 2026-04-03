@@ -1,0 +1,13 @@
+{% load i18n %}
+<section class="staff-msg-section" aria-labelledby="staff-msg-admin-heading">
+  <h2 id="staff-msg-admin-heading" class="staff-msg-section-title">{% trans "Admin queue" %}</h2>
+  <p class="staff-msg-section-meta">
+    {% trans "One conversation per phone (Twilio line + family number). Unread threads first, then recent threads where all admin-queue messages are read." %}
+  </p>
+  <h3 class="staff-msg-subheading">{% trans "Unread" %}</h3>
+  <div id="staff-msg-admin-unread-list" class="staff-msg-list" role="list"></div>
+  <p id="staff-msg-admin-unread-empty" class="staff-msg-quiet" hidden>{% trans "No unread admin-queue threads." %}</p>
+  <h3 class="staff-msg-subheading">{% trans "Recent" %}</h3>
+  <div id="staff-msg-admin-recent-list" class="staff-msg-list" role="list"></div>
+  <p id="staff-msg-admin-recent-empty" class="staff-msg-quiet" hidden>{% trans "No recent admin-queue threads." %}</p>
+</section>

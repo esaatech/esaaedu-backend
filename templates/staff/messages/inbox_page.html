@@ -1,0 +1,626 @@
+{% extends "admin/base_site.html" %}
+{% load i18n %}
+
+{% block title %}{% trans "Staff SMS inbox" %} | {{ block.super }}{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">{% trans "Home" %}</a>
+  &rsaquo; {% trans "Staff SMS inbox" %}
+</div>
+{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+  :root {
+    --sm-primary: #0c4b33;
+    --sm-secondary: #417690;
+    --sm-muted: #666;
+    --sm-line: #dce6eb;
+    --sm-bg: #fff;
+  }
+  .staff-msg-wrap { max-width: 1400px; padding: 10px 0 24px; }
+  .staff-msg-head { margin-bottom: 16px; }
+  .staff-msg-title { margin: 0 0 6px; font-size: 22px; color: #333; }
+  .staff-msg-lead { margin: 0; color: var(--sm-muted); font-size: 13px; max-width: 720px; }
+  .staff-msg-grid {
+    display: grid;
+    grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.1fr);
+    gap: 16px;
+    align-items: start;
+  }
+  @media (max-width: 960px) {
+    .staff-msg-grid { grid-template-columns: 1fr; }
+  }
+  .staff-msg-master {
+    border: 1px solid var(--sm-line);
+    border-radius: 8px;
+    background: var(--sm-bg);
+    padding: 12px;
+    max-height: calc(100vh - 220px);
+    overflow-y: auto;
+  }
+  .staff-msg-detail-wrap {
+    border: 1px solid var(--sm-line);
+    border-radius: 8px;
+    background: #fafafa;
+    padding: 12px;
+    min-height: 320px;
+    max-height: calc(100vh - 220px);
+    overflow-y: auto;
+    position: sticky;
+    top: 8px;
+  }
+  .staff-msg-section { margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #eee; }
+  .staff-msg-section:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .staff-msg-section-title { margin: 0 0 6px; font-size: 15px; color: var(--sm-secondary); }
+  .staff-msg-section-meta { margin: 0 0 8px; font-size: 11px; color: var(--sm-muted); line-height: 1.35; }
+  .staff-msg-subheading {
+    margin: 12px 0 6px;
+    font-size: 12px;
+    font-weight: 800;
+    color: #333;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .staff-msg-list { display: flex; flex-direction: column; gap: 6px; }
+  .staff-msg-row {
+    text-align: left;
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--sm-line);
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  .staff-msg-row:hover { border-color: var(--sm-secondary); }
+  .staff-msg-row.is-selected {
+    border-color: var(--sm-primary);
+    box-shadow: 0 0 0 1px var(--sm-primary);
+  }
+  .staff-msg-row-phone { font-weight: 700; color: #333; }
+  .staff-msg-row-preview { color: var(--sm-muted); margin-top: 2px; }
+  .staff-msg-row-meta { font-size: 10px; color: #999; margin-top: 4px; }
+  .staff-msg-quiet { color: var(--sm-muted); font-size: 13px; margin: 0; }
+  .staff-msg-label { display: block; font-size: 11px; font-weight: 700; margin: 8px 0 4px; color: #444; }
+  .staff-msg-input, .staff-msg-textarea {
+    width: 100%; max-width: 100%; box-sizing: border-box;
+    padding: 8px 10px; border: 1px solid var(--sm-line); border-radius: 6px; font-size: 13px;
+  }
+  .staff-msg-textarea { resize: vertical; min-height: 72px; }
+  .staff-msg-button {
+    margin-top: 10px;
+    padding: 8px 14px;
+    border: none;
+    border-radius: 6px;
+    background: var(--sm-secondary);
+    color: #fff;
+    font-weight: 700;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .staff-msg-button:hover { filter: brightness(1.05); }
+  .staff-msg-button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .staff-msg-button--secondary {
+    background: #fff;
+    color: var(--sm-secondary);
+    border: 1px solid var(--sm-line);
+    width: 100%;
+    margin-top: 8px;
+  }
+  .staff-msg-button--secondary:hover {
+    background: #f6f9fc;
+    filter: none;
+  }
+  .staff-msg-unread-pill {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 800;
+    background: #c9a227;
+    color: #fff;
+  }
+  .staff-msg-search-results {
+    list-style: none; margin: 8px 0 0; padding: 0; max-height: 200px; overflow-y: auto;
+    border: 1px solid var(--sm-line); border-radius: 6px; background: #fff;
+  }
+  .staff-msg-search-results li button {
+    width: 100%; text-align: left; padding: 8px 10px; border: none; border-bottom: 1px solid #f0f0f0;
+    background: transparent; cursor: pointer; font-size: 12px;
+  }
+  .staff-msg-search-results li button:hover { background: #f6f9fc; }
+  .staff-msg-compose-target { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--sm-line); }
+  .staff-msg-thread { margin-bottom: 12px; max-height: 280px; overflow-y: auto; }
+  .staff-msg-thread-item {
+    padding: 8px 10px; margin-bottom: 8px; border-radius: 6px; font-size: 12px; line-height: 1.4;
+    border: 1px solid #e8e8e8; background: #fff;
+  }
+  .staff-msg-thread-item--inbound { border-left: 3px solid var(--sm-secondary); }
+  .staff-msg-thread-item--outbound { border-left: 3px solid var(--sm-primary); }
+  .staff-msg-thread-item--delivery-fail {
+    border-left-color: #c0392b;
+    background: #fff5f5;
+  }
+  .staff-msg-delivery-warn {
+    font-size: 11px;
+    color: #a02626;
+    margin-top: 4px;
+    font-weight: 600;
+  }
+  .staff-msg-row--delivery-issue { border-left: 3px solid #c0392b; }
+  .staff-msg-thread-dir { font-size: 10px; text-transform: uppercase; color: #888; margin-bottom: 4px; }
+  .staff-msg-status { font-size: 12px; margin-top: 8px; min-height: 1.2em; }
+  .staff-msg-status.is-error { color: #c00; }
+  .staff-msg-status.is-ok { color: var(--sm-primary); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="staff-msg-page-root" class="staff-msg-wrap"
+     data-api-base="/api/communication/staff/messages/"
+     data-initial-log-id="{{ initial_log_id|default:''|escape }}"
+     data-initial-bucket="{{ initial_bucket|default:''|escape }}">
+  {% csrf_token %}
+  <header class="staff-msg-head">
+    <h1 class="staff-msg-title">{% trans "Staff SMS inbox" %}</h1>
+    <p class="staff-msg-lead">
+      {% trans "Conversations are grouped by phone (one row per number). Unread threads are highlighted. Opening a row loads the full SMS thread and marks that inbound message read. Teacher list excludes numbers that still have unread admin-queue SMS." %}
+    </p>
+  </header>
+  <div class="staff-msg-grid">
+    <div class="staff-msg-master">
+      {% include "staff/messages/partials/admin_unread_list.html" %}
+      {% include "staff/messages/partials/teacher_unread_list.html" %}
+      {% include "staff/messages/partials/delivery_issues_list.html" %}
+      {% include "staff/messages/partials/user_search_compose.html" %}
+    </div>
+    <div class="staff-msg-detail-wrap">
+      {% include "staff/messages/partials/detail_reply.html" %}
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const root = document.getElementById('staff-msg-page-root');
+  if (!root) return;
+
+  const API_BASE = root.dataset.apiBase || '/api/communication/staff/messages/';
+  const initialLogId = (root.dataset.initialLogId || '').trim();
+  const initialBucket = (root.dataset.initialBucket || '').trim();
+
+  function getCsrfToken() {
+    const input = document.querySelector('[name=csrfmiddlewaretoken]');
+    if (input && input.value) return input.value;
+    const m = document.cookie.match(/csrftoken=([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  const adminUnreadList = document.getElementById('staff-msg-admin-unread-list');
+  const adminRecentList = document.getElementById('staff-msg-admin-recent-list');
+  const adminUnreadEmpty = document.getElementById('staff-msg-admin-unread-empty');
+  const adminRecentEmpty = document.getElementById('staff-msg-admin-recent-empty');
+  const teacherUnreadList = document.getElementById('staff-msg-teacher-unread-list');
+  const teacherRecentList = document.getElementById('staff-msg-teacher-recent-list');
+  const teacherUnreadEmpty = document.getElementById('staff-msg-teacher-unread-empty');
+  const teacherRecentEmpty = document.getElementById('staff-msg-teacher-recent-empty');
+  const teacherLoadMore = document.getElementById('staff-msg-teacher-load-more');
+  const deliveryList = document.getElementById('staff-msg-delivery-list');
+  const deliveryEmpty = document.getElementById('staff-msg-delivery-empty');
+  const deliveryRecent = document.getElementById('staff-msg-delivery-recent');
+  const detailPlaceholder = document.getElementById('staff-msg-detail-placeholder');
+  const detailPanel = document.getElementById('staff-msg-detail-panel');
+  const threadEl = document.getElementById('staff-msg-thread');
+  const replyBody = document.getElementById('staff-msg-reply-body');
+  const replySend = document.getElementById('staff-msg-reply-send');
+  const replyStatus = document.getElementById('staff-msg-reply-status');
+  const userQ = document.getElementById('staff-msg-user-q');
+  const searchResults = document.getElementById('staff-msg-search-results');
+  const composeTarget = document.getElementById('staff-msg-compose-target');
+  const composeTargetLabel = composeTarget ? composeTarget.querySelector('.staff-msg-compose-target-label') : null;
+  const phoneKeySelect = document.getElementById('staff-msg-phone-key');
+  const composeBody = document.getElementById('staff-msg-compose-body');
+  const composeSend = document.getElementById('staff-msg-compose-send');
+  const composeStatus = document.getElementById('staff-msg-compose-status');
+
+  let selectedLogId = null;
+  let composeUserId = null;
+  let searchTimer = null;
+  let teacherNextRecentOffset = 0;
+
+  const dateFmt = typeof Intl !== 'undefined'
+    ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+    : null;
+
+  function formatActivity(iso) {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      if (dateFmt) return dateFmt.format(d);
+      return d.toLocaleString();
+    } catch (e) {
+      return iso;
+    }
+  }
+
+  function setStatus(el, text, kind) {
+    if (!el) return;
+    el.textContent = text || '';
+    el.classList.remove('is-error', 'is-ok');
+    if (kind === 'error') el.classList.add('is-error');
+    if (kind === 'ok') el.classList.add('is-ok');
+  }
+
+  function highlightSelected(clickedBtn) {
+    document.querySelectorAll('.staff-msg-row').forEach((b) => b.classList.remove('is-selected'));
+    if (clickedBtn) clickedBtn.classList.add('is-selected');
+  }
+
+  function makeDeliveryIssueButton(row) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'staff-msg-row staff-msg-row--delivery-issue';
+    btn.dataset.logId = row.default_log_id;
+    btn.dataset.bucket = 'delivery';
+    btn.setAttribute('role', 'listitem');
+    const phoneEl = document.createElement('div');
+    phoneEl.className = 'staff-msg-row-phone';
+    phoneEl.textContent = row.student_phone || '—';
+    const preview = document.createElement('div');
+    preview.className = 'staff-msg-row-preview';
+    preview.textContent = row.preview || '';
+    const meta = document.createElement('div');
+    meta.className = 'staff-msg-row-meta';
+    const parts = [row.delivery_status || '', row.delivery_error_code ? 'code ' + row.delivery_error_code : ''];
+    if (row.delivery_error_message) parts.push(row.delivery_error_message);
+    meta.textContent = parts.filter(Boolean).join(' · ') + ' · ' + formatActivity(row.delivery_updated_at || row.created_at);
+    btn.appendChild(phoneEl);
+    btn.appendChild(preview);
+    btn.appendChild(meta);
+    btn.addEventListener('click', () => selectLog(row.default_log_id, btn));
+    return btn;
+  }
+
+  function makeThreadButton(row, bucketTag) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'staff-msg-row';
+    if (row.has_unread) btn.classList.add('staff-msg-row--unread');
+    btn.dataset.logId = row.default_log_id;
+    btn.dataset.bucket = bucketTag;
+    btn.setAttribute('role', 'listitem');
+    const phoneEl = document.createElement('div');
+    phoneEl.className = 'staff-msg-row-phone';
+    phoneEl.textContent = row.student_phone || '—';
+    if (row.has_unread && row.unread_count > 0) {
+      const pill = document.createElement('span');
+      pill.className = 'staff-msg-unread-pill';
+      pill.textContent = String(row.unread_count);
+      phoneEl.appendChild(pill);
+    }
+    const preview = document.createElement('div');
+    preview.className = 'staff-msg-row-preview';
+    preview.textContent = row.preview || '';
+    const meta = document.createElement('div');
+    meta.className = 'staff-msg-row-meta';
+    meta.textContent = formatActivity(row.last_activity_at);
+    btn.appendChild(phoneEl);
+    btn.appendChild(preview);
+    btn.appendChild(meta);
+    btn.addEventListener('click', () => selectLog(row.default_log_id, btn));
+    return btn;
+  }
+
+  function renderThreadList(container, emptyEl, threads, bucketTag, append) {
+    if (!container) return;
+    if (!append) container.innerHTML = '';
+    const list = threads || [];
+    if (append && list.length === 0) return;
+    if (!append && list.length === 0) {
+      if (emptyEl) emptyEl.hidden = false;
+      return;
+    }
+    if (emptyEl && !append) emptyEl.hidden = true;
+    list.forEach((row) => container.appendChild(makeThreadButton(row, bucketTag)));
+  }
+
+  async function selectLog(logId, btn) {
+    selectedLogId = logId;
+    highlightSelected(btn);
+    setStatus(replyStatus, '{% trans "Loading…" %}', '');
+    try {
+      const resp = await fetch(API_BASE + 'logs/' + logId + '/', { credentials: 'same-origin' });
+      if (!resp.ok) {
+        setStatus(replyStatus, '{% trans "Failed to load thread." %}', 'error');
+        return;
+      }
+      const data = await resp.json();
+      detailPlaceholder.hidden = true;
+      detailPanel.hidden = false;
+      threadEl.innerHTML = '';
+      (data.thread || []).forEach((t) => {
+        const div = document.createElement('div');
+        const inbound = t.direction === 'inbound';
+        const badDelivery = !inbound && t.delivery_status &&
+          (t.delivery_status === 'failed' || t.delivery_status === 'undelivered');
+        div.className = 'staff-msg-thread-item ' + (inbound ? 'staff-msg-thread-item--inbound' : 'staff-msg-thread-item--outbound') +
+          (badDelivery ? ' staff-msg-thread-item--delivery-fail' : '');
+        div.innerHTML =
+          '<div class="staff-msg-thread-dir">' + (inbound ? '{% trans "Inbound" %}' : '{% trans "Outbound" %}') +
+          ' · <span class="staff-msg-thread-time"></span></div>' +
+          '<div class="staff-msg-thread-body"></div>' +
+          (badDelivery ? '<div class="staff-msg-delivery-warn"></div>' : '');
+        div.querySelector('.staff-msg-thread-time').textContent = formatActivity(t.created_at);
+        div.querySelector('.staff-msg-thread-body').textContent = (t.body || t.body_preview || '');
+        if (badDelivery) {
+          const w = div.querySelector('.staff-msg-delivery-warn');
+          let txt = (t.delivery_status || '') + (t.delivery_error_code ? ' · ' + t.delivery_error_code : '');
+          if (t.delivery_error_message) txt += ' — ' + t.delivery_error_message;
+          w.textContent = txt;
+        }
+        threadEl.appendChild(div);
+      });
+      setStatus(replyStatus, '', '');
+      replyBody.value = '';
+      await loadAdminThreads();
+      await loadTeacherThreads(0, false);
+      await loadDeliveryIssues();
+      const esc2 = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(logId) : String(logId).replace(/"/g, '');
+      const rowAfter = document.querySelector('.staff-msg-row[data-log-id="' + esc2 + '"]');
+      highlightSelected(rowAfter || null);
+    } catch (e) {
+      setStatus(replyStatus, '{% trans "Failed to load thread." %}', 'error');
+    }
+  }
+
+  async function loadAdminThreads() {
+    const resp = await fetch(API_BASE + 'admin-unread/?recent_limit=10', { credentials: 'same-origin' });
+    const data = resp.ok ? await resp.json() : { unread_threads: [], recent_threads: [] };
+    renderThreadList(adminUnreadList, adminUnreadEmpty, data.unread_threads || [], 'admin', false);
+    renderThreadList(adminRecentList, adminRecentEmpty, data.recent_threads || [], 'admin', false);
+  }
+
+  function applyTeacherRecentEmpty(data) {
+    if (!teacherRecentEmpty) return;
+    const hasRows = teacherRecentList && teacherRecentList.children.length > 0;
+    teacherRecentEmpty.hidden = hasRows || (data.recent_has_more === true);
+  }
+
+  async function loadTeacherThreads(recentOffset, appendRecent) {
+    const url = API_BASE + 'teacher-unread/?recent_offset=' + encodeURIComponent(String(recentOffset)) + '&recent_limit=10';
+    const resp = await fetch(url, { credentials: 'same-origin' });
+    const data = resp.ok
+      ? await resp.json()
+      : { unread_threads: [], recent_threads: [], recent_has_more: false, next_recent_offset: 0 };
+    renderThreadList(teacherUnreadList, teacherUnreadEmpty, data.unread_threads || [], 'teacher', false);
+    if (!appendRecent && teacherRecentList) teacherRecentList.innerHTML = '';
+    renderThreadList(teacherRecentList, null, data.recent_threads || [], 'teacher', appendRecent);
+    teacherNextRecentOffset = typeof data.next_recent_offset === 'number' ? data.next_recent_offset : recentOffset;
+    if (teacherLoadMore) {
+      teacherLoadMore.hidden = !data.recent_has_more;
+    }
+    applyTeacherRecentEmpty(data);
+  }
+
+  async function loadDeliveryIssues() {
+    if (!deliveryList) return;
+    try {
+      const resp = await fetch(API_BASE + 'delivery-issues/?limit=25', { credentials: 'same-origin' });
+      const data = resp.ok ? await resp.json() : { issues: [], recent_outbound_delivery: [] };
+      const issues = data.issues || [];
+      const recent = data.recent_outbound_delivery || [];
+      deliveryList.innerHTML = '';
+      if (issues.length === 0) {
+        if (deliveryEmpty) deliveryEmpty.hidden = false;
+        if (deliveryRecent) {
+          deliveryRecent.innerHTML = '';
+          if (recent.length === 0) {
+            deliveryRecent.hidden = true;
+          } else {
+            deliveryRecent.hidden = false;
+            const title = document.createElement('div');
+            title.style.fontWeight = '600';
+            title.style.marginTop = '10px';
+            title.textContent = '{% trans "Latest outbound SMS (any status). Delivery issues only list failed / undelivered / canceled." %}';
+            deliveryRecent.appendChild(title);
+            recent.forEach((r) => {
+              const line = document.createElement('div');
+              line.style.marginTop = '4px';
+              const st = r.delivery_status || '{% trans "(not set)" %}';
+              let t = (r.student_phone || '—') + ' — ' + st;
+              if (r.delivery_error_code) t += ' · ' + r.delivery_error_code;
+              line.textContent = t;
+              deliveryRecent.appendChild(line);
+            });
+          }
+        }
+        return;
+      }
+      if (deliveryEmpty) deliveryEmpty.hidden = true;
+      if (deliveryRecent) {
+        deliveryRecent.hidden = true;
+        deliveryRecent.textContent = '';
+      }
+      issues.forEach((row) => deliveryList.appendChild(makeDeliveryIssueButton(row)));
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function loadAllLists() {
+    teacherNextRecentOffset = 0;
+    try {
+      await Promise.all([
+        loadAdminThreads(),
+        loadTeacherThreads(0, false),
+        loadDeliveryIssues(),
+      ]);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function loadMoreTeacherRecent() {
+    if (!teacherLoadMore) return;
+    teacherLoadMore.disabled = true;
+    try {
+      await loadTeacherThreads(teacherNextRecentOffset, true);
+    } catch (e) {
+      console.error(e);
+    }
+    teacherLoadMore.disabled = false;
+  }
+
+  async function sendReply() {
+    if (!selectedLogId) return;
+    const message = (replyBody.value || '').trim();
+    if (!message) {
+      setStatus(replyStatus, '{% trans "Enter a message." %}', 'error');
+      return;
+    }
+    replySend.disabled = true;
+    setStatus(replyStatus, '{% trans "Sending…" %}', '');
+    try {
+      const resp = await fetch(API_BASE + 'send/', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCsrfToken(),
+        },
+        body: JSON.stringify({ mode: 'reply', log_id: selectedLogId, message: message }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setStatus(replyStatus, data.detail || '{% trans "Send failed." %}', 'error');
+        replySend.disabled = false;
+        return;
+      }
+      setStatus(replyStatus, '{% trans "Sent." %}', 'ok');
+      replyBody.value = '';
+      await loadAllLists();
+      const esc = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(selectedLogId) : selectedLogId.replace(/"/g, '');
+      const pre = document.querySelector('.staff-msg-row[data-log-id="' + esc + '"]');
+      await selectLog(selectedLogId, pre || null);
+    } catch (e) {
+      setStatus(replyStatus, '{% trans "Send failed." %}', 'error');
+    }
+    replySend.disabled = false;
+  }
+
+  function renderSearchResults(users) {
+    if (!searchResults) return;
+    searchResults.innerHTML = '';
+    if (!users.length) {
+      searchResults.hidden = true;
+      return;
+    }
+    searchResults.hidden = false;
+    users.forEach((u) => {
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = u.display + ' · ' + u.email + ' (' + u.role + ')';
+      btn.addEventListener('click', () => pickComposeUser(u));
+      li.appendChild(btn);
+      searchResults.appendChild(li);
+    });
+  }
+
+  function pickComposeUser(u) {
+    composeUserId = u.id;
+    if (composeTargetLabel) composeTargetLabel.textContent = u.display + ' (' + u.email + ')';
+    if (phoneKeySelect) {
+      phoneKeySelect.innerHTML = '';
+      (u.phones || []).forEach((p) => {
+        const opt = document.createElement('option');
+        opt.value = p.key;
+        opt.textContent = p.label + ' — ' + p.phone;
+        phoneKeySelect.appendChild(opt);
+      });
+    }
+    if (composeTarget) composeTarget.hidden = !(u.phones && u.phones.length);
+    if (searchResults) searchResults.hidden = true;
+    if (userQ) userQ.value = '';
+    setStatus(composeStatus, '', '');
+  }
+
+  async function runSearch() {
+    const q = (userQ && userQ.value ? userQ.value.trim() : '');
+    if (q.length < 2) {
+      if (searchResults) searchResults.hidden = true;
+      return;
+    }
+    try {
+      const resp = await fetch(API_BASE + 'users/search/?q=' + encodeURIComponent(q), { credentials: 'same-origin' });
+      const data = resp.ok ? await resp.json() : { results: [] };
+      renderSearchResults(data.results || []);
+    } catch (e) {
+      renderSearchResults([]);
+    }
+  }
+
+  async function sendCompose() {
+    if (!composeUserId) return;
+    const message = (composeBody.value || '').trim();
+    if (!message) {
+      setStatus(composeStatus, '{% trans "Enter a message." %}', 'error');
+      return;
+    }
+    const phone_key = phoneKeySelect && phoneKeySelect.value ? phoneKeySelect.value : null;
+    composeSend.disabled = true;
+    setStatus(composeStatus, '{% trans "Sending…" %}', '');
+    try {
+      const resp = await fetch(API_BASE + 'send/', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCsrfToken(),
+        },
+        body: JSON.stringify({
+          mode: 'compose',
+          user_id: composeUserId,
+          message: message,
+          phone_key: phone_key,
+        }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setStatus(composeStatus, data.detail || '{% trans "Send failed." %}', 'error');
+        composeSend.disabled = false;
+        return;
+      }
+      setStatus(composeStatus, '{% trans "Sent." %}', 'ok');
+      composeBody.value = '';
+    } catch (e) {
+      setStatus(composeStatus, '{% trans "Send failed." %}', 'error');
+    }
+    composeSend.disabled = false;
+  }
+
+  if (replySend) replySend.addEventListener('click', sendReply);
+  if (composeSend) composeSend.addEventListener('click', sendCompose);
+  if (teacherLoadMore) teacherLoadMore.addEventListener('click', loadMoreTeacherRecent);
+  if (userQ) {
+    userQ.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(runSearch, 300);
+    });
+  }
+
+  loadAllLists().then(() => {
+    if (initialLogId) {
+      const esc = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(initialLogId) : initialLogId.replace(/"/g, '');
+      const pre = document.querySelector('.staff-msg-row[data-log-id="' + esc + '"]');
+      selectLog(initialLogId, pre || null);
+    }
+  });
+})();
+</script>
+{% endblock %}

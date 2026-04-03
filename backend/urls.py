@@ -20,6 +20,7 @@ from django.http import JsonResponse
 from rest_framework.routers import DefaultRouter
 from api_docs import api_documentation, course_creation_contract, contact_contract, landing_page_contract, teacher_project_contract, teacher_assignment_contract, class_events_contract, teacher_student_record_contract, student_lesson_detail_contract, student_assignment_submission_contract, teacher_sms_messaging_contract
 from student import views as student_views
+from communication.staff_messages_views import StaffMessagesInboxPageView
 from teacher.calendar_views import StaffCalendarWeekPageView
 from teacher.roster_views import StaffTeacherRosterPageView
 
@@ -30,7 +31,8 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("staff/calendar/", StaffCalendarWeekPageView.as_view(), name="staff-calendar-week"),
     path("staff/teachers/", StaffTeacherRosterPageView.as_view(), name="staff-teacher-roster"),
-    
+    path("staff/messages/", StaffMessagesInboxPageView.as_view(), name="staff-messages-inbox"),
+
     # API endpoints
     path("api/auth/", include('authentication.urls')),
     path("api/courses/", include('courses.urls')),
@@ -45,6 +47,7 @@ urlpatterns = [
     path("api/blog/", include('blog.urls')),
     path("api/lead-magnet/", include('lead_magnet.urls')),
     path("api/communication/", include("communication.urls")),
+    path("api/communication/staff/messages/", include("communication.staff_urls")),
     path("api/webhooks/", include("communication.webhook_urls")),
     path(
         "api/public/flask-app/<str:public_handle>/<str:flask_slug>/",

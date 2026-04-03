@@ -2,7 +2,7 @@ from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.forms import UserChangeForm
-from .models import User, TeacherProfile, TeacherPayout, StudentProfile
+from .models import User, TeacherProfile, StudentProfile
 from .validators import get_all_timezone_choices_cached
 
 # Lazy import for StudentWeeklyPerformance to avoid errors if migration hasn't been run
@@ -84,26 +84,14 @@ class UserAdmin(BaseUserAdmin):
 
 @admin.register(TeacherProfile)
 class TeacherProfileAdmin(admin.ModelAdmin):
-    list_display = [
-        'user',
-        'compensation_basis',
-        'compensation_rate',
-        'department',
-        'years_of_experience',
-        'created_at',
-    ]
-    list_filter = ['compensation_basis', 'department', 'years_of_experience', 'created_at']
-
+    list_display = ['user', 'department', 'years_of_experience', 'created_at']
+    list_filter = ['department', 'years_of_experience', 'created_at']
     search_fields = ['user__email', 'user__first_name', 'user__last_name', 'bio', 'department']
     readonly_fields = ['created_at', 'updated_at']
     
     fieldsets = (
         ('User Info', {
             'fields': ('user',)
-        }),
-        ('Compensation', {
-            'fields': ('compensation_basis', 'compensation_rate'),
-            'description': 'Rate meaning depends on basis (hourly / monthly / pay period).',
         }),
         ('Professional Info', {
             'fields': ('bio', 'qualifications', 'department', 'specializations', 'years_of_experience')
@@ -114,43 +102,6 @@ class TeacherProfileAdmin(admin.ModelAdmin):
         ('Metadata', {
             'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',)
-        }),
-    )
-
-
-@admin.register(TeacherPayout)
-class TeacherPayoutAdmin(admin.ModelAdmin):
-    list_display = [
-        'teacher_profile',
-        'status',
-        'amount',
-        'due_date',
-        'payment_method',
-        'paid_at',
-        'created_at',
-    ]
-    list_filter = ['status', 'payment_method', 'due_date', 'created_at']
-    search_fields = [
-        'teacher_profile__user__email',
-        'teacher_profile__user__first_name',
-        'teacher_profile__user__last_name',
-        'third_party_payment_url',
-    ]
-    readonly_fields = ['created_at', 'updated_at']
-
-    fieldsets = (
-        ('Teacher', {
-            'fields': ('teacher_profile',),
-        }),
-        ('Payout status', {
-            'fields': ('status', 'amount', 'due_date', 'payment_method', 'paid_at'),
-        }),
-        ('Proof / external references', {
-            'fields': ('receipt_image_url', 'third_party_payment_url', 'notes'),
-        }),
-        ('Metadata', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',),
         }),
     )
 
@@ -183,12 +134,16 @@ class StudentProfileAdminForm(forms.ModelForm):
 class StudentProfileAdmin(admin.ModelAdmin):
     form = StudentProfileAdminForm
     list_display = [
-        'user', 'child_first_name', 'child_last_name', 'grade_level', 'timezone',
-        'overall_quiz_average_score', 'overall_assignment_average_score', 
+        'user', 'child_first_name', 'child_last_name', 'child_phone', 'parent_phone',
+        'parent_email', 'grade_level', 'timezone',
+        'overall_quiz_average_score', 'overall_assignment_average_score',
         'overall_average_score', 'age', 'created_at'
     ]
     list_filter = ['grade_level', 'notifications_enabled', 'created_at']
-    search_fields = ['user__email', 'child_first_name', 'child_last_name', 'parent_name', 'parent_email']
+    search_fields = [
+        'user__email', 'child_first_name', 'child_last_name', 'parent_name', 'parent_email',
+        'child_phone', 'parent_phone',
+    ]
     readonly_fields = [
         'created_at', 'updated_at', 'age', 'last_performance_update',
         'total_quizzes_completed', 'total_assignments_completed',
@@ -200,11 +155,16 @@ class StudentProfileAdmin(admin.ModelAdmin):
             'fields': ('user',)
         }),
         ('Child Information', {
-            'fields': ('child_first_name', 'child_last_name', 'child_email', 'child_phone', 
-                      'grade_level', 'date_of_birth', 'profile_image')
+            'fields': ('child_first_name', 'child_last_name', 'child_email', 'child_phone',
+                      'grade_level', 'date_of_birth', 'profile_image'),
+            'description': (
+                'Teacher SMS to the student uses child_phone only when that channel is chosen in the app; '
+                'parent_phone is separate. API send may pass target_phone matching either normalized number.'
+            ),
         }),
         ('Parent/Guardian Info', {
-            'fields': ('parent_name', 'parent_email', 'parent_phone', 'emergency_contact')
+            'fields': ('parent_name', 'parent_email', 'parent_phone', 'emergency_contact'),
+            'description': 'parent_email and parent_phone control parent-directed messaging reachability in teacher tools.',
         }),
         ('Learning & Preferences', {
             'fields': ('learning_goals', 'interests', 'notifications_enabled', 'email_notifications', 'timezone')

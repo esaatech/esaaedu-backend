@@ -209,6 +209,34 @@
   .admin-payment-list-row:last-child {
     border-bottom: none;
   }
+  .admin-messages-subtitle {
+    margin: 0 0 10px;
+    font-size: 11px;
+    color: #666;
+    line-height: 1.35;
+  }
+  .admin-messages-hint {
+    margin: 0 0 8px;
+    font-size: 11px;
+    color: #666;
+    line-height: 1.35;
+  }
+  .admin-messages-card a.admin-messages-inbox-link {
+    color: inherit;
+    text-decoration: none;
+    font-weight: inherit;
+  }
+  .admin-messages-card a.admin-messages-inbox-link:hover {
+    text-decoration: underline;
+    color: #417690;
+  }
+  .admin-messages-card .admin-payment-list-row a {
+    color: #417690;
+    text-decoration: none;
+  }
+  .admin-messages-card .admin-payment-list-row a:hover {
+    text-decoration: underline;
+  }
   .admin-messages-card .admin-messages-head {
     display: flex;
     gap: 8px;
@@ -530,10 +558,29 @@
 
     <section class="admin-snapshot-card admin-messages-card">
       <h3>{% trans "Messages" %}</h3>
+      <p class="admin-messages-subtitle">{% trans "Numbers above show how many messages are unread." %}</p>
       <div class="admin-messages-head">
         <div class="admin-messages-head-col admin-messages-head-col--left">
+          {% if snapshot.staff_messages_inbox_url %}
+          <a class="admin-messages-inbox-link" href="{{ snapshot.staff_messages_inbox_url }}?bucket=admin">
+            <span class="admin-payment-head-label">{% trans "Admin SMS (unread)" %}</span>
+            <span class="admin-messages-head-value">{{ snapshot.admin_message_count }}</span>
+          </a>
+          {% else %}
+          <span class="admin-payment-head-label">{% trans "Admin SMS (unread)" %}</span>
+          <span class="admin-messages-head-value">{{ snapshot.admin_message_count }}</span>
+          {% endif %}
+        </div>
+        <div class="admin-messages-head-col admin-messages-head-col--center">
+          {% if snapshot.staff_messages_inbox_url %}
+          <a class="admin-messages-inbox-link" href="{{ snapshot.staff_messages_inbox_url }}?bucket=teacher">
+            <span class="admin-payment-head-label">{% trans "Teacher message" %}</span>
+            <span class="admin-messages-head-value">{{ snapshot.teacher_message_count }}</span>
+          </a>
+          {% else %}
           <span class="admin-payment-head-label">{% trans "Teacher message" %}</span>
           <span class="admin-messages-head-value">{{ snapshot.teacher_message_count }}</span>
+          {% endif %}
         </div>
         <div class="admin-messages-head-col admin-messages-head-col--center">
           <span class="admin-payment-head-label">{% trans "Student message" %}</span>
@@ -546,11 +593,32 @@
       </div>
       <div class="admin-snapshot-card-scroll">
         <div class="admin-payment-section">
+          {% if snapshot.staff_messages_inbox_url %}
+          <h4 class="admin-timetable-section-title"><a class="admin-messages-inbox-link" href="{{ snapshot.staff_messages_inbox_url }}?bucket=admin">{% trans "Admin SMS" %}</a></h4>
+          {% else %}
+          <h4 class="admin-timetable-section-title">{% trans "Admin SMS" %}</h4>
+          {% endif %}
+          <p class="admin-messages-hint">{% trans "Use the staff SMS inbox to read (sets Read at) and reply. Admin Django change view still marks admin-queue rows when opened." %}</p>
+          {% for item in snapshot.admin_message_items %}
+          <div class="admin-payment-list-row">
+            {% if item.inbox_url %}<a href="{{ item.inbox_url }}">{% endif %}
+            {% if item.label %}{{ item.label }}{% endif %}{% if item.detail %} — {{ item.detail }}{% endif %}
+            {% if item.inbox_url %}</a>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        <div class="admin-payment-section">
+          {% if snapshot.staff_messages_inbox_url %}
+          <h4 class="admin-timetable-section-title"><a class="admin-messages-inbox-link" href="{{ snapshot.staff_messages_inbox_url }}?bucket=teacher">{% trans "Teacher messages" %}</a></h4>
+          {% else %}
           <h4 class="admin-timetable-section-title">{% trans "Teacher messages" %}</h4>
+          {% endif %}
           <p class="admin-payment-count">{{ snapshot.teacher_message_count }}</p>
           {% for item in snapshot.teacher_message_items %}
           <div class="admin-payment-list-row">
+            {% if item.inbox_url %}<a href="{{ item.inbox_url }}">{% endif %}
             {% if item.label %}{{ item.label }}{% endif %}{% if item.detail %} — {{ item.detail }}{% endif %}
+            {% if item.inbox_url %}</a>{% endif %}
           </div>
           {% endfor %}
         </div>

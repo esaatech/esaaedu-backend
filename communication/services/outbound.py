@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.utils import timezone
 
 from communication.models import SmsRoutingLog
 from communication.services.phone import normalize_to_e164
@@ -116,7 +117,7 @@ def send_teacher_sms_to_student(
 
     try:
         with transaction.atomic():
-            sid = send_sms(to_e164=to_e164, body=full_body)
+            sid, initial_status = send_sms(to_e164=to_e164, body=full_body)
             log = SmsRoutingLog.objects.create(
                 twilio_number=twilio_number_e164,
                 student_phone=to_e164,
@@ -126,6 +127,8 @@ def send_teacher_sms_to_student(
                 direction=SmsRoutingLog.Direction.OUTBOUND,
                 body=full_body,
                 twilio_message_sid=sid,
+                delivery_status=initial_status,
+                delivery_updated_at=timezone.now(),
             )
     except TwilioNotConfiguredError:
         logger.exception("Twilio not configured for outbound SMS")

@@ -1,0 +1,11 @@
+{% load i18n %}
+<section class="staff-msg-section" aria-labelledby="staff-msg-delivery-heading">
+  <h2 id="staff-msg-delivery-heading" class="staff-msg-section-title">{% trans "Delivery issues" %}</h2>
+  <p class="staff-msg-section-meta">
+    {% trans "Only outbound texts appear here, and only when Twilio has set the message to failed, undelivered, or canceled. Inbound messages never show in this list." %}
+    {% trans "If you never see failures, confirm the Twilio Status callback URL (see env.example): without it, rows often stay queued or sent and will not be listed as delivery issues." %}
+  </p>
+  <div id="staff-msg-delivery-list" class="staff-msg-list" role="list"></div>
+  <p id="staff-msg-delivery-empty" class="staff-msg-quiet" hidden>{% trans "No failed or undelivered messages on file." %}</p>
+  <div id="staff-msg-delivery-recent" class="staff-msg-quiet" hidden></div>
+</section>

@@ -1,9 +1,12 @@
+from urllib.parse import unquote
+
 from django.contrib import admin
 from django import forms
 from django.utils.html import format_html
 
 from communication.models import MessageTemplate, SmsRoutingLog
 from communication.services.inbound_processing import process_inbound_sms_routing
+from communication.services.staff_sms_ui import mark_admin_queue_inbound_read
 
 
 class MessageTemplateAdminForm(forms.ModelForm):
@@ -85,13 +88,20 @@ class SmsRoutingLogAdmin(admin.ModelAdmin):
         "direction",
         "inbound_routing",
         "read_at",
+        "delivery_status",
+        "delivery_error_code",
         "related_outbound",
         "student_phone",
         "teacher",
         "course",
         "twilio_message_sid",
     )
-    list_filter = ("direction", "inbound_routing")
+    list_filter = ("direction", "inbound_routing", "delivery_status")
     search_fields = ("student_phone", "twilio_message_sid", "body")
     readonly_fields = ("id", "created_at")
     raw_id_fields = ("teacher", "course", "course_class", "related_outbound")
+
+    def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
+        if object_id is not None and request.method == "GET":
+            mark_admin_queue_inbound_read(unquote(object_id))
+        return super().changeform_view(request, object_id, form_url, extra_context)
