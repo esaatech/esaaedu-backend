@@ -157,10 +157,30 @@
   .staff-msg-status { font-size: 12px; margin-top: 8px; min-height: 1.2em; }
   .staff-msg-status.is-error { color: #c00; }
   .staff-msg-status.is-ok { color: var(--sm-primary); }
+  .staff-msg-detail-title-col {
+    flex: 1;
+    min-width: 0;
+  }
+  .staff-msg-detail-contact {
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #333;
+  }
+  .staff-msg-detail-contact--header {
+    margin: 6px 0 0;
+    font-size: 14px;
+    font-weight: 700;
+    color: #222;
+    line-height: 1.35;
+  }
+  .staff-msg-detail-contact--header[hidden] {
+    display: none !important;
+  }
   .staff-msg-detail-head {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 8px;
     margin-bottom: 10px;
@@ -230,6 +250,11 @@
     align-items: center;
     gap: 8px;
   }
+  .staff-msg-modal-header-top .staff-msg-button--secondary {
+    width: auto;
+    margin-top: 0;
+    flex-shrink: 0;
+  }
   .staff-msg-modal-title { margin: 0; font-size: 15px; color: #333; }
   .staff-msg-modal-body {
     display: flex;
@@ -266,6 +291,38 @@
     overflow-y: auto;
     padding: 8px 10px;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  .staff-msg-contacts-loading {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    min-height: min(42vh, 300px);
+    padding: 16px;
+    color: var(--sm-muted);
+    font-size: 13px;
+    text-align: center;
+  }
+  .staff-msg-contacts-loading[hidden] { display: none !important; }
+  .staff-msg-spinner {
+    width: 36px;
+    height: 36px;
+    border: 3px solid var(--sm-line);
+    border-top-color: var(--sm-secondary);
+    border-radius: 50%;
+    animation: staff-msg-spin 0.7s linear infinite;
+  }
+  @keyframes staff-msg-spin { to { transform: rotate(360deg); } }
+  .staff-msg-contacts-list-root { flex: 1; min-height: 0; }
+  .staff-msg-contacts-scroll.is-contacts-busy .staff-msg-contacts-list-root {
+    opacity: 0.45;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
   }
   .staff-msg-contacts-section-label {
     font-size: 11px;
@@ -330,7 +387,13 @@
       </div>
       <div class="staff-msg-modal-body">
         <div id="staff-msg-contacts-letter-rail" class="staff-msg-contacts-letter-rail" aria-hidden="true"></div>
-        <div id="staff-msg-contacts-scroll" class="staff-msg-contacts-scroll"></div>
+        <div id="staff-msg-contacts-scroll" class="staff-msg-contacts-scroll" aria-busy="false">
+          <div id="staff-msg-contacts-loading" class="staff-msg-contacts-loading" hidden>
+            <span class="staff-msg-spinner" aria-hidden="true"></span>
+            <span>{% trans "Loading contacts…" %}</span>
+          </div>
+          <div id="staff-msg-contacts-list-root" class="staff-msg-contacts-list-root"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -368,6 +431,7 @@
   const threadFlow = document.getElementById('staff-msg-thread-flow');
   const composeFlow = document.getElementById('staff-msg-compose-flow');
   const threadEl = document.getElementById('staff-msg-thread');
+  const detailContactEl = document.getElementById('staff-msg-detail-contact');
   const replyBody = document.getElementById('staff-msg-reply-body');
   const replySend = document.getElementById('staff-msg-reply-send');
   const replyStatus = document.getElementById('staff-msg-reply-status');
@@ -384,6 +448,8 @@
   const contactsClose = document.getElementById('staff-msg-contacts-close');
   const contactsQ = document.getElementById('staff-msg-contacts-q');
   const contactsScroll = document.getElementById('staff-msg-contacts-scroll');
+  const contactsListRoot = document.getElementById('staff-msg-contacts-list-root');
+  const contactsLoadingEl = document.getElementById('staff-msg-contacts-loading');
   const contactsLetterRail = document.getElementById('staff-msg-contacts-letter-rail');
 
   let selectedLogId = null;
@@ -427,7 +493,8 @@
     btn.setAttribute('role', 'listitem');
     const phoneEl = document.createElement('div');
     phoneEl.className = 'staff-msg-row-phone';
-    phoneEl.textContent = row.student_phone || '—';
+    const num = row.student_phone || '—';
+    phoneEl.textContent = row.contact_display_name ? (row.contact_display_name + ' · ' + num) : num;
     const preview = document.createElement('div');
     preview.className = 'staff-msg-row-preview';
     preview.textContent = row.preview || '';
@@ -453,8 +520,10 @@
     btn.setAttribute('role', 'listitem');
     const phoneEl = document.createElement('div');
     phoneEl.className = 'staff-msg-row-phone';
-    phoneEl.textContent = row.student_phone || '—';
+    const numLine = row.student_phone || '—';
+    phoneEl.appendChild(document.createTextNode(row.contact_display_name ? (row.contact_display_name + ' · ' + numLine) : numLine));
     if (row.has_unread && row.unread_count > 0) {
+      phoneEl.appendChild(document.createTextNode(' '));
       const pill = document.createElement('span');
       pill.className = 'staff-msg-unread-pill';
       pill.textContent = String(row.unread_count);
@@ -501,6 +570,10 @@
     if (btnComposeCancel) btnComposeCancel.hidden = false;
     if (btnNewMessage) btnNewMessage.hidden = true;
     masterNewMessageBtns.forEach(function (b) { b.disabled = true; });
+    if (detailContactEl) {
+      detailContactEl.textContent = '';
+      detailContactEl.hidden = true;
+    }
   }
 
   function enterComposeMode() {
@@ -535,11 +608,30 @@
         setStatus(replyStatus, '{% trans "Failed to load thread." %}', 'error');
         if (threadFlow) threadFlow.hidden = true;
         if (detailPlaceholder) detailPlaceholder.hidden = false;
+        if (detailContactEl) {
+          detailContactEl.textContent = '';
+          detailContactEl.hidden = true;
+        }
         return;
       }
       const data = await resp.json();
       detailPlaceholder.hidden = true;
       threadFlow.hidden = false;
+      if (detailContactEl) {
+        const lg = data.log || {};
+        const cn = (lg.contact_display_name || '').trim();
+        const sp = lg.student_phone || '';
+        if (cn) {
+          detailContactEl.textContent = cn + ' · ' + sp;
+          detailContactEl.hidden = false;
+        } else if (sp) {
+          detailContactEl.textContent = sp;
+          detailContactEl.hidden = false;
+        } else {
+          detailContactEl.textContent = '';
+          detailContactEl.hidden = true;
+        }
+      }
       threadEl.innerHTML = '';
       (data.thread || []).forEach((t) => {
         const div = document.createElement('div');
@@ -575,6 +667,10 @@
       setStatus(replyStatus, '{% trans "Failed to load thread." %}', 'error');
       if (threadFlow) threadFlow.hidden = true;
       if (detailPlaceholder) detailPlaceholder.hidden = false;
+      if (detailContactEl) {
+        detailContactEl.textContent = '';
+        detailContactEl.hidden = true;
+      }
     }
   }
 
@@ -729,9 +825,26 @@
     return data.entries || [];
   }
 
+  function ensureContactsLetterRailSkeleton() {
+    if (!contactsLetterRail || contactsLetterRail.children.length) return;
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('').forEach(function (L) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'staff-msg-letter-btn';
+      b.textContent = L;
+      b.disabled = true;
+      contactsLetterRail.appendChild(b);
+    });
+  }
+
+  function setContactsLoading(visible) {
+    if (contactsLoadingEl) contactsLoadingEl.hidden = !visible;
+    if (contactsScroll) contactsScroll.setAttribute('aria-busy', visible ? 'true' : 'false');
+  }
+
   function renderContactsDirectory(entries) {
-    if (!contactsScroll || !contactsLetterRail) return;
-    contactsScroll.innerHTML = '';
+    if (!contactsListRoot || !contactsLetterRail) return;
+    contactsListRoot.innerHTML = '';
     contactsLetterRail.innerHTML = '';
     const byLetter = {};
     entries.forEach(function (e) {
@@ -748,7 +861,7 @@
       head.className = 'staff-msg-contacts-section-label';
       head.id = 'staff-msg-contacts-section-' + (L === '#' ? 'sym' : L);
       head.textContent = L;
-      contactsScroll.appendChild(head);
+      contactsListRoot.appendChild(head);
       byLetter[L].forEach(function (e) {
         const row = document.createElement('button');
         row.type = 'button';
@@ -761,7 +874,7 @@
           if (toPhoneInput) toPhoneInput.value = e.phone;
           closeContactsModal();
         });
-        contactsScroll.appendChild(row);
+        contactsListRoot.appendChild(row);
       });
     });
     order.forEach(function (L) {
@@ -785,12 +898,16 @@
     if (!contactsModal) return;
     contactsModal.hidden = false;
     if (contactsQ) contactsQ.value = '';
+    ensureContactsLetterRailSkeleton();
+    if (contactsListRoot) contactsListRoot.innerHTML = '';
+    setContactsLoading(true);
     try {
       const entries = await loadContactsEntries();
       renderContactsDirectory(entries);
     } catch (e) {
       console.error(e);
     }
+    setContactsLoading(false);
     if (contactsQ) contactsQ.focus();
   }
 
@@ -800,11 +917,20 @@
 
   async function refreshContactsSearch() {
     if (!contactsModal || contactsModal.hidden) return;
+    if (contactsScroll) {
+      contactsScroll.classList.add('is-contacts-busy');
+      contactsScroll.setAttribute('aria-busy', 'true');
+    }
     try {
       const entries = await loadContactsEntries();
       renderContactsDirectory(entries);
     } catch (e) {
       console.error(e);
+    } finally {
+      if (contactsScroll) {
+        contactsScroll.classList.remove('is-contacts-busy');
+        contactsScroll.setAttribute('aria-busy', 'false');
+      }
     }
   }
 

@@ -6,7 +6,11 @@ from django.db.models import Count, Exists, Max, OuterRef, Q
 from django.utils import timezone
 
 from communication.models import SmsRoutingLog
-from communication.services.phone import normalize_to_e164
+from communication.services.phone import normalize_to_e164, phone_match_candidates
+from communication.services.staff_contact_display import (
+    build_student_phone_norm_to_label,
+    enrich_rows_contact_display,
+)
 
 # Latest-first window for staff thread panel (inbound + outbound).
 SMS_THREAD_MESSAGE_LIMIT = 10
@@ -89,41 +93,6 @@ def mark_inbound_read_for_staff_inbox(pk) -> bool:
         read_at=timezone.now()
     )
     return updated > 0
-
-
-def phone_match_candidates(phone: str) -> frozenset[str]:
-    """
-    DB values for the same line sometimes differ slightly (+1 vs 1, spacing).
-    Used so inbound/outbound rows still share one thread.
-    """
-    raw = (phone or "").strip()
-    if not raw:
-        return frozenset()
-    cands: set[str] = {raw}
-    try:
-        cands.add(normalize_to_e164(raw))
-    except ValueError:
-        pass
-    if raw.startswith("+"):
-        tail = raw[1:].strip()
-        if tail:
-            cands.add(tail)
-            try:
-                cands.add(normalize_to_e164(tail))
-            except ValueError:
-                pass
-    digits = "".join(ch for ch in raw if ch.isdigit())
-    if len(digits) == 10:
-        try:
-            cands.add(normalize_to_e164(digits))
-        except ValueError:
-            pass
-    if len(digits) == 11 and digits.startswith("1"):
-        try:
-            cands.add(normalize_to_e164(digits))
-        except ValueError:
-            pass
-    return frozenset(x for x in cands if x)
 
 
 def conversation_match_q(anchor: SmsRoutingLog) -> Q:
@@ -284,6 +253,8 @@ def delivery_issue_summaries(*, limit: int = 25) -> list[dict]:
                 "preview": (log.body or "")[:200],
             }
         )
+    norm = build_student_phone_norm_to_label()
+    enrich_rows_contact_display(rows, norm_to_label=norm)
     return rows
 
 
@@ -394,6 +365,9 @@ def admin_queue_thread_summaries(*, recent_limit: int = 10) -> tuple[list[dict],
                 )
             )
 
+    norm = build_student_phone_norm_to_label()
+    enrich_rows_contact_display(unread_threads, norm_to_label=norm)
+    enrich_rows_contact_display(recent_threads, norm_to_label=norm)
     return unread_threads, recent_threads
 
 
@@ -489,4 +463,7 @@ def teacher_routed_thread_summaries(
                 )
             )
 
+    norm = build_student_phone_norm_to_label()
+    enrich_rows_contact_display(unread_threads, norm_to_label=norm)
+    enrich_rows_contact_display(recent_list, norm_to_label=norm)
     return unread_threads, recent_list, has_more

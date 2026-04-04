@@ -398,6 +398,60 @@ class StaffMessagesApiTests(APITestCase):
         row = next(r for r in results if r["id"] == student.pk)
         self.assertEqual(len(row["phones"]), 2)
 
+    def test_admin_thread_list_includes_contact_display_name(self):
+        student = User.objects.create_user(
+            email="phonename@test.com",
+            password="x",
+            firebase_uid="phonename_uid",
+            role=User.Role.STUDENT,
+            first_name="Casey",
+            last_name="River",
+        )
+        StudentProfile.objects.create(
+            user=student,
+            child_phone="+15559998877",
+        )
+        SmsRoutingLog.objects.create(
+            twilio_number="+15550002222",
+            student_phone="+15559998877",
+            direction=SmsRoutingLog.Direction.INBOUND,
+            body="Hello",
+            twilio_message_sid="SMNAMELIST1",
+            inbound_routing=SmsRoutingLog.InboundRouting.GENERIC_ADMIN,
+        )
+        url = reverse("staff_messages_admin_unread")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        threads = response.json()["unread_threads"]
+        row = next(t for t in threads if t.get("student_phone") == "+15559998877")
+        self.assertIn("Casey", row.get("contact_display_name", ""))
+
+    def test_log_detail_includes_contact_display_name(self):
+        student = User.objects.create_user(
+            email="logname@test.com",
+            password="x",
+            firebase_uid="logname_uid",
+            role=User.Role.STUDENT,
+            first_name="Dana",
+            last_name="Peak",
+        )
+        StudentProfile.objects.create(
+            user=student,
+            child_phone="+15559997766",
+        )
+        log = SmsRoutingLog.objects.create(
+            twilio_number="+15550002222",
+            student_phone="+15559997766",
+            direction=SmsRoutingLog.Direction.INBOUND,
+            body="Ping",
+            twilio_message_sid="SMLOGNAME1",
+            inbound_routing=SmsRoutingLog.InboundRouting.GENERIC_ADMIN,
+        )
+        url = reverse("staff_messages_log_detail", kwargs={"log_id": log.pk})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("Dana", response.json()["log"].get("contact_display_name", ""))
+
     def test_contacts_directory_lists_profile_phones(self):
         student = User.objects.create_user(
             email="contactstu@test.com",

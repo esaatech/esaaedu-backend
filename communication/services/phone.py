@@ -26,3 +26,37 @@ def normalize_to_e164(phone: str, default_country_code: str = "1") -> str:
         return f"+{digits_only}"
 
     return f"+{digits_only}"
+
+
+def phone_match_candidates(phone: str) -> frozenset[str]:
+    """
+    Possible string forms for the same line (+1 vs 1, spacing) for DB/thread matching.
+    """
+    raw = (phone or "").strip()
+    if not raw:
+        return frozenset()
+    cands: set[str] = {raw}
+    try:
+        cands.add(normalize_to_e164(raw))
+    except ValueError:
+        pass
+    if raw.startswith("+"):
+        tail = raw[1:].strip()
+        if tail:
+            cands.add(tail)
+            try:
+                cands.add(normalize_to_e164(tail))
+            except ValueError:
+                pass
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if len(digits) == 10:
+        try:
+            cands.add(normalize_to_e164(digits))
+        except ValueError:
+            pass
+    if len(digits) == 11 and digits.startswith("1"):
+        try:
+            cands.add(normalize_to_e164(digits))
+        except ValueError:
+            pass
+    return frozenset(x for x in cands if x)

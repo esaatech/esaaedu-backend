@@ -24,6 +24,10 @@ from communication.services.staff_outbound import (
     send_staff_sms_to_e164,
 )
 from communication.services.twilio_sms import TwilioNotConfiguredError
+from communication.services.staff_contact_display import (
+    build_student_phone_norm_to_label,
+    lookup_display_name,
+)
 from communication.services.staff_sms_ui import (
     SMS_THREAD_MESSAGE_LIMIT,
     admin_queue_thread_summaries,
@@ -54,6 +58,8 @@ def _serialize_log_detail(log: SmsRoutingLog) -> dict:
         log,
         limit=SMS_THREAD_MESSAGE_LIMIT,
     )
+    norm = build_student_phone_norm_to_label()
+    contact_display_name = lookup_display_name(log.student_phone or "", norm)
     return {
         "log": {
             "id": str(log.pk),
@@ -70,6 +76,7 @@ def _serialize_log_detail(log: SmsRoutingLog) -> dict:
             "related_outbound_id": (
                 str(log.related_outbound_id) if log.related_outbound_id else None
             ),
+            "contact_display_name": contact_display_name,
         },
         "thread": [_thread_item(x) for x in thread],
     }

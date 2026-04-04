@@ -1,7 +1,10 @@
 {% load i18n %}
 <section class="staff-msg-detail-section" aria-labelledby="staff-msg-detail-heading">
   <div class="staff-msg-detail-head">
-    <h2 id="staff-msg-detail-heading" class="staff-msg-section-title">{% trans "Thread & reply" %}</h2>
+    <div class="staff-msg-detail-title-col">
+      <h2 id="staff-msg-detail-heading" class="staff-msg-section-title">{% trans "Thread & reply" %}</h2>
+      <p id="staff-msg-detail-contact" class="staff-msg-detail-contact staff-msg-detail-contact--header" hidden></p>
+    </div>
     <div class="staff-msg-detail-toolbar">
       <button type="button" id="staff-msg-btn-new-message" class="staff-msg-button staff-msg-button--compact">
         {% trans "New message" %}

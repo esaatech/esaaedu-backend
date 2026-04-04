@@ -16,7 +16,8 @@ This file is the **in-repository** copy of the communication-channel plan (Twili
 - [ ] OIDC-protected internal worker: AI + LIFO prior, `Conversation`/`Message` or admin, FCM
 - [x] Teacher outbound SMS API `POST /api/teacher/sms/send/`
 - [x] `MessageTemplate` table (`message_templates`) — channels: `sms`, `email`, `whatsapp`; placeholders documented in `variables` (SMS seeds use `{course_title}` only). Admin-editable. `GET /api/teacher/message-templates/?channel=sms`
-- [ ] Admin inbox for uncertain / no-match inbounds
+- [x] Staff SMS inbox (session APIs + `/staff/messages/` UI) — see `communication/docs/staff_sms_inbox.md`
+- [ ] Admin inbox for uncertain / no-match inbounds (distinct from staff SMS triage UI)
 - [ ] FCM data payload contract with mobile/web client
 
 ---
