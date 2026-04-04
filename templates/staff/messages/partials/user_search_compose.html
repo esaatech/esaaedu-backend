@@ -1,16 +1,10 @@
 {% load i18n %}
-<section class="staff-msg-section" aria-labelledby="staff-msg-compose-heading">
-  <h2 id="staff-msg-compose-heading" class="staff-msg-section-title">{% trans "Search user & send SMS" %}</h2>
-  <label class="staff-msg-label" for="staff-msg-user-q">{% trans "Search student, parent, or teacher" %}</label>
-  <input type="search" id="staff-msg-user-q" class="staff-msg-input" autocomplete="off" placeholder="{% trans 'Email, name, or handle' %}" />
-  <ul id="staff-msg-search-results" class="staff-msg-search-results" role="listbox" hidden></ul>
-  <div id="staff-msg-compose-target" class="staff-msg-compose-target" hidden>
-    <p class="staff-msg-compose-target-label"></p>
-    <label class="staff-msg-label" for="staff-msg-phone-key">{% trans "Phone" %}</label>
-    <select id="staff-msg-phone-key" class="staff-msg-input"></select>
-    <label class="staff-msg-label" for="staff-msg-compose-body">{% trans "Message" %}</label>
-    <textarea id="staff-msg-compose-body" class="staff-msg-textarea" rows="3"></textarea>
-    <button type="button" id="staff-msg-compose-send" class="staff-msg-button">{% trans "Send SMS" %}</button>
-    <p id="staff-msg-compose-status" class="staff-msg-status" role="status"></p>
-  </div>
+<section class="staff-msg-section" aria-labelledby="staff-msg-compose-shortcut-heading">
+  <h2 id="staff-msg-compose-shortcut-heading" class="staff-msg-section-title">{% trans "New SMS" %}</h2>
+  <p class="staff-msg-quiet" style="margin: 0 0 8px; font-size: 12px;">
+    {% trans "Compose in the panel on the right (same as a phone: number field + contacts)." %}
+  </p>
+  <button type="button" class="staff-msg-button staff-msg-button--secondary staff-msg-btn-new-message-master">
+    {% trans "New message" %}
+  </button>
 </section>

@@ -157,6 +157,140 @@
   .staff-msg-status { font-size: 12px; margin-top: 8px; min-height: 1.2em; }
   .staff-msg-status.is-error { color: #c00; }
   .staff-msg-status.is-ok { color: var(--sm-primary); }
+  .staff-msg-detail-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .staff-msg-detail-head .staff-msg-section-title { margin: 0; }
+  .staff-msg-detail-toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+  .staff-msg-button--compact { margin-top: 0; padding: 6px 12px; font-size: 12px; }
+  .staff-msg-compose-flow { margin-top: 4px; }
+  .staff-msg-compose-lead { margin: 0 0 10px; font-size: 12px; line-height: 1.4; }
+  .staff-msg-to-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+    max-width: 100%;
+  }
+  .staff-msg-to-input { flex: 1; min-width: 0; }
+  .staff-msg-plus-btn {
+    flex: 0 0 44px;
+    width: 44px;
+    min-height: 40px;
+    border-radius: 8px;
+    border: 1px solid var(--sm-line);
+    background: #f0f4f8;
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--sm-secondary);
+    cursor: pointer;
+  }
+  .staff-msg-plus-btn:hover { background: #e2ecf4; }
+  .staff-msg-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 100000;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  .staff-msg-modal[hidden] { display: none !important; }
+  .staff-msg-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+  }
+  .staff-msg-modal-sheet {
+    position: relative;
+    width: 100%;
+    max-width: 520px;
+    max-height: min(85vh, 640px);
+    background: #fff;
+    border-radius: 12px 12px 0 0;
+    box-shadow: 0 -4px 24px rgba(0,0,0,0.15);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .staff-msg-modal-header {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--sm-line);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .staff-msg-modal-header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .staff-msg-modal-title { margin: 0; font-size: 15px; color: #333; }
+  .staff-msg-modal-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+  .staff-msg-contacts-letter-rail {
+    flex: 0 0 28px;
+    overflow-y: auto;
+    padding: 6px 4px;
+    border-right: 1px solid var(--sm-line);
+    background: #f8fafb;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    align-items: center;
+  }
+  .staff-msg-letter-btn {
+    border: none;
+    background: none;
+    padding: 2px 0;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--sm-secondary);
+    cursor: pointer;
+    width: 100%;
+  }
+  .staff-msg-letter-btn:disabled {
+    color: #ccc;
+    cursor: default;
+  }
+  .staff-msg-contacts-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 10px;
+    min-width: 0;
+  }
+  .staff-msg-contacts-section-label {
+    font-size: 11px;
+    font-weight: 800;
+    color: #888;
+    margin: 12px 0 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .staff-msg-contacts-section-label:first-child { margin-top: 0; }
+  .staff-msg-contact-row {
+    width: 100%;
+    text-align: left;
+    padding: 10px 8px;
+    border: 1px solid var(--sm-line);
+    border-radius: 6px;
+    background: #fff;
+    margin-bottom: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  .staff-msg-contact-row:hover { border-color: var(--sm-secondary); background: #f6f9fc; }
+  .staff-msg-contact-name { font-weight: 700; color: #222; }
+  .staff-msg-contact-meta { font-size: 11px; color: var(--sm-muted); margin-top: 2px; }
 </style>
 {% endblock %}
 
@@ -181,6 +315,23 @@
     </div>
     <div class="staff-msg-detail-wrap">
       {% include "staff/messages/partials/detail_reply.html" %}
+    </div>
+  </div>
+
+  <div id="staff-msg-contacts-modal" class="staff-msg-modal" hidden>
+    <div class="staff-msg-modal-backdrop" id="staff-msg-contacts-backdrop" tabindex="-1"></div>
+    <div class="staff-msg-modal-sheet" role="dialog" aria-modal="true" aria-labelledby="staff-msg-contacts-title">
+      <div class="staff-msg-modal-header">
+        <div class="staff-msg-modal-header-top">
+          <h3 id="staff-msg-contacts-title" class="staff-msg-modal-title">{% trans "Contacts" %}</h3>
+          <button type="button" id="staff-msg-contacts-close" class="staff-msg-button staff-msg-button--secondary staff-msg-button--compact">{% trans "Close" %}</button>
+        </div>
+        <input type="search" id="staff-msg-contacts-q" class="staff-msg-input" autocomplete="off" placeholder="{% trans 'Search name or email' %}" />
+      </div>
+      <div class="staff-msg-modal-body">
+        <div id="staff-msg-contacts-letter-rail" class="staff-msg-contacts-letter-rail" aria-hidden="true"></div>
+        <div id="staff-msg-contacts-scroll" class="staff-msg-contacts-scroll"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -214,23 +365,29 @@
   const deliveryEmpty = document.getElementById('staff-msg-delivery-empty');
   const deliveryRecent = document.getElementById('staff-msg-delivery-recent');
   const detailPlaceholder = document.getElementById('staff-msg-detail-placeholder');
-  const detailPanel = document.getElementById('staff-msg-detail-panel');
+  const threadFlow = document.getElementById('staff-msg-thread-flow');
+  const composeFlow = document.getElementById('staff-msg-compose-flow');
   const threadEl = document.getElementById('staff-msg-thread');
   const replyBody = document.getElementById('staff-msg-reply-body');
   const replySend = document.getElementById('staff-msg-reply-send');
   const replyStatus = document.getElementById('staff-msg-reply-status');
-  const userQ = document.getElementById('staff-msg-user-q');
-  const searchResults = document.getElementById('staff-msg-search-results');
-  const composeTarget = document.getElementById('staff-msg-compose-target');
-  const composeTargetLabel = composeTarget ? composeTarget.querySelector('.staff-msg-compose-target-label') : null;
-  const phoneKeySelect = document.getElementById('staff-msg-phone-key');
-  const composeBody = document.getElementById('staff-msg-compose-body');
-  const composeSend = document.getElementById('staff-msg-compose-send');
-  const composeStatus = document.getElementById('staff-msg-compose-status');
+  const btnNewMessage = document.getElementById('staff-msg-btn-new-message');
+  const btnComposeCancel = document.getElementById('staff-msg-compose-cancel');
+  const masterNewMessageBtns = document.querySelectorAll('.staff-msg-btn-new-message-master');
+  const toPhoneInput = document.getElementById('staff-msg-compose-to-phone');
+  const contactsOpen = document.getElementById('staff-msg-contacts-open');
+  const composeNewBody = document.getElementById('staff-msg-compose-new-body');
+  const composeNewSend = document.getElementById('staff-msg-compose-new-send');
+  const composeNewStatus = document.getElementById('staff-msg-compose-new-status');
+  const contactsModal = document.getElementById('staff-msg-contacts-modal');
+  const contactsBackdrop = document.getElementById('staff-msg-contacts-backdrop');
+  const contactsClose = document.getElementById('staff-msg-contacts-close');
+  const contactsQ = document.getElementById('staff-msg-contacts-q');
+  const contactsScroll = document.getElementById('staff-msg-contacts-scroll');
+  const contactsLetterRail = document.getElementById('staff-msg-contacts-letter-rail');
 
   let selectedLogId = null;
-  let composeUserId = null;
-  let searchTimer = null;
+  let contactsSearchTimer = null;
   let teacherNextRecentOffset = 0;
 
   const dateFmt = typeof Intl !== 'undefined'
@@ -329,25 +486,66 @@
     list.forEach((row) => container.appendChild(makeThreadButton(row, bucketTag)));
   }
 
+  function showThreadPanel() {
+    if (composeFlow) composeFlow.hidden = true;
+    if (btnComposeCancel) btnComposeCancel.hidden = true;
+    if (btnNewMessage) btnNewMessage.hidden = false;
+    masterNewMessageBtns.forEach(function (b) { b.disabled = false; });
+    if (threadFlow) threadFlow.hidden = false;
+  }
+
+  function showComposePanel() {
+    if (composeFlow) composeFlow.hidden = false;
+    if (threadFlow) threadFlow.hidden = true;
+    if (detailPlaceholder) detailPlaceholder.hidden = true;
+    if (btnComposeCancel) btnComposeCancel.hidden = false;
+    if (btnNewMessage) btnNewMessage.hidden = true;
+    masterNewMessageBtns.forEach(function (b) { b.disabled = true; });
+  }
+
+  function enterComposeMode() {
+    showComposePanel();
+    if (toPhoneInput) toPhoneInput.value = '';
+    if (composeNewBody) composeNewBody.value = '';
+    setStatus(composeNewStatus, '', '');
+  }
+
+  function exitComposeMode() {
+    if (composeFlow) composeFlow.hidden = true;
+    if (btnComposeCancel) btnComposeCancel.hidden = true;
+    if (btnNewMessage) btnNewMessage.hidden = false;
+    masterNewMessageBtns.forEach(function (b) { b.disabled = false; });
+    if (selectedLogId) {
+      if (detailPlaceholder) detailPlaceholder.hidden = true;
+      if (threadFlow) threadFlow.hidden = false;
+    } else {
+      if (detailPlaceholder) detailPlaceholder.hidden = false;
+      if (threadFlow) threadFlow.hidden = true;
+    }
+  }
+
   async function selectLog(logId, btn) {
     selectedLogId = logId;
     highlightSelected(btn);
+    showThreadPanel();
     setStatus(replyStatus, '{% trans "Loading…" %}', '');
     try {
       const resp = await fetch(API_BASE + 'logs/' + logId + '/', { credentials: 'same-origin' });
       if (!resp.ok) {
         setStatus(replyStatus, '{% trans "Failed to load thread." %}', 'error');
+        if (threadFlow) threadFlow.hidden = true;
+        if (detailPlaceholder) detailPlaceholder.hidden = false;
         return;
       }
       const data = await resp.json();
       detailPlaceholder.hidden = true;
-      detailPanel.hidden = false;
+      threadFlow.hidden = false;
       threadEl.innerHTML = '';
       (data.thread || []).forEach((t) => {
         const div = document.createElement('div');
         const inbound = t.direction === 'inbound';
-        const badDelivery = !inbound && t.delivery_status &&
-          (t.delivery_status === 'failed' || t.delivery_status === 'undelivered');
+        const st = (t.delivery_status || '').toLowerCase();
+        const badDelivery = !inbound && st && (st === 'failed' || st === 'undelivered' || st === 'canceled');
         div.className = 'staff-msg-thread-item ' + (inbound ? 'staff-msg-thread-item--inbound' : 'staff-msg-thread-item--outbound') +
           (badDelivery ? ' staff-msg-thread-item--delivery-fail' : '');
         div.innerHTML =
@@ -375,6 +573,8 @@
       highlightSelected(rowAfter || null);
     } catch (e) {
       setStatus(replyStatus, '{% trans "Failed to load thread." %}', 'error');
+      if (threadFlow) threadFlow.hidden = true;
+      if (detailPlaceholder) detailPlaceholder.hidden = false;
     }
   }
 
@@ -513,68 +713,114 @@
     replySend.disabled = false;
   }
 
-  function renderSearchResults(users) {
-    if (!searchResults) return;
-    searchResults.innerHTML = '';
-    if (!users.length) {
-      searchResults.hidden = true;
-      return;
-    }
-    searchResults.hidden = false;
-    users.forEach((u) => {
-      const li = document.createElement('li');
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.textContent = u.display + ' · ' + u.email + ' (' + u.role + ')';
-      btn.addEventListener('click', () => pickComposeUser(u));
-      li.appendChild(btn);
-      searchResults.appendChild(li);
+  function letterKeyForDisplay(display) {
+    const d = (display || '').trim();
+    const c = d.charAt(0);
+    if (/[A-Za-z]/.test(c)) return c.toUpperCase();
+    return '#';
+  }
+
+  async function loadContactsEntries() {
+    const q = contactsQ && contactsQ.value ? contactsQ.value.trim() : '';
+    let url = API_BASE + 'contacts/?limit=500';
+    if (q) url += '&q=' + encodeURIComponent(q);
+    const resp = await fetch(url, { credentials: 'same-origin' });
+    const data = resp.ok ? await resp.json() : { entries: [] };
+    return data.entries || [];
+  }
+
+  function renderContactsDirectory(entries) {
+    if (!contactsScroll || !contactsLetterRail) return;
+    contactsScroll.innerHTML = '';
+    contactsLetterRail.innerHTML = '';
+    const byLetter = {};
+    entries.forEach(function (e) {
+      const L = letterKeyForDisplay(e.display);
+      if (!byLetter[L]) byLetter[L] = [];
+      byLetter[L].push(e);
+    });
+    const order = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('');
+    const present = {};
+    order.forEach(function (L) {
+      if (!byLetter[L]) return;
+      present[L] = true;
+      const head = document.createElement('div');
+      head.className = 'staff-msg-contacts-section-label';
+      head.id = 'staff-msg-contacts-section-' + (L === '#' ? 'sym' : L);
+      head.textContent = L;
+      contactsScroll.appendChild(head);
+      byLetter[L].forEach(function (e) {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'staff-msg-contact-row';
+        row.innerHTML = '<div class="staff-msg-contact-name"></div><div class="staff-msg-contact-meta"></div>';
+        row.querySelector('.staff-msg-contact-name').textContent = e.display;
+        row.querySelector('.staff-msg-contact-meta').textContent =
+          e.phone_label + ' · ' + e.phone + ' · ' + e.email;
+        row.addEventListener('click', function () {
+          if (toPhoneInput) toPhoneInput.value = e.phone;
+          closeContactsModal();
+        });
+        contactsScroll.appendChild(row);
+      });
+    });
+    order.forEach(function (L) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'staff-msg-letter-btn';
+      b.textContent = L;
+      b.disabled = !present[L];
+      if (!b.disabled) {
+        b.addEventListener('click', function () {
+          const id = 'staff-msg-contacts-section-' + (L === '#' ? 'sym' : L);
+          const el = document.getElementById(id);
+          if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        });
+      }
+      contactsLetterRail.appendChild(b);
     });
   }
 
-  function pickComposeUser(u) {
-    composeUserId = u.id;
-    if (composeTargetLabel) composeTargetLabel.textContent = u.display + ' (' + u.email + ')';
-    if (phoneKeySelect) {
-      phoneKeySelect.innerHTML = '';
-      (u.phones || []).forEach((p) => {
-        const opt = document.createElement('option');
-        opt.value = p.key;
-        opt.textContent = p.label + ' — ' + p.phone;
-        phoneKeySelect.appendChild(opt);
-      });
-    }
-    if (composeTarget) composeTarget.hidden = !(u.phones && u.phones.length);
-    if (searchResults) searchResults.hidden = true;
-    if (userQ) userQ.value = '';
-    setStatus(composeStatus, '', '');
-  }
-
-  async function runSearch() {
-    const q = (userQ && userQ.value ? userQ.value.trim() : '');
-    if (q.length < 2) {
-      if (searchResults) searchResults.hidden = true;
-      return;
-    }
+  async function openContactsModal() {
+    if (!contactsModal) return;
+    contactsModal.hidden = false;
+    if (contactsQ) contactsQ.value = '';
     try {
-      const resp = await fetch(API_BASE + 'users/search/?q=' + encodeURIComponent(q), { credentials: 'same-origin' });
-      const data = resp.ok ? await resp.json() : { results: [] };
-      renderSearchResults(data.results || []);
+      const entries = await loadContactsEntries();
+      renderContactsDirectory(entries);
     } catch (e) {
-      renderSearchResults([]);
+      console.error(e);
+    }
+    if (contactsQ) contactsQ.focus();
+  }
+
+  function closeContactsModal() {
+    if (contactsModal) contactsModal.hidden = true;
+  }
+
+  async function refreshContactsSearch() {
+    if (!contactsModal || contactsModal.hidden) return;
+    try {
+      const entries = await loadContactsEntries();
+      renderContactsDirectory(entries);
+    } catch (e) {
+      console.error(e);
     }
   }
 
-  async function sendCompose() {
-    if (!composeUserId) return;
-    const message = (composeBody.value || '').trim();
-    if (!message) {
-      setStatus(composeStatus, '{% trans "Enter a message." %}', 'error');
+  async function sendComposeNew() {
+    const raw = toPhoneInput ? (toPhoneInput.value || '').trim() : '';
+    const message = composeNewBody ? (composeNewBody.value || '').trim() : '';
+    if (!raw) {
+      setStatus(composeNewStatus, '{% trans "Enter a phone number." %}', 'error');
       return;
     }
-    const phone_key = phoneKeySelect && phoneKeySelect.value ? phoneKeySelect.value : null;
-    composeSend.disabled = true;
-    setStatus(composeStatus, '{% trans "Sending…" %}', '');
+    if (!message) {
+      setStatus(composeNewStatus, '{% trans "Enter a message." %}', 'error');
+      return;
+    }
+    composeNewSend.disabled = true;
+    setStatus(composeNewStatus, '{% trans "Sending…" %}', '');
     try {
       const resp = await fetch(API_BASE + 'send/', {
         method: 'POST',
@@ -583,36 +829,45 @@
           'Content-Type': 'application/json',
           'X-CSRFToken': getCsrfToken(),
         },
-        body: JSON.stringify({
-          mode: 'compose',
-          user_id: composeUserId,
-          message: message,
-          phone_key: phone_key,
-        }),
+        body: JSON.stringify({ mode: 'compose_phone', to_phone: raw, message: message }),
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        setStatus(composeStatus, data.detail || '{% trans "Send failed." %}', 'error');
-        composeSend.disabled = false;
+        setStatus(composeNewStatus, data.detail || '{% trans "Send failed." %}', 'error');
+        composeNewSend.disabled = false;
         return;
       }
-      setStatus(composeStatus, '{% trans "Sent." %}', 'ok');
-      composeBody.value = '';
+      setStatus(composeNewStatus, '{% trans "Sent." %}', 'ok');
+      composeNewBody.value = '';
+      await loadAllLists();
     } catch (e) {
-      setStatus(composeStatus, '{% trans "Send failed." %}', 'error');
+      setStatus(composeNewStatus, '{% trans "Send failed." %}', 'error');
     }
-    composeSend.disabled = false;
+    composeNewSend.disabled = false;
   }
 
   if (replySend) replySend.addEventListener('click', sendReply);
-  if (composeSend) composeSend.addEventListener('click', sendCompose);
-  if (teacherLoadMore) teacherLoadMore.addEventListener('click', loadMoreTeacherRecent);
-  if (userQ) {
-    userQ.addEventListener('input', () => {
-      clearTimeout(searchTimer);
-      searchTimer = setTimeout(runSearch, 300);
+  if (composeNewSend) composeNewSend.addEventListener('click', sendComposeNew);
+  if (btnNewMessage) btnNewMessage.addEventListener('click', enterComposeMode);
+  if (btnComposeCancel) btnComposeCancel.addEventListener('click', exitComposeMode);
+  masterNewMessageBtns.forEach(function (b) {
+    b.addEventListener('click', enterComposeMode);
+  });
+  if (contactsOpen) contactsOpen.addEventListener('click', openContactsModal);
+  if (contactsClose) contactsClose.addEventListener('click', closeContactsModal);
+  if (contactsBackdrop) contactsBackdrop.addEventListener('click', closeContactsModal);
+  if (contactsQ) {
+    contactsQ.addEventListener('input', function () {
+      clearTimeout(contactsSearchTimer);
+      contactsSearchTimer = setTimeout(refreshContactsSearch, 280);
     });
   }
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && contactsModal && !contactsModal.hidden) {
+      closeContactsModal();
+    }
+  });
+  if (teacherLoadMore) teacherLoadMore.addEventListener('click', loadMoreTeacherRecent);
 
   loadAllLists().then(() => {
     if (initialLogId) {

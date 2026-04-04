@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from django.db.models import Count, Max, Q
+from django.db.models import Count, Exists, Max, OuterRef, Q
 from django.utils import timezone
 
 from communication.models import SmsRoutingLog
@@ -154,6 +154,75 @@ def mark_all_conversation_inbound_read(anchor: SmsRoutingLog) -> int:
         direction=SmsRoutingLog.Direction.INBOUND,
         read_at__isnull=True,
     ).update(read_at=timezone.now())
+
+
+def sms_capable_users_qs():
+    """
+    Students / parents / teachers who have at least one non-empty SMS number on profile.
+    """
+    from users.models import ParentProfile, StudentProfile, TeacherProfile, User
+
+    stu_phones = Exists(
+        StudentProfile.objects.filter(user_id=OuterRef("pk")).filter(
+            (Q(child_phone__isnull=False) & ~Q(child_phone__exact=""))
+            | (Q(parent_phone__isnull=False) & ~Q(parent_phone__exact=""))
+        )
+    )
+    par_phones = Exists(
+        ParentProfile.objects.filter(user_id=OuterRef("pk"))
+        .exclude(phone_number__exact="")
+        .exclude(phone_number__isnull=True)
+    )
+    tea_phones = Exists(
+        TeacherProfile.objects.filter(user_id=OuterRef("pk"))
+        .exclude(phone_number__exact="")
+        .exclude(phone_number__isnull=True)
+    )
+    return User.objects.filter(
+        Q(role=User.Role.STUDENT) & stu_phones
+        | Q(role=User.Role.PARENT) & par_phones
+        | Q(role=User.Role.TEACHER) & tea_phones
+    )
+
+
+def contacts_directory_flat_entries(*, search: str = "", limit: int = 500) -> list[dict]:
+    """
+    Flat rows for contact picker: one row per (user, phone line), sorted by display then phone.
+    """
+    from communication.services.staff_outbound import resolve_staff_compose_phones
+
+    lim = max(1, min(int(limit), 600))
+    qs = sms_capable_users_qs().order_by("first_name", "last_name", "email")
+    s = (search or "").strip()
+    if len(s) >= 1:
+        qs = qs.filter(
+            Q(email__icontains=s)
+            | Q(first_name__icontains=s)
+            | Q(last_name__icontains=s)
+            | Q(public_handle__icontains=s)
+        )
+    entries: list[dict] = []
+    max_users_scan = 800
+    for u in qs[:max_users_scan]:
+        display = (u.get_full_name() or "").strip() or (u.email or "")
+        for p in resolve_staff_compose_phones(u):
+            entries.append(
+                {
+                    "user_id": u.pk,
+                    "display": display,
+                    "email": u.email,
+                    "role": u.role,
+                    "phone": p["phone"],
+                    "phone_key": p["key"],
+                    "phone_label": p["label"],
+                }
+            )
+            if len(entries) >= lim:
+                break
+        if len(entries) >= lim:
+            break
+    entries.sort(key=lambda x: (x["display"].lower(), x["phone"]))
+    return entries[:lim]
 
 
 def recent_outbound_delivery_preview(*, limit: int = 8) -> list[dict]:

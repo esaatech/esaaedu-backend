@@ -1,10 +1,44 @@
 {% load i18n %}
 <section class="staff-msg-detail-section" aria-labelledby="staff-msg-detail-heading">
-  <h2 id="staff-msg-detail-heading" class="staff-msg-section-title">{% trans "Thread & reply" %}</h2>
-  <div id="staff-msg-detail-placeholder" class="staff-msg-quiet">
-    {% trans "Select a message from the left to load the thread." %}
+  <div class="staff-msg-detail-head">
+    <h2 id="staff-msg-detail-heading" class="staff-msg-section-title">{% trans "Thread & reply" %}</h2>
+    <div class="staff-msg-detail-toolbar">
+      <button type="button" id="staff-msg-btn-new-message" class="staff-msg-button staff-msg-button--compact">
+        {% trans "New message" %}
+      </button>
+      <button type="button" id="staff-msg-compose-cancel" class="staff-msg-button staff-msg-button--secondary staff-msg-button--compact" hidden>
+        {% trans "Cancel" %}
+      </button>
+    </div>
   </div>
-  <div id="staff-msg-detail-panel" class="staff-msg-detail-panel" hidden>
+
+  <div id="staff-msg-detail-placeholder" class="staff-msg-quiet">
+    {% trans "Select a message from the left to load the thread, or tap New message to compose." %}
+  </div>
+
+  <div id="staff-msg-compose-flow" class="staff-msg-compose-flow" hidden>
+    <p class="staff-msg-compose-lead staff-msg-quiet">
+      {% trans "Enter a phone number or tap + to pick a contact. Letter bar jumps to names in the list." %}
+    </p>
+    <label class="staff-msg-label" for="staff-msg-compose-to-phone">{% trans "To" %}</label>
+    <div class="staff-msg-to-row">
+      <input
+        type="tel"
+        id="staff-msg-compose-to-phone"
+        class="staff-msg-input staff-msg-to-input"
+        inputmode="tel"
+        autocomplete="tel"
+        placeholder="{% trans '+1…' %}"
+      />
+      <button type="button" id="staff-msg-contacts-open" class="staff-msg-plus-btn" aria-label="{% trans 'Choose from contacts' %}">+</button>
+    </div>
+    <label class="staff-msg-label" for="staff-msg-compose-new-body">{% trans "Message" %}</label>
+    <textarea id="staff-msg-compose-new-body" class="staff-msg-textarea" rows="5"></textarea>
+    <button type="button" id="staff-msg-compose-new-send" class="staff-msg-button">{% trans "Send SMS" %}</button>
+    <p id="staff-msg-compose-new-status" class="staff-msg-status" role="status"></p>
+  </div>
+
+  <div id="staff-msg-thread-flow" class="staff-msg-thread-flow" hidden>
     <div id="staff-msg-thread" class="staff-msg-thread"></div>
     <label class="staff-msg-label" for="staff-msg-reply-body">{% trans "Reply (SMS)" %}</label>
     <textarea id="staff-msg-reply-body" class="staff-msg-textarea" rows="3"></textarea>

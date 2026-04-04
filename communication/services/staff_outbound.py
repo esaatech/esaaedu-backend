@@ -25,6 +25,36 @@ def _twilio_from_e164() -> str:
     return normalize_to_e164(from_number)
 
 
+def send_staff_sms_to_e164(*, to_e164: str, message_body: str) -> SmsRoutingLog:
+    """
+    Send SMS to an arbitrary E.164 number (staff compose by typed number).
+    No teacher/course context on the log.
+    """
+    body = (message_body or "").strip()
+    if not body:
+        raise ValueError("message is required")
+    to_norm = normalize_to_e164(to_e164)
+    twilio_number_e164 = _twilio_from_e164()
+    try:
+        with transaction.atomic():
+            sid, initial_status = send_sms(to_e164=to_norm, body=body)
+            return SmsRoutingLog.objects.create(
+                twilio_number=twilio_number_e164,
+                student_phone=to_norm,
+                teacher=None,
+                course=None,
+                course_class=None,
+                direction=SmsRoutingLog.Direction.OUTBOUND,
+                body=body,
+                twilio_message_sid=sid,
+                delivery_status=initial_status,
+                delivery_updated_at=timezone.now(),
+            )
+    except TwilioNotConfiguredError:
+        logger.exception("Twilio not configured for staff SMS to E.164")
+        raise
+
+
 def send_staff_reply_from_log(*, log: SmsRoutingLog, message_body: str) -> SmsRoutingLog:
     """
     Send SMS to the log's student_phone (family line). Persists outbound SmsRoutingLog.

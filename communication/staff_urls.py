@@ -2,6 +2,7 @@ from django.urls import path
 
 from communication.staff_messages_views import (
     StaffMessagesAdminUnreadApiView,
+    StaffMessagesContactsDirectoryApiView,
     StaffMessagesDeliveryIssuesApiView,
     StaffMessagesLogDetailApiView,
     StaffMessagesSendApiView,
@@ -23,5 +24,10 @@ urlpatterns = [
     ),
     path("logs/<uuid:log_id>/", StaffMessagesLogDetailApiView.as_view(), name="staff_messages_log_detail"),
     path("users/search/", StaffMessagesUserSearchApiView.as_view(), name="staff_messages_user_search"),
+    path(
+        "contacts/",
+        StaffMessagesContactsDirectoryApiView.as_view(),
+        name="staff_messages_contacts",
+    ),
     path("send/", StaffMessagesSendApiView.as_view(), name="staff_messages_send"),
 ]

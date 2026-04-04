@@ -398,6 +398,45 @@ class StaffMessagesApiTests(APITestCase):
         row = next(r for r in results if r["id"] == student.pk)
         self.assertEqual(len(row["phones"]), 2)
 
+    def test_contacts_directory_lists_profile_phones(self):
+        student = User.objects.create_user(
+            email="contactstu@test.com",
+            password="x",
+            firebase_uid="contactstu_uid",
+            role=User.Role.STUDENT,
+            first_name="Zoe",
+            last_name="Contactdir",
+        )
+        StudentProfile.objects.create(
+            user=student,
+            child_phone="+15558801111",
+        )
+        url = reverse("staff_messages_contacts")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        entries = response.json()["entries"]
+        match = [e for e in entries if e["user_id"] == student.pk]
+        self.assertTrue(match)
+        self.assertEqual(match[0]["phone"], "+15558801111")
+
+    @patch("communication.services.staff_outbound.send_sms")
+    def test_compose_phone_creates_outbound(self, mock_send):
+        mock_send.return_value = ("SMDIRECT01", "queued")
+        url = reverse("staff_messages_send")
+        response = self.client.post(
+            url,
+            {"mode": "compose_phone", "to_phone": "+15550007777", "message": "Hi there"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(
+            SmsRoutingLog.objects.filter(
+                twilio_message_sid="SMDIRECT01",
+                student_phone="+15550007777",
+                direction=SmsRoutingLog.Direction.OUTBOUND,
+            ).exists()
+        )
+
     @patch("communication.services.staff_outbound.send_sms")
     def test_reply_send_creates_outbound(self, mock_send):
         mock_send.return_value = ("SMFAKEREPLY01", "queued")

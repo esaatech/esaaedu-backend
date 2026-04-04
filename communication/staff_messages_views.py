@@ -16,15 +16,18 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from communication.models import SmsRoutingLog
+from communication.services.phone import normalize_to_e164
 from communication.services.staff_outbound import (
     resolve_staff_compose_phones,
     send_staff_compose_to_user,
     send_staff_reply_from_log,
+    send_staff_sms_to_e164,
 )
 from communication.services.twilio_sms import TwilioNotConfiguredError
 from communication.services.staff_sms_ui import (
     SMS_THREAD_MESSAGE_LIMIT,
     admin_queue_thread_summaries,
+    contacts_directory_flat_entries,
     conversation_thread_for_anchor,
     delivery_issue_summaries,
     log_to_list_item,
@@ -201,6 +204,22 @@ class StaffMessagesUserSearchApiView(APIView):
         return Response({"results": results})
 
 
+class StaffMessagesContactsDirectoryApiView(APIView):
+    """Flat contact rows (user + one phone line each) for the staff compose picker."""
+
+    authentication_classes = [SessionAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        q = (request.query_params.get("q") or "").strip()
+        try:
+            limit = int(request.query_params.get("limit") or 500)
+        except ValueError:
+            limit = 500
+        entries = contacts_directory_flat_entries(search=q, limit=limit)
+        return Response({"entries": entries})
+
+
 class StaffMessagesSendApiView(APIView):
     authentication_classes = [SessionAuthentication]
     permission_classes = [IsAuthenticated, IsAdminUser]
@@ -264,7 +283,32 @@ class StaffMessagesSendApiView(APIView):
                 status=status.HTTP_201_CREATED,
             )
 
+        if mode == "compose_phone":
+            raw_phone = (request.data.get("to_phone") or "").strip()
+            if not raw_phone:
+                return Response(
+                    {"detail": "to_phone is required."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                normalize_to_e164(raw_phone)
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                out = send_staff_sms_to_e164(to_e164=raw_phone, message_body=message)
+            except ValueError as e:
+                return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            except TwilioNotConfiguredError:
+                return Response(
+                    {"detail": "Failed to send SMS (check Twilio configuration)."},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            return Response(
+                {"ok": True, "outbound_log_id": str(out.pk), "twilio_message_sid": out.twilio_message_sid},
+                status=status.HTTP_201_CREATED,
+            )
+
         return Response(
-            {"detail": 'mode must be "reply" or "compose".'},
+            {"detail": 'mode must be "reply", "compose", or "compose_phone".'},
             status=status.HTTP_400_BAD_REQUEST,
         )
