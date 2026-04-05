@@ -16,6 +16,12 @@ from communication.models import MessageTemplate, SmsRoutingLog
 from communication.services.inbound_processing import process_inbound_sms_routing
 from communication.services.outbound import send_teacher_sms_to_student
 from communication.services.phone import normalize_to_e164
+from communication.services.teacher_outbound_thread import (
+    mark_teacher_sms_thread_inbound_read,
+    queryset_teacher_sms_thread,
+    resolve_teacher_sms_peer_e164,
+    serialize_sms_log_row,
+)
 from communication.services.twilio_delivery import apply_twilio_message_status
 from communication.services.twilio_sms import (
     TwilioNotConfiguredError,
@@ -267,6 +273,189 @@ class TeacherSmsInboundMarkReadView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+def _parse_teacher_student_sms_context(
+    *,
+    user,
+    student_id: int,
+    params,
+):
+    """
+    Resolve course/class + peer phones for outbound-thread endpoints.
+    params: dict-like with .get (QueryDict or merged POST+query).
+    Returns (student, student_phone_e164, twilio_e164, course_filter_uuid_or_none).
+    Raises ValueError or PermissionError.
+    """
+    student = get_object_or_404(User, pk=student_id, role=User.Role.STUDENT)
+
+    def _get(key):
+        return params.get(key)
+
+    raw_course_id = _get("course_id")
+    raw_class_id = _get("class_id")
+    has_course = raw_course_id not in (None, "")
+    has_class = raw_class_id not in (None, "")
+
+    course_arg = None
+    course_class = None
+
+    if has_course and has_class:
+        try:
+            cuid = uuid.UUID(str(raw_course_id))
+            clid = uuid.UUID(str(raw_class_id))
+        except (ValueError, TypeError) as e:
+            raise ValueError("course_id and class_id must be UUIDs") from e
+        course_arg = get_object_or_404(Course, id=cuid, teacher=user)
+        course_class = get_object_or_404(Class, id=clid, teacher=user)
+        if course_class.course_id != course_arg.id:
+            raise ValueError("class_id does not belong to the given course_id")
+    elif has_class:
+        try:
+            clid = uuid.UUID(str(raw_class_id))
+        except (ValueError, TypeError) as e:
+            raise ValueError("class_id must be a UUID") from e
+        course_class = get_object_or_404(Class, id=clid, teacher=user)
+        course_arg = course_class.course
+    elif has_course:
+        try:
+            cuid = uuid.UUID(str(raw_course_id))
+        except (ValueError, TypeError) as e:
+            raise ValueError("course_id must be a UUID") from e
+        course_arg = get_object_or_404(Course, id=cuid, teacher=user)
+
+    recipient_type = (_get("recipient_type") or "student").lower()
+    if recipient_type not in ("parent", "student"):
+        raise ValueError("recipient_type must be parent or student")
+
+    raw_target = (_get("target_phone") or "").strip()
+
+    sp, tw, _rc, _rcl = resolve_teacher_sms_peer_e164(
+        teacher=user,
+        student=student,
+        course=course_arg,
+        course_class=course_class,
+        recipient_type=recipient_type,
+        target_phone=raw_target or None,
+    )
+
+    course_filter_uuid = None
+    if has_course:
+        course_filter_uuid = uuid.UUID(str(raw_course_id))
+
+    return student, sp, tw, course_filter_uuid
+
+
+class TeacherStudentOutboundThreadView(APIView):
+    """
+    GET — chronological SMS thread for this teacher, student line, optional course filter.
+    Query: channel=sms|email|whatsapp (only sms implemented), recipient_type, course_id, class_id, target_phone.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, student_id):
+        user = request.user
+        if not user.is_teacher:
+            return Response(
+                {"error": "Only teachers can access this endpoint"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        channel = (request.query_params.get("channel") or "sms").lower()
+        if channel in ("email", "whatsapp"):
+            return Response(
+                {"detail": "not_implemented", "channel": channel, "thread": []},
+                status=status.HTTP_501_NOT_IMPLEMENTED,
+            )
+        if channel != "sms":
+            return Response(
+                {"error": "channel must be sms, email, or whatsapp"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            _student, sp, tw, course_filter_uuid = _parse_teacher_student_sms_context(
+                user=user,
+                student_id=int(student_id),
+                params=request.query_params,
+            )
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except PermissionError as e:
+            return Response({"error": str(e)}, status=status.HTTP_403_FORBIDDEN)
+        except TwilioNotConfiguredError as e:
+            return Response({"error": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        qs = queryset_teacher_sms_thread(
+            teacher=user,
+            student_phone_e164=sp,
+            twilio_number_e164=tw,
+            course_id=course_filter_uuid,
+        )
+        rows = list(qs)
+        rows.reverse()
+        return Response(
+            {
+                "channel": "sms",
+                "thread": [serialize_sms_log_row(x) for x in rows],
+            }
+        )
+
+
+class TeacherStudentOutboundThreadMarkReadView(APIView):
+    """
+    POST — mark all unread inbound SMS in this thread read (teacher opens Inbox).
+    Body or query: channel, recipient_type, course_id, class_id, target_phone (same as GET thread).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, student_id):
+        user = request.user
+        if not user.is_teacher:
+            return Response(
+                {"error": "Only teachers can access this endpoint"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        channel = (request.data.get("channel") or request.query_params.get("channel") or "sms").lower()
+        if channel in ("email", "whatsapp"):
+            return Response(
+                {"detail": "not_implemented", "channel": channel, "marked": 0},
+                status=status.HTTP_501_NOT_IMPLEMENTED,
+            )
+        if channel != "sms":
+            return Response(
+                {"error": "channel must be sms, email, or whatsapp"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        merged = {**request.query_params.dict()}
+        for key, val in request.data.items():
+            if val is not None and val != "":
+                merged[key] = val
+
+        try:
+            _student, sp, tw, course_filter_uuid = _parse_teacher_student_sms_context(
+                user=user,
+                student_id=int(student_id),
+                params=merged,
+            )
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except PermissionError as e:
+            return Response({"error": str(e)}, status=status.HTTP_403_FORBIDDEN)
+        except TwilioNotConfiguredError as e:
+            return Response({"error": str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        n = mark_teacher_sms_thread_inbound_read(
+            teacher=user,
+            student_phone_e164=sp,
+            twilio_number_e164=tw,
+            course_id=course_filter_uuid,
+        )
+        return Response({"channel": "sms", "marked": n}, status=status.HTTP_200_OK)
 
 
 @method_decorator(csrf_exempt, name="dispatch")

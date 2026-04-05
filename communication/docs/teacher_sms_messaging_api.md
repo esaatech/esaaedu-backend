@@ -155,3 +155,56 @@ If child and parent normalize to the **same** E.164 number, only **`sms_unread_c
 **Implementation:** `communication/services/teacher_roster_sms.py` (`build_teacher_sms_unread_pair_counts`, `sms_unread_fields_for_enrollment`), called from `courses.views.teacher_students_master`.
 
 **Global badge (unchanged):** `GET /api/teacher/sms/unread-count/` returns `total_unread` for all unread inbound SMS for the teacher (see `TeacherSmsUnreadCountView`).
+
+---
+
+## 4. Outbound thread (SMS first; email/WhatsApp reserved)
+
+Teacher UI can list SMS history for a student line (same phone + Twilio number as send), optionally scoped by `course_id`.
+
+### `GET /api/teacher/students/<student_user_id>/outbound-thread/`
+
+| Query | Required | Description |
+|-------|----------|-------------|
+| `channel` | No (default `sms`) | `sms` returns thread; `email` / `whatsapp` → `501` with `{ "detail": "not_implemented", "thread": [] }`. |
+| `recipient_type` | No (default `student`) | `parent` \| `student` — which profile line to use when `target_phone` is omitted (same as messaging panel). |
+| `course_id` | No | UUID; when set, only logs with this `SmsRoutingLog.course_id` are returned. |
+| `class_id` | No | UUID; disambiguation (same rules as send SMS). |
+| `target_phone` | No | When set, must match normalized `child_phone` or `parent_phone` for that student. |
+
+**200** body:
+
+```json
+{
+  "channel": "sms",
+  "thread": [
+    {
+      "id": "uuid",
+      "direction": "inbound",
+      "body": "…",
+      "created_at": "2026-01-01T12:00:00+00:00",
+      "read_at": null
+    },
+    {
+      "id": "uuid",
+      "direction": "outbound",
+      "body": "…",
+      "created_at": "2026-01-01T12:01:00+00:00",
+      "delivery_status": "delivered",
+      "delivery_error_code": ""
+    }
+  ]
+}
+```
+
+**Implementation:** `communication/services/teacher_outbound_thread.py` + `TeacherStudentOutboundThreadView`.
+
+### `POST /api/teacher/students/<student_user_id>/outbound-thread/mark-read/`
+
+Marks **all** unread inbound rows in that thread (same match as GET) read. JSON body or query: same `channel`, `recipient_type`, `course_id`, `class_id`, `target_phone` as GET.
+
+**200:** `{ "channel": "sms", "marked": <int> }` — number of rows updated.
+
+Call when the teacher **opens the Inbox / thread view** so badges (`sms/unread-count`, master `sms_unread_count`) can drop after clients revalidate.
+
+**501** for `channel=email` / `whatsapp` (not implemented).

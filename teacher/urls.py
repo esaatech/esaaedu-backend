@@ -5,6 +5,8 @@ from communication.views import (
     TeacherSmsInboundUnreadCountView,
     TeacherSmsSendView,
     TeacherSmsUnreadCountView,
+    TeacherStudentOutboundThreadMarkReadView,
+    TeacherStudentOutboundThreadView,
 )
 from . import views
 from .calendar_views import StaffCalendarWeekApiView, StaffClassDialogApiView, StaffTeacherDialogApiView
@@ -62,6 +64,16 @@ urlpatterns = [
         'students/<int:student_id>/messaging-context/',
         views.TeacherStudentMessagingContextView.as_view(),
         name='teacher_student_messaging_context',
+    ),
+    path(
+        'students/<int:student_id>/outbound-thread/mark-read/',
+        TeacherStudentOutboundThreadMarkReadView.as_view(),
+        name='teacher_student_outbound_thread_mark_read',
+    ),
+    path(
+        'students/<int:student_id>/outbound-thread/',
+        TeacherStudentOutboundThreadView.as_view(),
+        name='teacher_student_outbound_thread',
     ),
     
     # Code Snippet URLs (for teacher Tools page)
