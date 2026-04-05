@@ -4,6 +4,7 @@ from communication.views import (
     TeacherSmsInboundMarkReadView,
     TeacherSmsInboundUnreadCountView,
     TeacherSmsSendView,
+    TeacherSmsUnreadCountView,
 )
 from . import views
 from .calendar_views import StaffCalendarWeekApiView, StaffClassDialogApiView, StaffTeacherDialogApiView
@@ -96,6 +97,11 @@ urlpatterns = [
     # Messaging URLs (templates + SMS; conversations below)
     path('message-templates/', TeacherMessageTemplateListView.as_view(), name='teacher_message_templates'),
     path('sms/send/', TeacherSmsSendView.as_view(), name='teacher_sms_send'),
+    path(
+        'sms/unread-count/',
+        TeacherSmsUnreadCountView.as_view(),
+        name='teacher_sms_unread_count',
+    ),
     path(
         'sms/inbound/unread-count/',
         TeacherSmsInboundUnreadCountView.as_view(),

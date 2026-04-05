@@ -178,10 +178,20 @@ class TeacherSmsSendView(APIView):
         )
 
 
-class TeacherSmsInboundUnreadCountView(APIView):
+def count_teacher_unread_inbound_sms(*, teacher_user) -> int:
+    """Inbound SmsRoutingLog rows for this teacher with read_at unset."""
+    return SmsRoutingLog.objects.filter(
+        direction=SmsRoutingLog.Direction.INBOUND,
+        teacher=teacher_user,
+        read_at__isnull=True,
+    ).count()
+
+
+class TeacherSmsUnreadCountView(APIView):
     """
-    GET — count inbound SMS rows assigned to this teacher that are not yet read (read_at is null).
-    Use for notification badges; hide/suppress UI when count is 0 for a given log after mark-read.
+    GET — same response shape as teacher conversations unread-count (total_unread, by_recipient_type).
+    Used by the React teacher messaging channel badges. SMS rows do not yet split parent vs student;
+    recipient_type query param is accepted for API parity but ignored until the model supports it.
     """
 
     permission_classes = [IsAuthenticated]
@@ -193,11 +203,32 @@ class TeacherSmsInboundUnreadCountView(APIView):
                 {"error": "Only teachers can access this endpoint"},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        n = SmsRoutingLog.objects.filter(
-            direction=SmsRoutingLog.Direction.INBOUND,
-            teacher=user,
-            read_at__isnull=True,
-        ).count()
+        # request.query_params.get("recipient_type") — reserved for future filtering
+        n = count_teacher_unread_inbound_sms(teacher_user=user)
+        return Response(
+            {
+                "total_unread": n,
+                "by_recipient_type": {"parent": 0, "student": 0},
+            }
+        )
+
+
+class TeacherSmsInboundUnreadCountView(APIView):
+    """
+    GET — count inbound SMS rows assigned to this teacher that are not yet read (read_at is null).
+    Legacy key unread_inbound_sms_count; prefer GET sms/unread-count/ for app-wide badge parity.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if not user.is_teacher:
+            return Response(
+                {"error": "Only teachers can access this endpoint"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        n = count_teacher_unread_inbound_sms(teacher_user=user)
         return Response({"unread_inbound_sms_count": n})
 
 

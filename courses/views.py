@@ -2497,6 +2497,7 @@ def teacher_students_master(request):
         enrollments = EnrolledCourse.objects.filter(
             course__teacher=request.user
         ).select_related(
+            'student_profile',
             'student_profile__user',
             'course',
             'current_lesson'
@@ -2521,7 +2522,13 @@ def teacher_students_master(request):
         
         # Prepare students data (summary view for master panel)
         from student.models import Conversation, Message
-        
+        from communication.services.teacher_roster_sms import (
+            build_teacher_sms_unread_pair_counts,
+            sms_unread_fields_for_enrollment,
+        )
+
+        sms_pair_counts = build_teacher_sms_unread_pair_counts(request.user)
+
         students_data = []
         for enrollment in enrollments:
             student_user = enrollment.student_profile.user
@@ -2595,6 +2602,17 @@ def teacher_students_master(request):
                 traceback.print_exc()
                 parent_unread_count = 0
                 student_unread_count = 0
+
+            try:
+                sms_unread_fields = sms_unread_fields_for_enrollment(
+                    sms_pair_counts,
+                    course_id=enrollment.course_id,
+                    profile=enrollment.student_profile,
+                )
+            except Exception:
+                import traceback
+                traceback.print_exc()
+                sms_unread_fields = {"sms_unread_count": 0}
             
             student_data = {
                 'id': str(student_user.id),
@@ -2623,7 +2641,8 @@ def teacher_students_master(request):
                 'pending_exam_submission_count': pending_exam_submission_count,
                 'pending_project_submission_count': pending_project_submission_count,
                 'parent_unread_count': parent_unread_count,  # Add parent unread count
-                'student_unread_count': student_unread_count  # Add student unread count
+                'student_unread_count': student_unread_count,  # Add student unread count
+                **sms_unread_fields,
             }
             students_data.append(student_data)
         

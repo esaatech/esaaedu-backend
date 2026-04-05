@@ -4,6 +4,8 @@
 
 A conversation-based messaging system that enables communication between teachers and parents/students. Messages are organized into conversation threads, with separate threads for parent and student communications.
 
+**SMS (Twilio):** In-app unread counts on `GET /api/courses/teacher/students/master/` are separate from SMS. Per-enrollment **SMS** unread fields (`sms_unread_count`, optional split by phone line) are computed from `SmsRoutingLog` and documented in [`communication/docs/teacher_sms_messaging_api.md`](communication/docs/teacher_sms_messaging_api.md) (section “Per-enrollment SMS unread”).
+
 ## Architecture
 
 ### Design Decisions

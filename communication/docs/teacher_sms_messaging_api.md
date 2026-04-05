@@ -135,3 +135,23 @@ Inbound rows are stored on `SmsRoutingLog` with `direction=inbound` and `inbound
 ## Admin
 
 Templates are edited in **Django Admin** → **Communication** → **Message templates** (no deploy required for copy changes).
+
+---
+
+## 3. Per-enrollment SMS unread (teacher students master)
+
+The Student Management roster does **not** use a separate SMS-count API per row. Counts are included on **`GET /api/courses/teacher/students/master/`** for each object in **`students[]`**:
+
+| Field | Type | Meaning |
+|-------|------|--------|
+| `sms_unread_count` | int | Unread inbound `SmsRoutingLog` rows for this teacher, this **course** (`SmsRoutingLog.course_id` matches the enrollment’s course), and `student_phone` matching normalized **`child_phone`** or **`parent_phone`** on `users.StudentProfile`. |
+| `student_sms_unread_count` | int | Present when child and parent numbers differ: count for the child line only. |
+| `parent_sms_unread_count` | int | Present when child and parent numbers differ: count for the parent line only. |
+
+If child and parent normalize to the **same** E.164 number, only **`sms_unread_count`** is returned (no split), so the client does not double-count.
+
+**Attribution rules:** Inbound rows must be tied to a **course** on the log (typically after reply correlation copies `course_id` from the prior outbound). Inbound SMS with no course remains **excluded** from these per-row totals.
+
+**Implementation:** `communication/services/teacher_roster_sms.py` (`build_teacher_sms_unread_pair_counts`, `sms_unread_fields_for_enrollment`), called from `courses.views.teacher_students_master`.
+
+**Global badge (unchanged):** `GET /api/teacher/sms/unread-count/` returns `total_unread` for all unread inbound SMS for the teacher (see `TeacherSmsUnreadCountView`).

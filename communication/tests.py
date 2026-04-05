@@ -1,4 +1,6 @@
+import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -10,6 +12,7 @@ from rest_framework.test import APIClient, APITestCase
 
 from communication.models import SmsRoutingLog
 from communication.services.inbound_processing import process_inbound_sms_routing
+from communication.services.teacher_roster_sms import sms_unread_fields_for_enrollment
 from communication.services.staff_sms_ui import mark_inbound_read_for_staff_inbox
 from users.models import StudentProfile
 
@@ -149,6 +152,25 @@ class TeacherSmsInboundReadApiTests(APITestCase):
 
         r3 = self.client.get(reverse("teacher_sms_inbound_unread_count"))
         self.assertEqual(r3.json()["unread_inbound_sms_count"], 0)
+
+    def test_sms_unread_count_matches_in_app_response_shape(self):
+        """GET api/teacher/sms/unread-count/ matches React UnreadCountResponse."""
+        SmsRoutingLog.objects.create(
+            twilio_number="+15550002222",
+            student_phone="+15550001111",
+            direction=SmsRoutingLog.Direction.INBOUND,
+            body="Hi",
+            twilio_message_sid="SMPARITY01",
+            teacher=self.teacher,
+            inbound_routing=SmsRoutingLog.InboundRouting.ROUTED,
+        )
+        self.client.force_authenticate(user=self.teacher)
+        r = self.client.get(reverse("teacher_sms_unread_count"))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        data = r.json()
+        self.assertEqual(data["total_unread"], 1)
+        self.assertEqual(data["by_recipient_type"]["parent"], 0)
+        self.assertEqual(data["by_recipient_type"]["student"], 0)
 
     def test_mark_read_wrong_teacher_404(self):
         log = SmsRoutingLog.objects.create(
@@ -649,3 +671,23 @@ class SmsRoutingLogAdminMarkReadTests(TestCase):
         self.client.get(url)
         log.refresh_from_db()
         self.assertEqual(log.read_at, first)
+
+
+class TeacherRosterSmsFieldTests(TestCase):
+    """sms_unread_fields_for_enrollment: course + profile phones vs pair_counts."""
+
+    def test_counts_match_normalized_child_phone(self):
+        cid = uuid.uuid4()
+        pair = {(cid, "+15550001111"): 2}
+        profile = SimpleNamespace(child_phone="(555) 000-1111", parent_phone="")
+        fields = sms_unread_fields_for_enrollment(pair, course_id=cid, profile=profile)
+        self.assertEqual(fields["sms_unread_count"], 2)
+        self.assertEqual(fields.get("student_sms_unread_count"), 2)
+        self.assertEqual(fields.get("parent_sms_unread_count"), 0)
+
+    def test_same_child_and_parent_phone_returns_aggregate_only(self):
+        cid = uuid.uuid4()
+        pair = {(cid, "+15550001111"): 1}
+        profile = SimpleNamespace(child_phone="+15550001111", parent_phone="+15550001111")
+        fields = sms_unread_fields_for_enrollment(pair, course_id=cid, profile=profile)
+        self.assertEqual(fields, {"sms_unread_count": 1})
