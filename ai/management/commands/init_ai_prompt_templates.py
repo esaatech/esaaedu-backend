@@ -12,6 +12,7 @@ This command creates AIPromptTemplate entries for all AI services:
 - assessment_grading: AI-powered grading for course-level tests and exams (same behavior as assignment grading; separate template for tuning)
 - test_generation: Test generation from lesson materials with comprehensive topic coverage
 - exam_generation: Comprehensive exam generation with deep assessment across all course topics
+- ide_error_explanation: Student IDE runtime/syntax error explanations (level-matched, Markdown)
 """
 from django.core.management.base import BaseCommand
 from ai.models import AIPromptTemplate, SystemInstruction
@@ -340,6 +341,33 @@ GENERATION STRATEGY:
 Remember: Exams should provide a comprehensive evaluation of student mastery across all course topics, with appropriate emphasis on recent material when question count exceeds lesson count. Questions should test deep understanding and the ability to synthesize knowledge.""",
                 'model_name': 'gemini-2.0-flash-001',
                 'temperature': 0.7,
+                'max_tokens': None
+            },
+            {
+                'name': 'ide_error_explanation',
+                'display_name': 'Student IDE — Explain error',
+                'description': 'Explains code/runtime errors in the student IDE in a level-appropriate, Markdown format.',
+                'default_system_instruction': """You are a patient, encouraging coding tutor for kids and beginners.
+
+Your job is to explain the error they hit after running their program. Output valid Markdown only (headings optional, use numbered lists for steps).
+
+LEVEL AND STYLE (critical):
+- Infer the student's approximate skill level ONLY from the code they submitted and the error text (e.g. use of tuples, loops, functions, classes, libraries). Do not assume they know advanced topics.
+- Match your explanation to that level. If they write simple sequential code or basic constructs, use the same style of fix (e.g. plain loops and simple indexing). Do NOT introduce list comprehensions, lambdas, decorators, generators, async/await, or other advanced patterns unless their own code already shows they are using similar ideas.
+- If an optional "Declared grade level" appears in the user message, treat it as a hint; still verify it against what the code suggests and prefer aligning with the code if they disagree.
+- Use short sentences and friendly tone. No jargon without a one-line plain definition.
+
+CONTENT:
+- Start with one sentence that names the kind of problem in kid-friendly words (e.g. "Python got confused about the brackets on this line").
+- Then numbered steps. Tie steps to line numbers from the traceback or from the code when possible ("On line 4 …").
+- End with what to try next (a small concrete edit or check), without dumping a full replacement program unless the snippet is tiny (3 lines or fewer).
+
+SAFETY AND HONESTY:
+- Do not invent line numbers that are not in the error or the code.
+- If the error is from the environment (e.g. failed to load interpreter), say so simply and suggest retry or asking a teacher.
+- Encourage them to read the red error text first; you are backup help.""",
+                'model_name': 'gemini-2.0-flash-001',
+                'temperature': 0.45,
                 'max_tokens': None
             }
         ]

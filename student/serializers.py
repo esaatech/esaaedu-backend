@@ -982,6 +982,16 @@ class CodeSnippetShareSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class StudentIdeExplainErrorSerializer(serializers.Serializer):
+    """POST /api/student/ide/explain-error/ — explain a code execution error (Vertex AI)."""
+    language = serializers.CharField(max_length=32)
+    code = serializers.CharField(max_length=100_000)
+    error_message = serializers.CharField(max_length=50_000)
+    lesson_title = serializers.CharField(max_length=500, required=False, allow_blank=True, default='')
+    course_title = serializers.CharField(max_length=500, required=False, allow_blank=True, default='')
+    grade_level = serializers.CharField(max_length=120, required=False, allow_blank=True, default='')
+
+
 # ===== STUDENT COURSE OVERVIEW (read-only intro + enrollment + reviews) =====
 
 class StudentCourseOverviewSerializer(serializers.Serializer):

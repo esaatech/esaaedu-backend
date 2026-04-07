@@ -58,7 +58,8 @@ from .serializers import (
     MessageSerializer, CreateMessageSerializer,
     # Code Snippet Serializers
     CodeSnippetListSerializer, CodeSnippetDetailSerializer,
-    CodeSnippetCreateUpdateSerializer, CodeSnippetShareSerializer
+    CodeSnippetCreateUpdateSerializer, CodeSnippetShareSerializer,
+    StudentIdeExplainErrorSerializer,
 )
 from users.models import StudentProfile
 
@@ -6293,4 +6294,77 @@ class StudentFileDeleteView(APIView):
             return Response(
                 {'error': f'Error during file deletion: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+def _ide_explain_error_rate_limit_ok(user_id: int, limit: int = 40, window_seconds: int = 900) -> bool:
+    """Simple fixed-window counter per user (default: 40 requests / 15 minutes)."""
+    from django.core.cache import cache
+
+    key = f"ide_explain_error_rl:{user_id}"
+    if cache.add(key, 1, timeout=window_seconds):
+        return True
+    try:
+        n = cache.get(key, 0)
+    except Exception:
+        n = 0
+    if n >= limit:
+        return False
+    try:
+        cache.incr(key)
+    except ValueError:
+        cache.set(key, 1, timeout=window_seconds)
+    return True
+
+
+class StudentIdeExplainErrorView(APIView):
+    """
+    POST /api/student/ide/explain-error/
+    Authenticated students and teachers. Returns Markdown explanation for a runtime/syntax error.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if request.user.role not in ('student', 'teacher', 'admin'):
+            return Response(
+                {'error': 'This action is only available for student or teacher accounts.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not _ide_explain_error_rate_limit_ok(request.user.id):
+            return Response(
+                {'error': 'Too many explain requests. Please wait a few minutes and try again.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        serializer = StudentIdeExplainErrorSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        try:
+            from ai.gemini_ide_error_service import GeminiIdeErrorExplainService
+
+            service = GeminiIdeErrorExplainService()
+            result = service.explain(
+                language=data['language'],
+                code=data['code'],
+                error_message=data['error_message'],
+                lesson_title=data.get('lesson_title') or '',
+                course_title=data.get('course_title') or '',
+                grade_level=data.get('grade_level') or '',
+            )
+            if not result.get('explanation'):
+                return Response(
+                    {'error': 'Could not generate an explanation. Please try again.'},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+            return Response(result, status=status.HTTP_200_OK)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error('StudentIdeExplainErrorView failed: %s', e, exc_info=True)
+            return Response(
+                {'error': 'Failed to explain error', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
