@@ -992,6 +992,32 @@ class StudentIdeExplainErrorSerializer(serializers.Serializer):
     grade_level = serializers.CharField(max_length=120, required=False, allow_blank=True, default='')
 
 
+class StudentIdeExplainOutputSerializer(serializers.Serializer):
+    """POST /api/student/ide/explain-output/ — explain successful-run stdout (Vertex AI)."""
+    language = serializers.CharField(max_length=32)
+    code = serializers.CharField(max_length=100_000)
+    program_output = serializers.CharField(max_length=50_000)
+    lesson_title = serializers.CharField(max_length=500, required=False, allow_blank=True, default='')
+    course_title = serializers.CharField(max_length=500, required=False, allow_blank=True, default='')
+    grade_level = serializers.CharField(max_length=120, required=False, allow_blank=True, default='')
+
+
+class StudentIdeExplainNoOutputSerializer(serializers.Serializer):
+    """POST /api/student/ide/explain-no-output/ — why the program printed nothing visible (Vertex AI)."""
+    language = serializers.CharField(max_length=32)
+    code = serializers.CharField(max_length=100_000)
+    observed_output = serializers.CharField(
+        max_length=10_000,
+        required=False,
+        allow_blank=True,
+        default='',
+        help_text='What the IDE showed in the output area (e.g. empty or placeholder text).',
+    )
+    lesson_title = serializers.CharField(max_length=500, required=False, allow_blank=True, default='')
+    course_title = serializers.CharField(max_length=500, required=False, allow_blank=True, default='')
+    grade_level = serializers.CharField(max_length=120, required=False, allow_blank=True, default='')
+
+
 # ===== STUDENT COURSE OVERVIEW (read-only intro + enrollment + reviews) =====
 
 class StudentCourseOverviewSerializer(serializers.Serializer):

@@ -60,6 +60,8 @@ from .serializers import (
     CodeSnippetListSerializer, CodeSnippetDetailSerializer,
     CodeSnippetCreateUpdateSerializer, CodeSnippetShareSerializer,
     StudentIdeExplainErrorSerializer,
+    StudentIdeExplainOutputSerializer,
+    StudentIdeExplainNoOutputSerializer,
 )
 from users.models import StudentProfile
 
@@ -6297,11 +6299,11 @@ class StudentFileDeleteView(APIView):
             )
 
 
-def _ide_explain_error_rate_limit_ok(user_id: int, limit: int = 40, window_seconds: int = 900) -> bool:
-    """Simple fixed-window counter per user (default: 40 requests / 15 minutes)."""
+def _ide_explain_rate_limit_ok(user_id: int, limit: int = 40, window_seconds: int = 900) -> bool:
+    """Shared fixed-window counter for all IDE explain endpoints (40 / 15 min per user)."""
     from django.core.cache import cache
 
-    key = f"ide_explain_error_rl:{user_id}"
+    key = f"ide_explain_rl:{user_id}"
     if cache.add(key, 1, timeout=window_seconds):
         return True
     try:
@@ -6331,7 +6333,7 @@ class StudentIdeExplainErrorView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        if not _ide_explain_error_rate_limit_ok(request.user.id):
+        if not _ide_explain_rate_limit_ok(request.user.id):
             return Response(
                 {'error': 'Too many explain requests. Please wait a few minutes and try again.'},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -6366,5 +6368,111 @@ class StudentIdeExplainErrorView(APIView):
             logger.error('StudentIdeExplainErrorView failed: %s', e, exc_info=True)
             return Response(
                 {'error': 'Failed to explain error', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class StudentIdeExplainOutputView(APIView):
+    """
+    POST /api/student/ide/explain-output/
+    Successful run with stdout; explain confusing or unexpected printed output (Markdown).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if request.user.role not in ('student', 'teacher', 'admin'):
+            return Response(
+                {'error': 'This action is only available for student or teacher accounts.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not _ide_explain_rate_limit_ok(request.user.id):
+            return Response(
+                {'error': 'Too many explain requests. Please wait a few minutes and try again.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        serializer = StudentIdeExplainOutputSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        try:
+            from ai.gemini_ide_output_service import GeminiIdeOutputExplainService
+
+            service = GeminiIdeOutputExplainService()
+            result = service.explain(
+                language=data['language'],
+                code=data['code'],
+                program_output=data['program_output'],
+                lesson_title=data.get('lesson_title') or '',
+                course_title=data.get('course_title') or '',
+                grade_level=data.get('grade_level') or '',
+            )
+            if not result.get('explanation'):
+                return Response(
+                    {'error': 'Could not generate an explanation. Please try again.'},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+            return Response(result, status=status.HTTP_200_OK)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error('StudentIdeExplainOutputView failed: %s', e, exc_info=True)
+            return Response(
+                {'error': 'Failed to explain output', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class StudentIdeExplainNoOutputView(APIView):
+    """
+    POST /api/student/ide/explain-no-output/
+    Successful run but little/no visible output; explain why (Markdown).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if request.user.role not in ('student', 'teacher', 'admin'):
+            return Response(
+                {'error': 'This action is only available for student or teacher accounts.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not _ide_explain_rate_limit_ok(request.user.id):
+            return Response(
+                {'error': 'Too many explain requests. Please wait a few minutes and try again.'},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        serializer = StudentIdeExplainNoOutputSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        try:
+            from ai.gemini_ide_no_output_service import GeminiIdeNoOutputExplainService
+
+            service = GeminiIdeNoOutputExplainService()
+            result = service.explain(
+                language=data['language'],
+                code=data['code'],
+                observed_output=data.get('observed_output') or '',
+                lesson_title=data.get('lesson_title') or '',
+                course_title=data.get('course_title') or '',
+                grade_level=data.get('grade_level') or '',
+            )
+            if not result.get('explanation'):
+                return Response(
+                    {'error': 'Could not generate an explanation. Please try again.'},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+            return Response(result, status=status.HTTP_200_OK)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error('StudentIdeExplainNoOutputView failed: %s', e, exc_info=True)
+            return Response(
+                {'error': 'Failed to explain missing output', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

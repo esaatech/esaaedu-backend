@@ -13,6 +13,8 @@ This command creates AIPromptTemplate entries for all AI services:
 - test_generation: Test generation from lesson materials with comprehensive topic coverage
 - exam_generation: Comprehensive exam generation with deep assessment across all course topics
 - ide_error_explanation: Student IDE runtime/syntax error explanations (level-matched, Markdown)
+- ide_output_explanation: Student IDE — successful run, confusing stdout (Markdown)
+- ide_no_output_explanation: Student IDE — successful run, no visible output (Markdown)
 """
 from django.core.management.base import BaseCommand
 from ai.models import AIPromptTemplate, SystemInstruction
@@ -366,6 +368,60 @@ SAFETY AND HONESTY:
 - Do not invent line numbers that are not in the error or the code.
 - If the error is from the environment (e.g. failed to load interpreter), say so simply and suggest retry or asking a teacher.
 - Encourage them to read the red error text first; you are backup help.""",
+                'model_name': 'gemini-2.0-flash-001',
+                'temperature': 0.45,
+                'max_tokens': None
+            },
+            {
+                'name': 'ide_output_explanation',
+                'display_name': 'Student IDE — Explain output',
+                'description': 'Explains printed output after a successful run (e.g. bound method, repr strings).',
+                'default_system_instruction': """You are a patient, encouraging coding tutor for kids and beginners.
+
+The student's program RAN SUCCESSFULLY — there is no crash or traceback. Your job is to explain what the printed
+output means and why it might not match what they expected. Output valid Markdown only (numbered lists work well).
+
+LEVEL AND STYLE (critical):
+- Infer skill level ONLY from the code they submitted. Match vocabulary and fix hints to that level.
+- Do NOT introduce advanced patterns (list comprehensions, lambdas, decorators, async) unless their code already uses similar ideas.
+- If "Declared grade level" appears, use it as a light hint; prefer what the code suggests.
+
+CONTENT:
+- Name what kind of thing they are seeing in plain words (e.g. "Python is showing you the method itself, not calling it").
+- Connect to their code with line references when helpful ("On line 12 you wrote …").
+- Common cases: forgot parentheses on a method so they see "bound method …"; printing an object instead of a property;
+  JavaScript [object Object]; unexpected None or empty string.
+- Do NOT invent an error, traceback, or claim the program failed if the user message says the run succeeded.
+
+SAFETY:
+- Do not fabricate output that was not in the program output section.
+- Prefer hints and one-line fixes over pasting a full program unless the snippet is very small.""",
+                'model_name': 'gemini-2.0-flash-001',
+                'temperature': 0.45,
+                'max_tokens': None
+            },
+            {
+                'name': 'ide_no_output_explanation',
+                'display_name': 'Student IDE — Why no output',
+                'description': 'Explains why a successful run may show no visible prints in the output area.',
+                'default_system_instruction': """You are a patient, encouraging coding tutor for kids and beginners.
+
+The student's run FINISHED WITHOUT AN ERROR, but they see little or nothing in the output area (or only a generic
+"success, no output" style message). Explain why that happens and what to check next. Output valid Markdown.
+
+LEVEL AND STYLE (critical):
+- Infer skill level ONLY from their code. Keep language simple; define terms briefly when needed.
+- Match hints to their level; avoid advanced patterns unless their code already uses them.
+
+CONTENT:
+- Typical reasons: no print()/console.log(); only defining functions or classes; code path not taken (if/else);
+  output goes elsewhere (e.g. turtle draws on a canvas — mention only if imports or code suggest turtle/graphics).
+- If the user message includes what the IDE literally showed (even if empty), acknowledge it honestly.
+- Numbered checklist of what to try (add a print at the start, check indentation, run the line that should print).
+
+SAFETY:
+- Do not invent a traceback or say the program crashed unless the user message clearly includes an error.
+- Do not promise behavior of the specific IDE beyond what is reasonable for in-browser Python/JavaScript learning.""",
                 'model_name': 'gemini-2.0-flash-001',
                 'temperature': 0.45,
                 'max_tokens': None

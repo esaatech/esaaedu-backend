@@ -67,8 +67,10 @@ urlpatterns = [
     path('parent/messages/<uuid:message_id>/read/', views.ParentMarkMessageReadView.as_view(), name='parent_mark_message_read'),
     path('parent/dashboard/messages/unread-count/', views.ParentUnreadCountView.as_view(), name='parent_unread_count'),
     
-    # IDE — explain execution error (Vertex AI; authenticated)
+    # IDE — explain execution error / output / no output (Vertex AI; authenticated)
     path('ide/explain-error/', views.StudentIdeExplainErrorView.as_view(), name='student_ide_explain_error'),
+    path('ide/explain-output/', views.StudentIdeExplainOutputView.as_view(), name='student_ide_explain_output'),
+    path('ide/explain-no-output/', views.StudentIdeExplainNoOutputView.as_view(), name='student_ide_explain_no_output'),
 
     # Code Snippet URLs
     path('code-snippets/', views.CodeSnippetListView.as_view(), name='code_snippet_list'),
