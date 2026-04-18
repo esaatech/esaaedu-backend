@@ -16,9 +16,11 @@ Represents a student's portfolio. Each student has one portfolio (one-to-one rel
 - `bio` (TextField): Student bio/description
 - `profile_image` (ImageField, optional): Profile picture
 - `is_public` (BooleanField): Whether the portfolio is publicly accessible
-- `custom_url` (SlugField, unique, optional): Custom URL slug for public access
+- `theme` (CharField): Portfolio theme/style
 - `created_at` (DateTimeField): Creation timestamp
 - `updated_at` (DateTimeField): Last update timestamp
+
+**Public URL:** The `public_url` property (read-only in the API) is `/portfolio/{student.public_handle}` when the student has a non-empty `public_handle` on `User`.
 
 **Auto-creation:** A Portfolio is automatically created for each new User via a `post_save` signal.
 
@@ -61,13 +63,13 @@ Get the authenticated student's portfolio.
   "title": "My Portfolio",
   "bio": "Student bio...",
   "is_public": true,
-  "custom_url": "john-doe",
+  "public_url": "/portfolio/john42",
   "items": [...]
 }
 ```
 
 #### `PUT /api/portfolio/`
-Update portfolio settings (title, bio, is_public, custom_url).
+Update portfolio settings (title, bio, is_public, theme, profile_image).
 
 **Request Body:**
 ```json
@@ -75,7 +77,7 @@ Update portfolio settings (title, bio, is_public, custom_url).
   "title": "Updated Title",
   "bio": "Updated bio",
   "is_public": true,
-  "custom_url": "new-url"
+  "theme": "default"
 }
 ```
 
@@ -173,8 +175,8 @@ Get project submission details using a share token. Used by the portfolio wizard
 
 ### Public Portfolio
 
-#### `GET /api/portfolio/public/{custom_url}/`
-Get a public portfolio by custom URL.
+#### `GET /api/portfolio/public/{public_handle}/`
+Get a public portfolio by the portfolio owner's `User.public_handle` (same identifier as hosted Flask app URLs). Requires `is_public=True` on the portfolio.
 
 **Response:**
 ```json
@@ -225,8 +227,8 @@ Handles updates to portfolio items (all fields optional).
 ### ProjectSubmissionForPortfolioView
 - `GET`: Get project submission details by share token
 
-### PublicPortfolioView
-- `GET`: Get public portfolio by custom URL
+### public_portfolio_by_public_handle
+- `GET`: Get public portfolio by `public_handle`
 
 ## Permissions
 

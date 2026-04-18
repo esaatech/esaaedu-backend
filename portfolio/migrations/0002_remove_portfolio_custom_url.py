@@ -1,0 +1,15 @@
+from django.db import migrations
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("portfolio", "0001_initial"),
+    ]
+
+    operations = [
+        migrations.RemoveField(
+            model_name="portfolio",
+            name="custom_url",
+        ),
+    ]

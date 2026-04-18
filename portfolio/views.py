@@ -170,26 +170,15 @@ class PortfolioItemReorderView(APIView):
 
 @api_view(['GET'])
 @permission_classes([permissions.AllowAny])  # Public access
-def public_portfolio_by_username(request, username):
-    """Get public portfolio by username"""
-    try:
-        user = User.objects.get(username=username)
-    except User.DoesNotExist:
+def public_portfolio_by_public_handle(request, public_handle):
+    """Get public portfolio by owner's User.public_handle (same identifier as hosted Flask URLs)."""
+    owner = User.objects.filter(public_handle=public_handle).first()
+    if not owner:
         return Response(
             {'error': 'Portfolio not found'},
-            status=status.HTTP_404_NOT_FOUND
+            status=status.HTTP_404_NOT_FOUND,
         )
-
-    portfolio = get_object_or_404(Portfolio, student=user, is_public=True)
-    serializer = PublicPortfolioSerializer(portfolio, context={'request': request})
-    return Response(serializer.data, status=status.HTTP_200_OK)
-
-
-@api_view(['GET'])
-@permission_classes([permissions.AllowAny])  # Public access
-def public_portfolio_by_custom_url(request, custom_url):
-    """Get public portfolio by custom URL"""
-    portfolio = get_object_or_404(Portfolio, custom_url=custom_url, is_public=True)
+    portfolio = get_object_or_404(Portfolio, student=owner, is_public=True)
     serializer = PublicPortfolioSerializer(portfolio, context={'request': request})
     return Response(serializer.data, status=status.HTTP_200_OK)
 

@@ -7,6 +7,18 @@ from courses.serializers import PublicProjectSubmissionSerializer
 User = get_user_model()
 
 
+def _absolute_file_url(request, file_field):
+    if not file_field:
+        return None
+    try:
+        url = file_field.url
+    except ValueError:
+        return None
+    if request:
+        return request.build_absolute_uri(url)
+    return url
+
+
 class PortfolioItemSerializer(serializers.ModelSerializer):
     """Serializer for portfolio items (student view)"""
     project_submission_id = serializers.PrimaryKeyRelatedField(
@@ -31,6 +43,7 @@ class PortfolioItemSerializer(serializers.ModelSerializer):
             'tags',
             'skills_demonstrated',
             'thumbnail_image',
+            'demo_url',
             'screenshots',
             'is_visible',
             'created_at',
@@ -49,6 +62,12 @@ class PortfolioItemSerializer(serializers.ModelSerializer):
             return serializer.data
         return None
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        data["thumbnail_image"] = _absolute_file_url(request, instance.thumbnail_image)
+        return data
+
 
 class PortfolioSerializer(serializers.ModelSerializer):
     """Serializer for portfolio (student view)"""
@@ -56,6 +75,7 @@ class PortfolioSerializer(serializers.ModelSerializer):
     items_count = serializers.SerializerMethodField()
     student_name = serializers.SerializerMethodField()
     student_email = serializers.SerializerMethodField()
+    resume_file_url = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Portfolio
@@ -68,15 +88,29 @@ class PortfolioSerializer(serializers.ModelSerializer):
             'bio',
             'profile_image',
             'is_public',
-            'custom_url',
             'theme',
             'public_url',
+            'projects_section_enabled',
+            'linkedin_enabled',
+            'linkedin_url',
+            'github_enabled',
+            'github_url',
+            'instagram_enabled',
+            'instagram_url',
+            'tiktok_enabled',
+            'tiktok_url',
+            'social_other_enabled',
+            'social_other_label',
+            'social_other_url',
+            'resume_enabled',
+            'resume_file',
+            'resume_file_url',
             'items',
             'items_count',
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['id', 'student', 'public_url', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'student', 'public_url', 'resume_file_url', 'created_at', 'updated_at']
 
     def get_items_count(self, obj):
         """Get count of visible portfolio items"""
@@ -89,6 +123,9 @@ class PortfolioSerializer(serializers.ModelSerializer):
     def get_student_email(self, obj):
         """Get student's email"""
         return obj.student.email
+
+    def get_resume_file_url(self, obj):
+        return _absolute_file_url(self.context.get('request'), obj.resume_file)
 
 
 class PortfolioItemCreateSerializer(serializers.ModelSerializer):
@@ -109,6 +146,7 @@ class PortfolioItemCreateSerializer(serializers.ModelSerializer):
             'tags',
             'skills_demonstrated',
             'thumbnail_image',
+            'demo_url',
             'screenshots',
             'is_visible',
         ]
@@ -180,10 +218,12 @@ class PublicPortfolioItemSerializer(serializers.ModelSerializer):
             'id',
             'title',
             'description',
+            'featured',
             'category',
             'tags',
             'skills_demonstrated',
             'thumbnail_image',
+            'demo_url',
             'screenshots',
             'project_details',
             'created_at',
@@ -199,11 +239,19 @@ class PublicPortfolioItemSerializer(serializers.ModelSerializer):
             return serializer.data
         return None
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        data["thumbnail_image"] = _absolute_file_url(request, instance.thumbnail_image)
+        return data
+
 
 class PublicPortfolioSerializer(serializers.ModelSerializer):
-    """Serializer for public portfolio view"""
+    """Serializer for public portfolio view — only safe, enabled link data in public_links."""
     items = serializers.SerializerMethodField()
     student_name = serializers.SerializerMethodField()
+    profile_image = serializers.SerializerMethodField()
+    public_links = serializers.SerializerMethodField()
 
     class Meta:
         model = Portfolio
@@ -214,9 +262,14 @@ class PublicPortfolioSerializer(serializers.ModelSerializer):
             'profile_image',
             'theme',
             'student_name',
+            'projects_section_enabled',
+            'public_links',
             'items',
             'created_at',
         ]
+
+    def get_profile_image(self, obj):
+        return _absolute_file_url(self.context.get('request'), obj.profile_image)
 
     def get_items(self, obj):
         """Get visible portfolio items"""
@@ -226,4 +279,34 @@ class PublicPortfolioSerializer(serializers.ModelSerializer):
     def get_student_name(self, obj):
         """Get student's full name"""
         return obj.student.get_full_name() or obj.student.email
+
+    def get_public_links(self, obj):
+        """
+        Enabled links only (for nav + header). projects_section mirrors projects_section_enabled.
+        """
+        request = self.context.get('request')
+        urls = {}
+        if obj.linkedin_enabled and (obj.linkedin_url or "").strip():
+            urls['linkedin'] = obj.linkedin_url.strip()
+        if obj.github_enabled and (obj.github_url or "").strip():
+            urls['github'] = obj.github_url.strip()
+        if obj.instagram_enabled and (obj.instagram_url or "").strip():
+            urls['instagram'] = obj.instagram_url.strip()
+        if obj.tiktok_enabled and (obj.tiktok_url or "").strip():
+            urls['tiktok'] = obj.tiktok_url.strip()
+        if obj.social_other_enabled and (obj.social_other_url or "").strip():
+            urls['other'] = {
+                'label': (obj.social_other_label or 'Link').strip() or 'Link',
+                'url': obj.social_other_url.strip(),
+            }
+        resume_url = None
+        if obj.resume_enabled and obj.resume_file:
+            resume_url = _absolute_file_url(request, obj.resume_file)
+            if resume_url:
+                urls['resume'] = resume_url
+
+        return {
+            'show_projects': obj.projects_section_enabled,
+            'urls': urls,
+        }
 

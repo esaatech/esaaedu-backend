@@ -4,9 +4,9 @@ from .models import Portfolio, PortfolioItem
 
 @admin.register(Portfolio)
 class PortfolioAdmin(admin.ModelAdmin):
-    list_display = ['student', 'title', 'is_public', 'custom_url', 'created_at', 'updated_at']
+    list_display = ['student', 'title', 'is_public', 'created_at', 'updated_at']
     list_filter = ['is_public', 'theme', 'created_at']
-    search_fields = ['student__email', 'student__first_name', 'student__last_name', 'title', 'custom_url']
+    search_fields = ['student__email', 'student__public_handle', 'student__first_name', 'student__last_name', 'title']
     readonly_fields = ['created_at', 'updated_at', 'public_url']
     fieldsets = (
         ('Student', {
@@ -15,8 +15,19 @@ class PortfolioAdmin(admin.ModelAdmin):
         ('Portfolio Details', {
             'fields': ('title', 'bio', 'profile_image', 'theme')
         }),
+        ('Sections & links', {
+            'fields': (
+                'projects_section_enabled',
+                'linkedin_enabled', 'linkedin_url',
+                'github_enabled', 'github_url',
+                'instagram_enabled', 'instagram_url',
+                'tiktok_enabled', 'tiktok_url',
+                'social_other_enabled', 'social_other_label', 'social_other_url',
+                'resume_enabled', 'resume_file',
+            ),
+        }),
         ('Visibility', {
-            'fields': ('is_public', 'custom_url', 'public_url')
+            'fields': ('is_public', 'public_url')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
@@ -39,7 +50,7 @@ class PortfolioItemAdmin(admin.ModelAdmin):
             'fields': ('title', 'description', 'category', 'tags', 'skills_demonstrated')
         }),
         ('Presentation', {
-            'fields': ('featured', 'order', 'thumbnail_image', 'screenshots', 'is_visible')
+            'fields': ('featured', 'order', 'thumbnail_image', 'demo_url', 'screenshots', 'is_visible')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),

@@ -3259,18 +3259,46 @@ class PublicProjectSubmissionSerializer(serializers.ModelSerializer):
         read_only_fields = fields
     
     def get_project(self, obj):
-        """Get project details"""
+        """Get project details.
+        project_platform lives on ClassEvent (scheduled instance), not on Project — same as
+        StudentProjectSubmissionSerializer.get_project_platform.
+        """
+        from .models import ClassEvent
+
+        project = obj.project
+
+        event = ClassEvent.objects.filter(
+            project=project,
+            project_platform__isnull=False,
+        ).select_related('project_platform').order_by('-created_at').first()
+
+        project_platform_data = None
+        if event and event.project_platform:
+            pp = event.project_platform
+            project_platform_data = {
+                'id': str(pp.id),
+                'name': pp.name,
+                'display_name': pp.display_name,
+                'base_url': pp.base_url,
+            }
+
+        event_st = ClassEvent.objects.filter(
+            project=project,
+            submission_type__isnull=False,
+        ).select_related('submission_type').order_by('-created_at').first()
+        if event_st and event_st.submission_type:
+            submission_type_name = event_st.submission_type.name
+        elif project.submission_type_id:
+            submission_type_name = project.submission_type.name
+        else:
+            submission_type_name = None
+
         return {
-            'id': str(obj.project.id),
-            'title': obj.project.title,
-            'instructions': obj.project.instructions,
-            'submission_type': obj.project.submission_type,
-            'project_platform': {
-                'id': str(obj.project.project_platform.id),
-                'name': obj.project.project_platform.name,
-                'display_name': obj.project.project_platform.display_name,
-                'base_url': obj.project.project_platform.base_url
-            } if obj.project.project_platform else None
+            'id': str(project.id),
+            'title': project.title,
+            'instructions': project.instructions,
+            'submission_type': submission_type_name,
+            'project_platform': project_platform_data,
         }
     
     def get_student(self, obj):
@@ -3285,7 +3313,8 @@ class PublicProjectSubmissionSerializer(serializers.ModelSerializer):
     
     def get_course_title(self, obj):
         """Get course title"""
-        return obj.project.lesson.course.title if obj.project.lesson else None
+        course = getattr(obj.project, 'course', None)
+        return course.title if course else None
 
 
 # ===== TEACHER CLASS ATTENDANCE (classroom roll call; minimal PII) =====

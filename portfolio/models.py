@@ -1,7 +1,6 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from django.core.validators import RegexValidator
 from courses.models import ProjectSubmission
 
 User = get_user_model()
@@ -36,23 +35,42 @@ class Portfolio(models.Model):
         default=False,
         help_text="Whether the portfolio is publicly accessible"
     )
-    custom_url = models.SlugField(
-        unique=True,
-        null=True,
-        blank=True,
-        validators=[
-            RegexValidator(
-                regex=r'^[a-z0-9-]+$',
-                message='Custom URL can only contain lowercase letters, numbers, and hyphens'
-            )
-        ],
-        help_text="Custom URL slug (e.g., 'john-doe')"
-    )
     theme = models.CharField(
         max_length=50,
         default="default",
         help_text="Portfolio theme/style"
     )
+
+    # Sections: projects grid is on by default; external links opt-in
+    projects_section_enabled = models.BooleanField(
+        default=True,
+        help_text="Show Projects section and nav anchor on public portfolio",
+    )
+
+    linkedin_enabled = models.BooleanField(default=False)
+    linkedin_url = models.URLField(blank=True, default="")
+
+    github_enabled = models.BooleanField(default=False)
+    github_url = models.URLField(blank=True, default="")
+
+    instagram_enabled = models.BooleanField(default=False)
+    instagram_url = models.URLField(blank=True, default="")
+
+    tiktok_enabled = models.BooleanField(default=False)
+    tiktok_url = models.URLField(blank=True, default="")
+
+    social_other_enabled = models.BooleanField(default=False)
+    social_other_label = models.CharField(max_length=40, blank=True, default="")
+    social_other_url = models.URLField(blank=True, default="")
+
+    resume_enabled = models.BooleanField(default=False)
+    resume_file = models.FileField(
+        null=True,
+        blank=True,
+        upload_to="portfolio/resumes/",
+        help_text="Resume PDF or document (uses default file storage / GCS when configured)",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -63,25 +81,39 @@ class Portfolio(models.Model):
     def __str__(self):
         return f"{self.student.get_full_name() or self.student.email}'s Portfolio"
 
-    @property
-    def public_url(self):
-        """Get the public URL for this portfolio"""
-        if self.custom_url:
-            return f"/portfolio/{self.custom_url}"
-        return f"/portfolio/{self.student.username or self.student.id}"
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        errors = {}
+        if self.linkedin_enabled and not (self.linkedin_url or "").strip():
+            errors["linkedin_url"] = "URL is required when LinkedIn is enabled."
+        if self.github_enabled and not (self.github_url or "").strip():
+            errors["github_url"] = "URL is required when GitHub is enabled."
+        if self.instagram_enabled and not (self.instagram_url or "").strip():
+            errors["instagram_url"] = "URL is required when Instagram is enabled."
+        if self.tiktok_enabled and not (self.tiktok_url or "").strip():
+            errors["tiktok_url"] = "URL is required when TikTok is enabled."
+        if self.social_other_enabled:
+            if not (self.social_other_label or "").strip():
+                errors["social_other_label"] = "Label is required for the custom link when enabled."
+            if not (self.social_other_url or "").strip():
+                errors["social_other_url"] = "URL is required when the custom link is enabled."
+        if self.resume_enabled and not self.resume_file:
+            errors["resume_file"] = "Upload a resume file when resume is enabled."
+        if errors:
+            raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
-        # Auto-generate custom_url from username if not provided
-        if not self.custom_url and self.student.username:
-            base_url = self.student.username.lower().replace(' ', '-')
-            # Ensure uniqueness
-            counter = 1
-            custom_url = base_url
-            while Portfolio.objects.filter(custom_url=custom_url).exclude(pk=self.pk).exists():
-                custom_url = f"{base_url}-{counter}"
-                counter += 1
-            self.custom_url = custom_url
+        self.full_clean()
         super().save(*args, **kwargs)
+
+    @property
+    def public_url(self):
+        """Public path: /portfolio/<student.public_handle>. Requires a non-empty public_handle."""
+        h = getattr(self.student, 'public_handle', None)
+        if h:
+            return f"/portfolio/{h}"
+        return ""
 
 
 class PortfolioItem(models.Model):
@@ -140,6 +172,12 @@ class PortfolioItem(models.Model):
         blank=True,
         upload_to='portfolio/thumbnails/',
         help_text="Custom thumbnail image for this portfolio item"
+    )
+    demo_url = models.URLField(
+        max_length=500,
+        blank=True,
+        default="",
+        help_text="Optional external link (hosted app, demo, GitHub Pages) shown as View project on public portfolio",
     )
     screenshots = models.JSONField(
         default=list,

@@ -15,8 +15,7 @@ urlpatterns = [
     # Project data for wizard
     path('project-from-token/<str:share_token>/', views.project_from_token, name='project_from_token'),
     
-    # Public portfolio views
-    path('public/<str:username>/', views.public_portfolio_by_username, name='public_portfolio_username'),
-    path('public/custom/<str:custom_url>/', views.public_portfolio_by_custom_url, name='public_portfolio_custom'),
+    # Public portfolio (path segment matches User.public_handle)
+    path('public/<str:public_handle>/', views.public_portfolio_by_public_handle, name='public_portfolio'),
 ]
 
