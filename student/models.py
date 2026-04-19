@@ -639,15 +639,7 @@ class EnrolledCourse(models.Model):
         
         actual_completed_count = len(completed_lesson_ids)
         self.completed_lessons_count = actual_completed_count
-        
-        # Debug logging for overflow detection
-        print(f"🔍 DEBUG _recalculate_from_progress_records:")
-        print(f"   - Course: {self.course.title if self.course else 'Unknown'}")
-        print(f"   - Total progress records: {progress_records.count()}")
-        print(f"   - Completed lesson IDs: {completed_lesson_ids}")
-        print(f"   - actual_completed_count: {actual_completed_count}")
-        print(f"   - total_lessons_count: {self.total_lessons_count}")
-        
+
         # Recalculate current_lesson from progress records
         # Current lesson = next lesson after the highest completed lesson order
         highest_completed_order = 0

@@ -107,6 +107,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "backend.admin_calendar_timezone_middleware.AdminCalendarTimezoneMiddleware",
     "authentication.middleware.FirebaseAuthenticationMiddleware",  # Custom Firebase auth
+    "backend.rate_limit_middleware.RateLimitMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "backend.debug_middleware.DebugMiddleware",  # Add debug middleware last
@@ -252,6 +253,50 @@ else:
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Cache: Redis when REDIS_URL is set (shared counters across Cloud Run instances); else locmem (local dev/tests).
+_redis_url_for_cache = config("REDIS_URL", default="").strip()
+if _redis_url_for_cache:
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": _redis_url_for_cache,
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            },
+            "KEY_PREFIX": "llt",
+            "TIMEOUT": 300,
+        }
+    }
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "llt-locmem",
+        }
+    }
+
+
+def _rate_limit_exempt_prefixes():
+    raw = config("RATE_LIMIT_EXEMPT_PREFIXES", default="")
+    default_list = [
+        "/api/webhooks/",
+        "/api/billing/webhooks/",
+        "/health/",
+        "/static/",
+        "/media/",
+    ]
+    if not str(raw).strip():
+        return default_list
+    return [s.strip() for s in str(raw).split(",") if s.strip()]
+
+
+RATE_LIMIT_ENABLED = config("RATE_LIMIT_ENABLED", default=True, cast=bool)
+RATE_LIMIT_REQUESTS_PER_WINDOW = config(
+    "RATE_LIMIT_REQUESTS_PER_WINDOW", default=500, cast=int
+)
+RATE_LIMIT_WINDOW_SECONDS = config("RATE_LIMIT_WINDOW_SECONDS", default=60, cast=int)
+RATE_LIMIT_EXEMPT_PATH_PREFIXES = _rate_limit_exempt_prefixes()
 
 # REST Framework Configuration
 REST_FRAMEWORK = {
