@@ -378,8 +378,8 @@ class CourseWithLessonsSerializer(serializers.ModelSerializer):
                     # Fallback to first lesson if current_lesson_id doesn't exist
                     current_lesson = obj.lessons.order_by('order').first()
             else:
-                # No current lesson determined, fallback to first lesson
-                current_lesson = obj.lessons.order_by('order').first()
+                # No current lesson determined (often end-of-course); keep None.
+                current_lesson = None
             
             if current_lesson:
                 # Use the detailed serializer for current lesson

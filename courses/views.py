@@ -1130,6 +1130,18 @@ class ModuleDetailView(APIView):
 
 # ===== LESSON MANAGEMENT ENDPOINTS =====
 
+def _resync_course_enrollments_after_lesson_change(course):
+    """
+    Keep enrollment progression stable after lesson structure changes.
+    """
+    enrollments = EnrolledCourse.objects.filter(
+        course=course,
+        status__in=['active', 'completed', 'paused']
+    ).select_related('current_lesson')
+
+    for enrollment in enrollments:
+        enrollment.resync_after_lesson_structure_change()
+
 @api_view(['GET', 'POST'])
 @permission_classes([permissions.IsAuthenticated])
 def course_lessons(request, course_id):
@@ -1179,6 +1191,7 @@ def course_lessons(request, course_id):
                     serializer.validated_data['order'] = max_order + 1
                 
                 lesson = serializer.save(course=course)
+                _resync_course_enrollments_after_lesson_change(course)
                 response_serializer = LessonDetailSerializer(lesson)
                 return Response(response_serializer.data, status=status.HTTP_201_CREATED)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -1232,6 +1245,7 @@ def lesson_detail(request, lesson_id):
             )
             if serializer.is_valid():
                 lesson = serializer.save()
+                _resync_course_enrollments_after_lesson_change(lesson.course)
                 response_serializer = LessonDetailSerializer(lesson)
                 return Response(response_serializer.data, status=status.HTTP_200_OK)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -1243,7 +1257,9 @@ def lesson_detail(request, lesson_id):
     
     elif request.method == 'DELETE':
         try:
+            course = lesson.course
             lesson.delete()
+            _resync_course_enrollments_after_lesson_change(course)
             return Response(
                 {'message': 'Lesson deleted successfully'},
                 status=status.HTTP_200_OK
@@ -1301,6 +1317,8 @@ def reorder_lessons(request, course_id):
             for lesson, new_order in lessons_to_update:
                 lesson.order = new_order
                 lesson.save()
+
+            _resync_course_enrollments_after_lesson_change(course)
             
             # Return updated lessons (include module for master side)
             lessons = course.lessons.select_related('module').order_by('order')
@@ -3668,7 +3686,7 @@ def student_course_lessons(request, course_id):
             status__in=['active', 'completed']
         ).prefetch_related(
             'lesson_progress__lesson'  # Bulk prefetch all progress records
-        ).first()
+        ).order_by('-enrollment_date').first()
         
         if not enrollment:
             return Response(
@@ -3676,6 +3694,12 @@ def student_course_lessons(request, course_id):
                 status=status.HTTP_403_FORBIDDEN
             )
         
+        # Keep enrollment metadata and progress records aligned when course structure changes.
+        current_total = course.lessons.count()
+        if enrollment.total_lessons_count != current_total:
+            enrollment.resync_after_lesson_structure_change()
+            enrollment.refresh_from_db()
+
         # Build progress status map from ACTUAL StudentLessonProgress records
         # This is the single source of truth - no inference from metadata
         lesson_status_map = {}
@@ -3697,48 +3721,29 @@ def student_course_lessons(request, course_id):
         
         print(f"🔍 DEBUG: Total completed lessons from progress records: {len(completed_lesson_ids)}")
         
-        # Determine current lesson from progress records (not from enrollment.current_lesson)
-        # Current lesson = next lesson after the highest completed lesson order
-        # This ensures we don't go back to earlier incomplete lessons
-        current_lesson = None
-        
-        # Find the highest order number among completed lessons
-        highest_completed_order = 0
-        for lesson in course.lessons.all():
-            lesson_id = str(lesson.id)
-            lesson_status = lesson_status_map.get(lesson_id, 'not_started')
-            if lesson_status == 'completed':
-                highest_completed_order = max(highest_completed_order, lesson.order)
-        
-        # Find the next lesson after the highest completed lesson
-        # This is the lesson the student should work on next
-        if highest_completed_order > 0:
-            # Find next lesson after highest completed order
-            next_lesson = course.lessons.filter(
-                order__gt=highest_completed_order
-            ).order_by('order').first()
-            if next_lesson:
-                current_lesson = next_lesson
+        # Use persisted enrollment.current_lesson as primary source of truth.
+        # Fall back to progress-derived next lesson only when pointer is missing.
+        current_lesson = enrollment.current_lesson
+        if current_lesson is None:
+            highest_completed_order = 0
+            for lesson in course.lessons.all():
+                lesson_id = str(lesson.id)
+                lesson_status = lesson_status_map.get(lesson_id, 'not_started')
+                if lesson_status == 'completed':
+                    highest_completed_order = max(highest_completed_order, lesson.order)
+
+            if highest_completed_order > 0:
+                current_lesson = course.lessons.filter(
+                    order__gt=highest_completed_order
+                ).order_by('order').first()
             else:
-                # All lessons are completed
-                current_lesson = None
-        else:
-            # No lessons completed yet, start with first lesson
-            current_lesson = course.lessons.order_by('order').first()
+                current_lesson = course.lessons.order_by('order').first()
         
         # Calculate actual completed count from progress records
         actual_completed_count = len(completed_lesson_ids)
         
         print(f"🔍 DEBUG: Calculated actual_completed_count: {actual_completed_count}")
-        print(f"🔍 DEBUG: Enrollment.completed_lessons_count before sync: {enrollment.completed_lessons_count}")
-        
-        # Sync enrollment only when stored total doesn't match current course lesson count
-        current_total = course.lessons.count()
-        if enrollment.total_lessons_count != current_total:
-            enrollment._recalculate_from_progress_records()
-            enrollment.save()
-            print(f"🔍 DEBUG: Enrollment synced (total was {current_total}). completed_lessons_count after sync: {enrollment.completed_lessons_count}")
-            print(f"🔍 DEBUG: Enrollment.current_lesson after sync: {enrollment.current_lesson.title if enrollment.current_lesson else None}")
+        print(f"🔍 DEBUG: Enrollment.completed_lessons_count: {enrollment.completed_lessons_count}")
 
         # Use the serializer with progress map in context
         serializer = CourseWithLessonsSerializer(
@@ -5106,6 +5111,7 @@ class StudentLessonNextView(APIView):
                 'completed_lessons_count': enrollment.completed_lessons_count,
                 'progress_percentage': float(enrollment.progress_percentage),
                 'course_completed': enrollment.status == 'completed',
+                'open_overview': enrollment.status == 'completed' and enrollment.current_lesson is None,
             }, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(

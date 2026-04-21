@@ -632,19 +632,10 @@ class EnrolledCourse(models.Model):
             return False, f"Error completing lesson: {str(e)}"
 
     def advance_to_next_lesson(self, lesson):
-        """Advance from a completed current lesson to the next lesson."""
+        """Advance focus to the next lesson in list order."""
         try:
             if lesson.course != self.course:
                 return False, f"Lesson {lesson.id} does not belong to course {self.course.id}"
-
-            if not self.current_lesson_id or lesson.id != self.current_lesson_id:
-                return False, "You can only advance from your current lesson."
-
-            lesson_progress = StudentLessonProgress.objects.filter(
-                enrollment=self, lesson=lesson
-            ).first()
-            if not lesson_progress or not lesson_progress.is_completed:
-                return False, "Complete this lesson before moving to the next one."
 
             next_lesson = self.course.lessons.filter(order__gt=lesson.order).order_by('order').first()
             self.total_lessons_count = self.course.lessons.count()
@@ -675,6 +666,47 @@ class EnrolledCourse(models.Model):
             import traceback
             traceback.print_exc()
             return False, f"Error advancing lesson: {str(e)}"
+
+    def resync_after_lesson_structure_change(self):
+        """
+        Option A behavior:
+        - preserve learner trajectory when lessons are inserted/reordered
+        - backfill inserted earlier lessons as completed for already-progressed students
+        - then recalculate enrollment metadata from progress records
+        """
+        lessons = list(self.course.lessons.order_by('order'))
+        if not lessons:
+            self._recalculate_from_progress_records()
+            self.save()
+            return
+
+        highest_completed_order = (
+            StudentLessonProgress.objects.filter(
+                enrollment=self,
+                status='completed'
+            ).aggregate(max_order=models.Max('lesson__order'))['max_order']
+            or 0
+        )
+
+        # Prefer persisted pointer when available so we do not regress active students.
+        pointer_order = self.current_lesson.order if self.current_lesson else highest_completed_order
+
+        if pointer_order > 1:
+            for lesson in lessons:
+                if lesson.order >= pointer_order:
+                    break
+                progress, _ = StudentLessonProgress.objects.get_or_create(
+                    enrollment=self,
+                    lesson=lesson,
+                    defaults={'status': 'completed'}
+                )
+                if progress.status != 'completed':
+                    progress.status = 'completed'
+                    progress.completed_at = timezone.now()
+                    progress.save(update_fields=['status', 'completed_at', 'updated_at'])
+
+        self._recalculate_from_progress_records()
+        self.save()
     
     def _recalculate_from_progress_records(self):
         """
