@@ -565,8 +565,8 @@ class EnrolledCourse(models.Model):
     
     def mark_lesson_complete(self, lesson, require_quiz=True):
         """
-        Mark a lesson as complete and recalculate current_lesson from progress records.
-        Uses StudentLessonProgress records as the single source of truth.
+        Mark the current lesson as complete.
+        Progression to the next lesson is a separate explicit action.
         
         Args:
             lesson: Lesson instance to mark as complete
@@ -591,6 +591,10 @@ class EnrolledCourse(models.Model):
             if lesson_progress.is_completed:
                 return False, "Lesson already completed"
             
+            # Only the current lesson can be completed.
+            if self.current_lesson_id and lesson.id != self.current_lesson_id:
+                return False, "You can only complete your current lesson."
+
             # Check quiz requirement if enabled
             if require_quiz and lesson_progress.requires_quiz and lesson_progress.quiz_attempts_count == 0:
                 return False, "You must complete the quiz before completing this lesson"
@@ -598,8 +602,19 @@ class EnrolledCourse(models.Model):
             # Mark lesson as completed in progress tracking (single source of truth)
             lesson_progress.mark_as_completed()
             
-            # Recalculate all enrollment fields from progress records (single source of truth)
-            self._recalculate_from_progress_records()
+            # Keep completion and navigation separate: do not auto-advance current_lesson here.
+            completed_count = StudentLessonProgress.objects.filter(
+                enrollment=self,
+                status='completed',
+            ).count()
+            self.total_lessons_count = self.course.lessons.count()
+            self.completed_lessons_count = completed_count
+            if self.total_lessons_count > 0:
+                self.progress_percentage = min(
+                    (completed_count / self.total_lessons_count) * 100, 100.0
+                )
+            else:
+                self.progress_percentage = 0.0
             
             # Update last accessed time
             self.last_accessed = timezone.now()
@@ -608,7 +623,6 @@ class EnrolledCourse(models.Model):
             self.save()
             
             print(f"Successfully marked lesson '{lesson.title}' as complete for {self.student_profile.user.get_full_name()}")
-            print(f"Recalculated: current_lesson={self.current_lesson.title if self.current_lesson else None}, completed_count={self.completed_lessons_count}")
             return True, f"Lesson '{lesson.title}' marked as complete"
             
         except Exception as e:
@@ -616,6 +630,51 @@ class EnrolledCourse(models.Model):
             import traceback
             traceback.print_exc()
             return False, f"Error completing lesson: {str(e)}"
+
+    def advance_to_next_lesson(self, lesson):
+        """Advance from a completed current lesson to the next lesson."""
+        try:
+            if lesson.course != self.course:
+                return False, f"Lesson {lesson.id} does not belong to course {self.course.id}"
+
+            if not self.current_lesson_id or lesson.id != self.current_lesson_id:
+                return False, "You can only advance from your current lesson."
+
+            lesson_progress = StudentLessonProgress.objects.filter(
+                enrollment=self, lesson=lesson
+            ).first()
+            if not lesson_progress or not lesson_progress.is_completed:
+                return False, "Complete this lesson before moving to the next one."
+
+            next_lesson = self.course.lessons.filter(order__gt=lesson.order).order_by('order').first()
+            self.total_lessons_count = self.course.lessons.count()
+            self.completed_lessons_count = StudentLessonProgress.objects.filter(
+                enrollment=self, status='completed'
+            ).count()
+            self.progress_percentage = (
+                min((self.completed_lessons_count / self.total_lessons_count) * 100, 100.0)
+                if self.total_lessons_count > 0
+                else 0.0
+            )
+
+            if next_lesson:
+                self.current_lesson = next_lesson
+                self.status = 'active'
+                self.completion_date = None
+            else:
+                self.current_lesson = None
+                self.status = 'completed'
+                self.completion_date = timezone.now().date()
+                self.progress_percentage = 100.0
+
+            self.last_accessed = timezone.now()
+            self.save()
+            return True, "Advanced to next lesson"
+        except Exception as e:
+            print(f"Error advancing lesson: {e}")
+            import traceback
+            traceback.print_exc()
+            return False, f"Error advancing lesson: {str(e)}"
     
     def _recalculate_from_progress_records(self):
         """
@@ -1440,7 +1499,7 @@ class StudentLessonProgress(models.Model):
     @property
     def requires_quiz(self):
         """Check if lesson requires quiz completion"""
-        return hasattr(self.lesson, 'quiz') and self.lesson.quiz is not None
+        return self.lesson.quizzes.exists()
     
     @property
     def can_complete_without_quiz(self):

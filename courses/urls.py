@@ -92,6 +92,7 @@ urlpatterns = [
     path('student/assessments/<uuid:assessment_id>/save/', views.student_save_assessment_progress, name='student_save_assessment_progress'),
     path('student/assessments/<uuid:assessment_id>/submissions/<uuid:submission_id>/', views.student_assessment_submission_detail, name='student_assessment_submission_detail'),
     path('student/lessons/<uuid:lesson_id>/cbv/', views.StudentLessonDetailView.as_view(), name='student_lesson_detail_cbv'),
+    path('student/lessons/<uuid:lesson_id>/next/', views.StudentLessonNextView.as_view(), name='student_lesson_next'),
     path('materials/<uuid:material_id>/content/', views.MaterialContentView.as_view(), name='material_content'),
 
     path('student/lessons/<uuid:lesson_id>/quiz/submit/', views.submit_quiz_attempt, name='submit_quiz_attempt'),

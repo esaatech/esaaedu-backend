@@ -5036,6 +5036,7 @@ class StudentLessonDetailView(APIView):
                     'completed_lessons_count': enrollment.completed_lessons_count,
                     'progress_percentage': float(enrollment.progress_percentage),
                     'course_completed': enrollment.status == 'completed',
+                    'ready_for_next': True,
                 }, status=status.HTTP_200_OK)
             else:
                 print(f"❌ Failed to mark lesson as complete: {message}")
@@ -5050,6 +5051,65 @@ class StudentLessonDetailView(APIView):
             print(f"❌ Traceback: {traceback.format_exc()}")
             return Response(
                 {'error': f'Failed to mark lesson complete: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class StudentLessonNextView(APIView):
+    """
+    Advance to the next lesson after current lesson is completed.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, lesson_id):
+        try:
+            if not request.user.is_authenticated:
+                return Response(
+                    {'error': 'Authentication required'},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+
+            lesson = get_object_or_404(Lesson, id=lesson_id)
+
+            try:
+                student_profile = request.user.student_profile
+            except Exception:
+                return Response(
+                    {'error': 'Student profile not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            enrollment = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                course=lesson.course,
+                status__in=['active', 'completed']
+            ).first()
+
+            if not enrollment:
+                return Response(
+                    {'error': 'You are not enrolled in this course'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            success, message = enrollment.advance_to_next_lesson(lesson)
+            if not success:
+                return Response({'error': message}, status=status.HTTP_400_BAD_REQUEST)
+
+            enrollment.refresh_from_db()
+            return Response({
+                'message': message,
+                'current_lesson': {
+                    'id': str(enrollment.current_lesson.id) if enrollment.current_lesson else None,
+                    'title': enrollment.current_lesson.title if enrollment.current_lesson else None,
+                    'order': enrollment.current_lesson.order if enrollment.current_lesson else None,
+                } if enrollment.current_lesson else None,
+                'completed_lessons_count': enrollment.completed_lessons_count,
+                'progress_percentage': float(enrollment.progress_percentage),
+                'course_completed': enrollment.status == 'completed',
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to move to next lesson: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
