@@ -394,6 +394,9 @@ def student_assessments_overview(request, student_id):
     GET: Get all assessments for a specific student across all courses
     """
     try:
+        print(f"🔍 ...............student_assessments_overview called with student_id: {student_id}..................")
+        print(f"🔍 ...............User role: {request.user.role}..................")
+        
         if request.user.role == 'student':
             if request.user.student_profile.id != student_id:
                 return Response(
@@ -410,7 +413,9 @@ def student_assessments_overview(request, student_id):
             )
         else:
             enrollments = EnrolledCourse.objects.filter(student_profile__user_id=student_id)
-
+        
+        print(f"🔍 ...............Found {enrollments.count()} enrollments..................")
+        
         if not enrollments.exists():
             return Response(
                 {'error': 'No enrollments found for this student'},
@@ -425,7 +430,10 @@ def student_assessments_overview(request, student_id):
         teacher_assessments = TeacherAssessment.objects.filter(
             enrollment__in=enrollments
         ).select_related('enrollment', 'teacher').order_by('-created_at')
-
+        
+        print(f"🔍 ...............Found {lesson_assessments.count()} lesson assessments..................")
+        print(f"🔍 ...............Found {teacher_assessments.count()} teacher assessments..................")
+        
         data = {
             'lesson_assessments': [],
             'teacher_assessments': [],
@@ -1579,7 +1587,7 @@ class DashboardOverview(APIView):
             settings = UserDashboardSettings.get_or_create_settings(user)
             return settings.get_dashboard_config()
         except Exception as e:
-            logger.warning("Error getting user dashboard settings: %s", e)
+            print(f"🔍 DEBUG: Error getting user settings: {str(e)}")
             # Return default settings if there's an error
             return {
                 'live_lessons_limit': 3,
@@ -1665,7 +1673,9 @@ class DashboardOverview(APIView):
                 'student_profile': student_profile
             }
         except Exception as e:
-            logger.exception("Error in _get_dashboard_data")
+            print(f"🔍 DEBUG: Error in _get_dashboard_data: {str(e)}")
+            import traceback
+            traceback.print_exc()
             raise e
     
     def _get_statistics_from_data(self, dashboard_data):
@@ -1674,22 +1684,29 @@ class DashboardOverview(APIView):
         student_profile = dashboard_data['student_profile']
         
         courses_enrolled = enrollments.count()
-
-        lessons_completed = EnrolledCourse.get_total_lessons_completed_for_student(
-            student_profile
-        )
-
-        if hasattr(EnrolledCourse, "get_average_quiz_score_for_student"):
+        
+        # Use the new class methods to calculate real statistics
+        print(f"🔍 DEBUG: Getting lessons completed for student: {student_profile}")
+        lessons_completed = EnrolledCourse.get_total_lessons_completed_for_student(student_profile)
+        print(f"🔍 DEBUG: Lessons completed: {lessons_completed}")
+        
+        print(f"🔍 DEBUG: Getting average quiz score for student: {student_profile}")
+        print(f"🔍 DEBUG: Student profile type: {type(student_profile)}")
+        print(f"🔍 DEBUG: Student profile: {student_profile}")
+        
+        # Check if the method exists
+        if hasattr(EnrolledCourse, 'get_average_quiz_score_for_student'):
+            print(f"🔍 DEBUG: Method exists, calling it...")
             try:
-                average_quiz_score = (
-                    EnrolledCourse.get_average_quiz_score_for_student(student_profile)
-                )
+                average_quiz_score = EnrolledCourse.get_average_quiz_score_for_student(student_profile)
+                print(f"🔍 DEBUG: Average quiz score calculated: {average_quiz_score}")
             except Exception as e:
-                logger.warning(
-                    "Error calculating average quiz score for student: %s", e
-                )
+                print(f"🔍 DEBUG: Error calculating average quiz score: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 average_quiz_score = 0.0
         else:
+            print(f"🔍 DEBUG: Method does not exist!")
             average_quiz_score = 0.0
         
         return {
@@ -1704,10 +1721,26 @@ class DashboardOverview(APIView):
         enrollments = dashboard_data['enrollments']
         class_events = dashboard_data['class_events']
         current_time = dashboard_data['current_time']
-
+        
+        print(f"🔍 DEBUG: Getting continue learning lessons from ClassEvent model only")
+        print(f"🔍 DEBUG: Found {enrollments.count()} active enrollments")
+        print(f"🔍 DEBUG: Found {class_events.count()} total class events")
+        print(f"🔍 DEBUG: Current time: {current_time}")
+        
         continue_learning_lessons = []
-
+        
         for enrollment in enrollments:
+            print(f"🔍 DEBUG: Processing course: {enrollment.course.title} (ID: {enrollment.course.id})")
+            
+            # First, let's see ALL class events for this course
+            all_course_events = class_events.filter(
+                class_instance__course=enrollment.course
+            )
+            print(f"🔍 DEBUG: Total class events for course {enrollment.course.title}: {all_course_events.count()}")
+            
+            for event in all_course_events:
+                print(f"🔍 DEBUG: - Event: {event.title}, Event Type: {event.event_type}, Lesson Type: {event.lesson_type}, Start: {event.start_time}")
+            
             # Filter continue learning lessons by date only (not time)
             # Since these are not live classes, students can access them anytime during the day
             # Use date-only comparison to avoid timezone issues
@@ -1729,6 +1762,7 @@ class DashboardOverview(APIView):
                 time_filter = {
                     'start_time__date': today_date
                 }
+                print(f"🔍 DEBUG: Continue learning - Filtering for TODAY ONLY (date={today_date}, current_time={current_time}, time-independent)")
             else:
                 # Show all lessons from today onwards (date comparison only)
                 # CRITICAL: Exclude past dates - only show today and future dates
@@ -1737,14 +1771,19 @@ class DashboardOverview(APIView):
                 time_filter = {
                     'start_time__date__gte': today_date
                 }
-
+                print(f"🔍 DEBUG: Continue learning - Filtering for ALL UPCOMING lessons (date>={today_date}, current_time={current_time}, excludes past dates)")
+            
             # Get ALL non-live lessons from ClassEvents (scheduled lessons)
             course_events = class_events.filter(
                 **base_filter,
                 **time_filter
             ).order_by('start_time')[:10]
-
+            
+            print(f"🔍 DEBUG: Found {course_events.count()} non-live class events for course {enrollment.course.title}")
+            
             for event in course_events:
+                print(f"🔍 DEBUG: Processing class event: {event.title} (Type: {event.lesson_type}, Start: {event.start_time})")
+                
                 # Get actual course lesson count (more reliable than enrollment.total_lessons_count)
                 actual_course_lessons = enrollment.course.lessons.count()
                 
@@ -1764,7 +1803,10 @@ class DashboardOverview(APIView):
                     'total_lessons': actual_course_lessons,  # Use actual course lesson count
                     'completed_lessons_count': enrollment.completed_lessons_count
                 }
-
+                
+                print(f"🔍 DEBUG: Continue Learning Lesson Data: {lesson_data}")
+                print(f"🔍 DEBUG: Enrollment data - total_lessons_count: {enrollment.total_lessons_count}, completed_lessons_count: {enrollment.completed_lessons_count}, progress_percentage: {enrollment.progress_percentage}")
+                
                 # Add interactive_type for interactive lessons
                 if event.lesson_type == 'interactive':
                     lesson_data['interactive_type'] = getattr(event, 'interactive_type', 'general')
@@ -1777,25 +1819,37 @@ class DashboardOverview(APIView):
                 elif event.lesson_type == 'interactive':
                     serializer = InteractiveLessonSerializer(data=lesson_data)
                 else:
+                    print(f"🔍 DEBUG: Unknown lesson type: {event.lesson_type}")
                     continue
-
+                
                 if serializer.is_valid():
+                    print(f"🔍 DEBUG: {event.lesson_type} lesson added: {event.title}")
                     continue_learning_lessons.append(serializer.data)
-
+                else:
+                    print(f"🔍 DEBUG: {event.lesson_type} lesson serializer invalid: {serializer.errors}")
+        
         # Sort all lessons by start_time (earliest first)
         continue_learning_lessons.sort(key=lambda x: x.get('start_time', current_time))
-
-        return continue_learning_lessons[:user_settings['continue_learning_limit']]
+        
+        print(f"🔍 DEBUG: Final continue learning lessons count: {len(continue_learning_lessons)}")
+        print(f"🔍 DEBUG: Lessons sorted by start_time, returning top {min(user_settings['continue_learning_limit'], len(continue_learning_lessons))} lessons")
+        
+        return continue_learning_lessons[:user_settings['continue_learning_limit']]  # Return user's configured limit
     
     def _get_live_lessons_from_data(self, dashboard_data, user_settings):
         """Get live lessons from cached dashboard data - sorted by time"""
         enrollments = dashboard_data['enrollments']
         class_events = dashboard_data['class_events']
         current_time = dashboard_data['current_time']
-
+        
+        print(f"🔍 DEBUG: Getting live lessons from ClassEvent model")
+        print(f"🔍 DEBUG: Current time: {current_time}")
+        
         live_lessons = []
-
+        
         for enrollment in enrollments:
+            print(f"🔍 DEBUG: Processing course for live lessons: {enrollment.course.title}")
+            
             # Filter to only show upcoming/ongoing events (not past events)
             # Use end_time__gt to include events that haven't ended yet
             # This matches the parent dashboard filtering approach (line 3286)
@@ -1817,14 +1871,20 @@ class DashboardOverview(APIView):
                 today_end = current_time.replace(hour=23, minute=59, second=59, microsecond=999999)
                 time_filter['start_time__gte'] = today_start
                 time_filter['start_time__lte'] = today_end
-
+                print(f"🔍 DEBUG: Live lessons - Filtering for TODAY ONLY (end_time > now): {today_start} to {today_end}")
+            else:
+                print(f"🔍 DEBUG: Live lessons - Filtering for ALL UPCOMING events (end_time > now)")
+            
             # Filter class events for this course
             course_events = class_events.filter(
                 **base_filter,
                 **time_filter
             ).order_by('start_time')[:5]  # Get more events per course for better selection
-
+            
+            print(f"🔍 DEBUG: Found {course_events.count()} live events for course {enrollment.course.title}")
+            
             for event in course_events:
+                print(f"🔍 DEBUG: Processing live event: {event.title} (Start: {event.start_time})")
                 lesson_data = {
                     'id': event.id,
                     'title': event.title,
@@ -1841,22 +1901,33 @@ class DashboardOverview(APIView):
                 
                 serializer = LiveLessonSerializer(data=lesson_data)
                 if serializer.is_valid():
+                    print(f"🔍 DEBUG: Live lesson added: {event.title}")
                     live_lessons.append(serializer.data)
-
+                else:
+                    print(f"🔍 DEBUG: Live lesson serializer invalid: {serializer.errors}")
+        
         # Sort all live lessons by start_time (earliest first)
         live_lessons.sort(key=lambda x: x['start_time'])
-
-        return live_lessons[:user_settings['live_lessons_limit']]
+        
+        print(f"🔍 DEBUG: Final live lessons count: {len(live_lessons)}")
+        print(f"🔍 DEBUG: Live lessons sorted by start_time, returning top {min(user_settings['live_lessons_limit'], len(live_lessons))} lessons")
+        
+        return live_lessons[:user_settings['live_lessons_limit']]  # Return user's configured limit
     
     def _get_upcoming_projects_from_data(self, dashboard_data, user_settings):
         """Get upcoming projects from cached dashboard data - sorted by due date"""
         enrollments = dashboard_data['enrollments']
         class_events = dashboard_data['class_events']
         current_time = dashboard_data['current_time']
-
+        
+        print(f"🔍 DEBUG: Getting upcoming projects from ClassEvent model")
+        print(f"🔍 DEBUG: Current time: {current_time}")
+        
         upcoming_projects = []
-
+        
         for enrollment in enrollments:
+            print(f"🔍 DEBUG: Processing course for projects: {enrollment.course.title}")
+            
             # Filter to only show upcoming/not overdue projects
             # Use due_date__gt to include projects that haven't passed their due date
             base_filter = {
@@ -1877,14 +1948,21 @@ class DashboardOverview(APIView):
                 today_end = current_time.replace(hour=23, minute=59, second=59, microsecond=999999)
                 time_filter['due_date__gte'] = today_start
                 time_filter['due_date__lte'] = today_end
-
+                print(f"🔍 DEBUG: Projects - Filtering for TODAY ONLY (due_date > now): {today_start} to {today_end}")
+            else:
+                print(f"🔍 DEBUG: Projects - Filtering for ALL UPCOMING projects (due_date > now)")
+            
             # Filter class events for this course
             course_events = class_events.filter(
                 **base_filter,
                 **time_filter
             ).order_by('due_date')[:5]  # Get more events per course for better selection
-
+            
+            print(f"🔍 DEBUG: Found {course_events.count()} project events for course {enrollment.course.title}")
+            
             for event in course_events:
+                print(f"🔍 DEBUG: Processing project event: {event.title} (Due: {event.due_date})")
+                
                 # Get project title - prefer event title, fallback to project title
                 project_title = event.title
                 if not project_title and event.project:
@@ -1927,14 +2005,18 @@ class DashboardOverview(APIView):
                     }
                 
                 upcoming_projects.append(project_data)
-
+                print(f"🔍 DEBUG: Project added: {project_title}")
+        
         # Sort all projects by due_date (earliest first)
         upcoming_projects.sort(key=lambda x: x['due_date'])
-
+        
         # Get limit from settings (default to 5 if not set)
         projects_limit = user_settings.get('upcoming_projects_limit', 5)
-
-        return upcoming_projects[:projects_limit]
+        
+        print(f"🔍 DEBUG: Final upcoming projects count: {len(upcoming_projects)}")
+        print(f"🔍 DEBUG: Projects sorted by due_date, returning top {min(projects_limit, len(upcoming_projects))} projects")
+        
+        return upcoming_projects[:projects_limit]  # Return user's configured limit
     
     def _get_recent_achievements_from_data(self, dashboard_data):
         """Get recent achievements from cached dashboard data"""
@@ -1999,23 +2081,44 @@ class DashboardOverview(APIView):
         Get audio and video lessons from enrolled courses
         """
         try:
+            print(f"🔍 DEBUG: Getting audio/video lessons for student: {student_profile}")
+            
             enrollments = EnrolledCourse.objects.filter(
                 student_profile=student_profile,
                 status='active'
             ).select_related('course')
-
+            
+            print(f"🔍 DEBUG: Found {enrollments.count()} active enrollments")
+            for enrollment in enrollments:
+                print(f"🔍 DEBUG: - Course: {enrollment.course.title} (ID: {enrollment.course.id})")
+            
             audio_video_lessons = []
             current_time = timezone.now()
             for enrollment in enrollments:
-                # Get ClassEvent objects with only video or audio lesson types
+                print(f"🔍 DEBUG: Checking course: {enrollment.course.title}")
+                
+                # Get ClassEvent objects with only video or audio lesson types (exclude live lessons and past events)
                 class_events = ClassEvent.objects.filter(
                     class_instance__course=enrollment.course,
                     event_type='lesson',
                     lesson_type__in=['video', 'audio'],  # Only actual audio/video lessons
                     start_time__gte=current_time  # Only future or current events
                 ).select_related('class_instance', 'lesson').order_by('start_time')[:5]  # Limit to 5 per course
-
+                
+                print(f"🔍 DEBUG: Found {class_events.count()} audio/video class events for course {enrollment.course.title}")
+                
+                # Let's also check all class events for this course
+                all_events = ClassEvent.objects.filter(
+                    class_instance__course=enrollment.course
+                )
+                print(f"🔍 DEBUG: Total class events for course {enrollment.course.title}: {all_events.count()}")
+                
+                for event in all_events:
+                    print(f"🔍 DEBUG: - Event: {event.title}, Event Type: {event.event_type}, Lesson Type: {event.lesson_type}")
+                    print(f"🔍 DEBUG:   Event ID: {event.id}, Start Time: {event.start_time}")
+                
                 for event in class_events:
+                    print(f"🔍 DEBUG: Processing audio/video class event: {event.title}")
                     lesson_data = {
                         'id': event.id,  # UUID field
                         'title': event.title,
@@ -2026,16 +2129,25 @@ class DashboardOverview(APIView):
                         'media_url': f"/lessons/{event.id}",  # Route to class event ID for in-app playback
                         'description': event.description[:100] + '...' if event.description and len(event.description) > 100 else event.description
                     }
-
+                    
+                    print(f"🔍 DEBUG: Lesson data: {lesson_data}")
+                    
                     # Validate with AudioVideoLessonSerializer
                     serializer = AudioVideoLessonSerializer(data=lesson_data)
                     if serializer.is_valid():
+                        print(f"🔍 DEBUG: Serializer valid, adding lesson")
                         audio_video_lessons.append(serializer.data)
-
+                    else:
+                        print(f"🔍 DEBUG: Serializer invalid: {serializer.errors}")
+                        continue
+            
+            print(f"🔍 DEBUG: Final audio_video_lessons count: {len(audio_video_lessons)}")
             return audio_video_lessons[:10]  # Return top 10
-
-        except Exception:
-            logger.exception("_get_audio_video_lessons failed")
+            
+        except Exception as e:
+            print(f"🔍 DEBUG: Exception in _get_audio_video_lessons: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def _get_live_lessons(self, student_profile):
@@ -6189,22 +6301,9 @@ class StudentFileDeleteView(APIView):
 
 def _ide_explain_rate_limit_ok(user_id: int, limit: int = 40, window_seconds: int = 900) -> bool:
     """Shared fixed-window counter for all IDE explain endpoints (40 / 15 min per user)."""
-    from django.core.cache import cache
+    from backend.rate_limit_middleware import fixed_window_allow
 
-    key = f"ide_explain_rl:{user_id}"
-    if cache.add(key, 1, timeout=window_seconds):
-        return True
-    try:
-        n = cache.get(key, 0)
-    except Exception:
-        n = 0
-    if n >= limit:
-        return False
-    try:
-        cache.incr(key)
-    except ValueError:
-        cache.set(key, 1, timeout=window_seconds)
-    return True
+    return fixed_window_allow(f"ide_explain_rl:{user_id}", limit, window_seconds)
 
 
 class StudentIdeExplainErrorView(APIView):
