@@ -2887,10 +2887,16 @@ class CourseAssessmentReturnSubmissionView(APIView):
             submission.graded_questions = []
             submission.submitted_at = None
             submission.return_feedback = return_feedback
+            # Reset timing baseline so returned attempts do not immediately expire on reopen.
+            submission.started_at = timezone.now()
+            submission.time_limit_minutes = assessment.time_limit_minutes
+            submission.time_remaining_seconds = (
+                assessment.time_limit_minutes * 60 if assessment.time_limit_minutes else None
+            )
             submission.save(update_fields=[
                 'status', 'is_graded', 'is_teacher_draft', 'points_earned', 'points_possible',
                 'percentage', 'passed', 'graded_at', 'graded_by', 'instructor_feedback', 'graded_questions',
-                'submitted_at', 'return_feedback',
+                'submitted_at', 'return_feedback', 'started_at', 'time_limit_minutes', 'time_remaining_seconds',
             ])
 
             response_serializer = CourseAssessmentSubmissionResponseSerializer(submission)

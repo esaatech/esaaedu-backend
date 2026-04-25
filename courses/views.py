@@ -36,6 +36,12 @@ from .serializers import (
     CourseAssessmentQuestionSerializer, CourseAssessmentQuestionCreateSerializer,
     CourseAssessmentQuestionReorderSerializer,
 )
+from .assessment_timing import (
+    build_timing_payload,
+    compute_remaining_seconds,
+    expire_submission_if_needed,
+    is_submission_expired,
+)
 
 
 def delete_course_with_cleanup(course, skip_enrollment_check=False):
@@ -4242,6 +4248,16 @@ def student_assessment_detail(request, assessment_id):
         from .serializers import CourseAssessmentDetailSerializer, CourseAssessmentSubmissionResponseSerializer
         assessment_serializer = CourseAssessmentDetailSerializer(assessment)
         
+        # Expire stale in-progress submissions before serializing response.
+        for sub in submissions:
+            expire_submission_if_needed(sub)
+
+        # Re-fetch after potential status transitions above
+        submissions = CourseAssessmentSubmission.objects.filter(
+            student=request.user,
+            assessment=assessment
+        ).order_by('-attempt_number')
+
         # Serialize submissions
         submissions_data = []
         for submission in submissions:
@@ -4332,12 +4348,16 @@ def student_start_assessment(request, assessment_id):
         ).first()
         
         if in_progress_submission:
-            # Return existing in-progress submission
+            # If expired, finalize attempt before returning.
+            expire_submission_if_needed(in_progress_submission)
+            in_progress_submission.refresh_from_db()
+
             from .serializers import CourseAssessmentSubmissionResponseSerializer
             serializer = CourseAssessmentSubmissionResponseSerializer(in_progress_submission)
             return Response({
                 'submission': serializer.data,
-                'message': 'Resuming existing attempt'
+                'timing': build_timing_payload(in_progress_submission),
+                'message': 'Resuming existing attempt' if in_progress_submission.status == 'in_progress' else 'Previous in-progress attempt expired and was auto-submitted'
             }, status=status.HTTP_200_OK)
         
         # Create new submission
@@ -4357,6 +4377,7 @@ def student_start_assessment(request, assessment_id):
         
         return Response({
             'submission': serializer.data,
+            'timing': build_timing_payload(submission),
             'message': 'Assessment started successfully'
         }, status=status.HTTP_201_CREATED)
         
@@ -4425,10 +4446,25 @@ def student_submit_assessment(request, assessment_id):
                 {'error': 'No active assessment attempt found. Please start the assessment first.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        # Enforce server-side deadline before accepting write operations.
+        if is_submission_expired(submission):
+            expire_submission_if_needed(submission)
+            submission.refresh_from_db()
+            from .serializers import CourseAssessmentSubmissionResponseSerializer
+            expired_serializer = CourseAssessmentSubmissionResponseSerializer(submission)
+            return Response(
+                {
+                    'error': 'Assessment time has elapsed. The attempt was auto-submitted.',
+                    'submission': expired_serializer.data,
+                    'timing': build_timing_payload(submission),
+                },
+                status=status.HTTP_409_CONFLICT
+            )
         
         # Update submission
         submission.answers = validated_data.get('answers', submission.answers)
-        submission.time_remaining_seconds = validated_data.get('time_remaining_seconds', submission.time_remaining_seconds)
+        submission.time_remaining_seconds = compute_remaining_seconds(submission)
         submission.status = 'auto_submitted' if is_auto_submit else 'submitted'
         submission.submitted_at = timezone.now()
         submission.return_feedback = None  # clear teacher return notes after student resubmits
@@ -4439,6 +4475,7 @@ def student_submit_assessment(request, assessment_id):
         response_serializer = CourseAssessmentSubmissionResponseSerializer(submission)
         response_data = {
             'submission': response_serializer.data,
+            'timing': build_timing_payload(submission),
             'message': 'Assessment auto-submitted successfully' if is_auto_submit else 'Assessment submitted successfully'
         }
         
@@ -4487,6 +4524,21 @@ def student_save_assessment_progress(request, assessment_id):
                 {'error': 'No active assessment attempt found'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        # Enforce server-side deadline before accepting save updates.
+        if is_submission_expired(submission):
+            expire_submission_if_needed(submission)
+            submission.refresh_from_db()
+            from .serializers import CourseAssessmentSubmissionResponseSerializer
+            expired_serializer = CourseAssessmentSubmissionResponseSerializer(submission)
+            return Response(
+                {
+                    'error': 'Assessment time has elapsed. The attempt was auto-submitted.',
+                    'submission': expired_serializer.data,
+                    'timing': build_timing_payload(submission),
+                },
+                status=status.HTTP_409_CONFLICT
+            )
         
         # Merge answers (like assignment submission)
         existing_answers = submission.answers or {}
@@ -4494,7 +4546,7 @@ def student_save_assessment_progress(request, assessment_id):
         merged_answers = {**existing_answers, **new_answers}
         
         submission.answers = merged_answers
-        submission.time_remaining_seconds = validated_data.get('time_remaining_seconds', submission.time_remaining_seconds)
+        submission.time_remaining_seconds = compute_remaining_seconds(submission)
         submission.save()
         
         from .serializers import CourseAssessmentSubmissionResponseSerializer
@@ -4502,6 +4554,7 @@ def student_save_assessment_progress(request, assessment_id):
         
         return Response({
             'submission': response_serializer.data,
+            'timing': build_timing_payload(submission),
             'message': 'Progress saved successfully'
         }, status=status.HTTP_200_OK)
         
@@ -4538,6 +4591,10 @@ def student_assessment_submission_detail(request, assessment_id, submission_id):
             student=request.user,
             assessment_id=assessment_id
         )
+
+        # Keep stale timed attempts consistent when accessed directly.
+        expire_submission_if_needed(submission)
+        submission.refresh_from_db()
         
         # Get assessment with questions
         assessment = submission.assessment
@@ -4581,6 +4638,7 @@ def student_assessment_submission_detail(request, assessment_id, submission_id):
         
         return Response({
             'submission': submission_serializer.data,
+            'timing': build_timing_payload(submission),
             'assessment': {
                 'id': str(assessment.id),
                 'title': assessment.title,

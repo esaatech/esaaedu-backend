@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
 from .models import Course, Lesson, LessonMaterial, Module, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, ProjectSubmission, BookPage, VideoMaterial, DocumentMaterial, AudioVideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
+from .assessment_timing import build_timing_payload
 
 User = get_user_model()
 
@@ -3066,16 +3067,35 @@ class CourseAssessmentSubmissionSerializer(serializers.Serializer):
 
 class CourseAssessmentSubmissionResponseSerializer(serializers.ModelSerializer):
     """Serializer for course assessment submission responses"""
+    server_now = serializers.SerializerMethodField()
+    ends_at = serializers.SerializerMethodField()
+    is_expired = serializers.SerializerMethodField()
+    time_remaining_seconds = serializers.SerializerMethodField()
     
     class Meta:
         model = CourseAssessmentSubmission
         fields = [
             'id', 'attempt_number', 'status', 'started_at', 'submitted_at',
-            'time_limit_minutes', 'time_remaining_seconds',
+            'time_limit_minutes', 'time_remaining_seconds', 'server_now', 'ends_at', 'is_expired',
             'answers', 'is_graded', 'is_teacher_draft', 'points_earned', 'points_possible', 
             'percentage', 'passed', 'instructor_feedback', 'graded_questions', 'return_feedback',
         ]
         read_only_fields = fields
+
+    def _timing_payload(self, obj):
+        return build_timing_payload(obj)
+
+    def get_server_now(self, obj):
+        return self._timing_payload(obj)['server_now']
+
+    def get_ends_at(self, obj):
+        return self._timing_payload(obj)['ends_at']
+
+    def get_is_expired(self, obj):
+        return self._timing_payload(obj)['is_expired']
+
+    def get_time_remaining_seconds(self, obj):
+        return self._timing_payload(obj)['time_remaining_seconds']
 
 
 class CourseAssessmentGradingSerializer(serializers.ModelSerializer):
