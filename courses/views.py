@@ -3260,11 +3260,10 @@ def student_enrolled_courses(request):
             }, status=status.HTTP_200_OK)
         
       
-        # Get enrolled courses
+        # In-progress enrollments only (completed are listed via dashboard completed_courses / other flows)
         enrolled_courses = EnrolledCourse.objects.filter(
             student_profile=student_profile,
-            status__in=['active', 'completed']
-        ).select_related('course', 'current_lesson').order_by('-enrollment_date')
+        ).exclude(status='completed').select_related('course', 'current_lesson').order_by('-enrollment_date')
         
      
         
@@ -5841,17 +5840,19 @@ class StudentCourseDashboardView(APIView):
     
     def get_enrolled_courses_data(self, student_profile):
         """
-        Get enrolled courses data with comprehensive information
+        Get enrolled courses data with comprehensive information.
+        Excludes completed enrollments; those are returned only from get_completed_courses_data.
         """
         try:
             if not student_profile:
                 return {'courses': [], 'total': 0}
             
-            # Get enrolled courses (exclude archived courses)
+            # In-progress enrollments only (exclude archived courses; exclude completed)
             enrolled_courses = EnrolledCourse.objects.filter(
                 student_profile=student_profile,
-                status__in=['active', 'completed'],
-                course__status__in=['draft', 'published']  # Exclude archived courses
+                course__status__in=['draft', 'published'],  # Exclude archived courses
+            ).exclude(
+                status='completed',
             ).select_related('course', 'current_lesson').order_by('-enrollment_date')
             
             courses_data = []
