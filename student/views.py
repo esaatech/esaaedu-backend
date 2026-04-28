@@ -5295,6 +5295,7 @@ class CodeSnippetDetailView(APIView):
                 # Check if this is a CSS file update - if so, upload to GCP
                 language = serializer.validated_data.get('language', snippet.language).lower()
                 css_file_url = None
+                text_file_url = None
                 
                 # Determine if we need to update CSS in GCP
                 needs_css_upload = False
@@ -5336,6 +5337,54 @@ class CodeSnippetDetailView(APIView):
                         logger = logging.getLogger(__name__)
                         logger.warning(f"Failed to upload/update CSS to GCP for snippet update, but saving to database anyway")
                 
+                # Plain text (.txt) — mirror CSS GCP upload
+                needs_text_upload = False
+                if language == 'text':
+                    needs_text_upload = True
+                
+                if needs_text_upload:
+                    import logging
+                    from .text_upload_utils import (
+                        upload_text_to_gcp,
+                        update_text_in_gcp,
+                        delete_text_from_gcp,
+                    )
+                    logger = logging.getLogger(__name__)
+
+                    text_content = serializer.validated_data.get('code', snippet.code)
+                    title = serializer.validated_data.get('title', snippet.title) or ''
+                    old_text_url = snippet.text_file_url
+                    text_file_url = None
+
+                    if old_text_url:
+                        text_file_url, saved_path = update_text_in_gcp(old_text_url, text_content)
+                        if not text_file_url:
+                            logger.warning(
+                                'Failed to update text in GCP, re-uploading with snippet id'
+                            )
+                            text_file_url, saved_path = upload_text_to_gcp(
+                                text_content,
+                                title=title,
+                                snippet_id=snippet.id,
+                            )
+                            if old_text_url and text_file_url and old_text_url != text_file_url:
+                                delete_text_from_gcp(old_text_url)
+                    else:
+                        text_file_url, saved_path = upload_text_to_gcp(
+                            text_content,
+                            title=title,
+                            snippet_id=snippet.id,
+                        )
+
+                    if not text_file_url:
+                        return Response(
+                            {
+                                'error': 'Failed to sync text snippet to cloud storage',
+                                'details': 'Text snippet was not updated because GCP upload failed.',
+                            },
+                            status=status.HTTP_502_BAD_GATEWAY,
+                        )
+                
                 # Save the snippet
                 serializer.save()
                 
@@ -5351,6 +5400,16 @@ class CodeSnippetDetailView(APIView):
                     delete_css_from_gcp(snippet.css_file_url)
                     snippet.css_file_url = None
                     snippet.save(update_fields=['css_file_url'])
+                
+                if needs_text_upload and text_file_url:
+                    if snippet.text_file_url != text_file_url or not snippet.text_file_url:
+                        snippet.text_file_url = text_file_url
+                        snippet.save(update_fields=['text_file_url'])
+                elif language != 'text' and snippet.text_file_url:
+                    from .text_upload_utils import delete_text_from_gcp
+                    delete_text_from_gcp(snippet.text_file_url)
+                    snippet.text_file_url = None
+                    snippet.save(update_fields=['text_file_url'])
                 
                 # Return full detail
                 detail_serializer = CodeSnippetDetailSerializer(snippet, context={'request': request})
@@ -5392,6 +5451,7 @@ class CodeSnippetDetailView(APIView):
                 # Check if this is a CSS file update - if so, upload to GCP
                 language = serializer.validated_data.get('language', snippet.language).lower()
                 css_file_url = None
+                text_file_url = None
                 print(f"[VIEWS PATCH] Language: {language}, snippet.language: {snippet.language}")
                 print(f"[VIEWS PATCH] serializer.validated_data keys: {list(serializer.validated_data.keys())}")
                 
@@ -5450,6 +5510,59 @@ class CodeSnippetDetailView(APIView):
                         logger = logging.getLogger(__name__)
                         logger.warning(f"Failed to upload/update CSS to GCP for snippet update, but saving to database anyway")
                 
+                # Plain text — mirror CSS PATCH logic
+                needs_text_upload = False
+                if language == 'text':
+                    if 'code' in serializer.validated_data or 'language' in serializer.validated_data:
+                        needs_text_upload = True
+                        print(f"[VIEWS PATCH] needs_text_upload set to True (language is text)")
+                
+                if needs_text_upload:
+                    import logging
+                    from .text_upload_utils import (
+                        upload_text_to_gcp,
+                        update_text_in_gcp,
+                        delete_text_from_gcp,
+                    )
+                    logger = logging.getLogger(__name__)
+
+                    text_content = serializer.validated_data.get('code', snippet.code)
+                    title = serializer.validated_data.get('title', snippet.title) or ''
+                    old_text_url = snippet.text_file_url
+                    text_file_url = None
+                    print(f"[VIEWS PATCH] text upload, snippet.text_file_url: {snippet.text_file_url}")
+
+                    if old_text_url:
+                        text_file_url, saved_path = update_text_in_gcp(old_text_url, text_content)
+                        print(f"[VIEWS PATCH] update_text_in_gcp returned: {text_file_url}")
+                        if not text_file_url:
+                            print(f"[VIEWS PATCH] text GCP update failed, re-uploading with snippet id")
+                            text_file_url, saved_path = upload_text_to_gcp(
+                                text_content,
+                                title=title,
+                                snippet_id=snippet.id,
+                            )
+                            print(f"[VIEWS PATCH] upload_text_to_gcp returned: {text_file_url}")
+                            if old_text_url and text_file_url and old_text_url != text_file_url:
+                                delete_text_from_gcp(old_text_url)
+                    else:
+                        print(f"[VIEWS PATCH] No text_file_url, creating new file with snippet id")
+                        text_file_url, saved_path = upload_text_to_gcp(
+                            text_content,
+                            title=title,
+                            snippet_id=snippet.id,
+                        )
+                        print(f"[VIEWS PATCH] upload_text_to_gcp returned: {text_file_url}")
+
+                    if not text_file_url:
+                        return Response(
+                            {
+                                'error': 'Failed to sync text snippet to cloud storage',
+                                'details': 'Text snippet PATCH aborted because GCP upload failed.',
+                            },
+                            status=status.HTTP_502_BAD_GATEWAY,
+                        )
+                
                 # Save the snippet
                 serializer.save()
                 print(f"[VIEWS PATCH] After serializer.save(), snippet.css_file_url: {snippet.css_file_url}")
@@ -5473,6 +5586,18 @@ class CodeSnippetDetailView(APIView):
                     delete_css_from_gcp(snippet.css_file_url)
                     snippet.css_file_url = None
                     snippet.save(update_fields=['css_file_url'])
+                
+                if needs_text_upload and text_file_url:
+                    print(f"[VIEWS PATCH] updating text_file_url in DB")
+                    if snippet.text_file_url != text_file_url or not snippet.text_file_url:
+                        snippet.text_file_url = text_file_url
+                        snippet.save(update_fields=['text_file_url'])
+                elif language != 'text' and snippet.text_file_url:
+                    print(f"[VIEWS PATCH] Language changed away from text, deleting GCP text file")
+                    from .text_upload_utils import delete_text_from_gcp
+                    delete_text_from_gcp(snippet.text_file_url)
+                    snippet.text_file_url = None
+                    snippet.save(update_fields=['text_file_url'])
                 
                 # Refresh snippet from database to get latest values
                 snippet.refresh_from_db()
@@ -5521,6 +5646,16 @@ class CodeSnippetDetailView(APIView):
                 except Exception as e:
                     # Log error but don't block database delete
                     logger.error(f"Error deleting CSS file from GCP: {e}", exc_info=True)
+            
+            if snippet.text_file_url:
+                from .text_upload_utils import delete_text_from_gcp
+                import logging
+                logger = logging.getLogger(__name__)
+                try:
+                    delete_text_from_gcp(snippet.text_file_url)
+                    logger.info(f"Deleted text file from GCP: {snippet.text_file_url}")
+                except Exception as e:
+                    logger.error(f"Error deleting text file from GCP: {e}", exc_info=True)
             
             # Delete from database
             snippet.delete()
@@ -5596,6 +5731,32 @@ class CodeSnippetCreateView(APIView):
                 if language == 'css' and css_file_url:
                     snippet.css_file_url = css_file_url
                     snippet.save(update_fields=['css_file_url'])
+                
+                # Plain text: upload AFTER save so snippet_id is stable (matches DB content; avoids orphan UUID blobs)
+                lang_after_save = (snippet.language or '').lower()
+                if lang_after_save == 'text':
+                    import logging
+                    from .text_upload_utils import upload_text_to_gcp
+                    logger = logging.getLogger(__name__)
+                    text_body = serializer.validated_data.get('code', snippet.code or '')
+                    text_file_url, saved_path = upload_text_to_gcp(
+                        text_body,
+                        title=(snippet.title or ''),
+                        snippet_id=snippet.id,
+                    )
+                    if text_file_url:
+                        snippet.text_file_url = text_file_url
+                        snippet.save(update_fields=['text_file_url'])
+                    else:
+                        # Do not keep a DB row that appears "saved" when cloud sync failed.
+                        snippet.delete()
+                        return Response(
+                            {
+                                'error': 'Failed to sync text snippet to cloud storage',
+                                'details': 'Snippet was not created because GCP upload failed.',
+                            },
+                            status=status.HTTP_502_BAD_GATEWAY,
+                        )
                 
                 # Return full detail
                 detail_serializer = CodeSnippetDetailSerializer(snippet, context={'request': request})

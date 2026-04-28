@@ -850,10 +850,10 @@ class CodeSnippetListSerializer(serializers.ModelSerializer):
         model = CodeSnippet
         fields = [
             'id', 'student_name', 'teacher_name', 'title', 'language', 'code',
-            'css_file_url', 'is_shared', 'share_token', 'share_url', 'is_teacher_snippet',
+            'css_file_url', 'text_file_url', 'is_shared', 'share_token', 'share_url', 'is_teacher_snippet',
             'lesson', 'class_instance', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'student_name', 'teacher_name', 'css_file_url', 'share_token', 'share_url', 'is_teacher_snippet', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'student_name', 'teacher_name', 'css_file_url', 'text_file_url', 'share_token', 'share_url', 'is_teacher_snippet', 'created_at', 'updated_at']
     
     def get_student_name(self, obj):
         return obj.student.get_full_name() if obj.student else None
@@ -879,10 +879,10 @@ class CodeSnippetDetailSerializer(serializers.ModelSerializer):
         model = CodeSnippet
         fields = [
             'id', 'student', 'teacher', 'title', 'code', 'language',
-            'css_file_url', 'is_shared', 'share_token', 'share_url', 'is_teacher_snippet',
+            'css_file_url', 'text_file_url', 'is_shared', 'share_token', 'share_url', 'is_teacher_snippet',
             'lesson', 'class_instance', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'student', 'teacher', 'css_file_url', 'share_token', 'share_url', 'is_teacher_snippet', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'student', 'teacher', 'css_file_url', 'text_file_url', 'share_token', 'share_url', 'is_teacher_snippet', 'created_at', 'updated_at']
     
     def get_share_url(self, obj):
         """Get shareable URL"""

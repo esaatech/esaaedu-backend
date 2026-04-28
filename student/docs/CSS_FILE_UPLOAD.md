@@ -1,15 +1,17 @@
-# CSS File Upload to Google Cloud Storage
+# CSS and Text File Upload to Google Cloud Storage
 
 ## Overview
 
-The CSS file upload system allows code snippets with CSS language to be uploaded to Google Cloud Storage (GCS) and referenced via public URLs. This enables CSS code to be used in HTML via `<link>` tags, making it accessible for web-based code execution environments.
+The snippet file upload system allows code snippets with CSS or plain text language to be uploaded to Google Cloud Storage (GCS) and referenced via public URLs.
 
 ## Key Features
 
 - **Consistent URLs**: CSS file URLs remain stable across updates, ensuring HTML `<link>` tags continue to work
+- **Text File Hosting**: Plain text snippets are stored as `.txt` files under `text-files/`
 - **Cache Prevention**: Updated CSS files include cache-control headers to prevent stale content
 - **Automatic Management**: Files are automatically uploaded, updated, and deleted based on code snippet operations
 - **GCS Integration**: Uses Google Cloud Storage for reliable file hosting with public access
+- **Fail-Fast Text Sync**: Text snippet create/update now returns HTTP 502 if cloud sync fails (no silent DB-only save)
 
 ## Architecture
 
@@ -20,13 +22,19 @@ The CSS file upload system allows code snippets with CSS language to be uploaded
    - `update_css_in_gcp()`: Updates existing CSS files in place
    - `delete_css_from_gcp()`: Deletes CSS files from GCS
 
-2. **`CodeSnippet` Model**: Stores CSS file URLs in the `css_file_url` field
-   - Only populated when `language == 'css'`
-   - Contains the public GCS URL for the CSS file
+2. **`text_upload_utils.py`**: Core utility functions for plain text operations
+   - `upload_text_to_gcp()`: Uploads `.txt` content to `text-files/`
+   - `update_text_in_gcp()`: Updates existing text files in place
+   - `delete_text_from_gcp()`: Deletes text files from GCS
 
-3. **API Views**: Handle CSS file operations during snippet create/update/delete
+3. **`CodeSnippet` Model**: Stores hosted URLs in snippet fields
+   - Only populated when `language == 'css'`
+   - `css_file_url` contains the public GCS URL for CSS files
+   - `text_file_url` contains the public GCS URL for text files
+
+4. **API Views**: Handle hosted file operations during snippet create/update/delete
    - `CodeSnippetCreateView`: Creates new CSS files
-   - `CodeSnippetDetailView`: Updates or deletes CSS files
+   - `CodeSnippetDetailView`: Updates or deletes CSS/text files
 
 ## How It Works
 
@@ -70,6 +78,25 @@ When a CSS snippet is deleted or language is changed away from CSS:
 1. **Extract File Path**: Parses the `css_file_url` to get the GCS storage path
 2. **Delete from GCS**: Removes the file from Google Cloud Storage
 3. **Clear URL**: Sets `snippet.css_file_url = None`
+
+### Text (.txt) Snippets
+
+When a snippet with `language='text'` is created or updated:
+
+1. **Create path** (`POST /api/student/code-snippets/create/`)
+   - The DB row is saved first to get `snippet.id`
+   - Text content is uploaded to `text-files/{snippet.id}-{sanitized-title}.txt`
+   - On success, `snippet.text_file_url` is set
+   - On failure, the create request returns `502` and the just-created row is deleted
+
+2. **Update path** (`PUT/PATCH /api/student/code-snippets/{id}/`)
+   - If `text_file_url` exists, update in place
+   - If no existing URL, create a new object using `snippet.id`
+   - On upload/update failure, request returns `502` (no silent DB-only success)
+
+3. **Delete / language switch away from text**
+   - Existing text object is deleted from storage
+   - `text_file_url` is cleared in the database
 
 ## URL Consistency Mechanism
 
@@ -191,6 +218,7 @@ https://storage.googleapis.com/{bucket}/css-files/{filename}
 - **GCS Not Configured**: Returns `(None, None)` and logs error
 - **GCS Client Unavailable**: Falls back to `default_storage` for new files
 - **Update Failures**: Falls back to creating a new file if update fails
+- **Text Create/Update Failures**: API returns `HTTP 502` and does not report success
 
 ### Debug Logging
 
