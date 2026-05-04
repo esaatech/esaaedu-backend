@@ -42,6 +42,11 @@ from .assessment_timing import (
     expire_submission_if_needed,
     is_submission_expired,
 )
+from .lesson_assessment_payloads import (
+    teacher_lesson_quiz_with_questions,
+    student_lesson_quiz_detail,
+    student_lesson_assignment_detail,
+)
 
 
 def delete_course_with_cleanup(course, skip_enrollment_check=False):
@@ -1407,13 +1412,11 @@ def reorder_projects(request, course_id):
 @permission_classes([permissions.IsAuthenticated])
 def lesson_quiz(request, lesson_id):
     """
-    GET: Get quiz for a specific lesson with questions (if exists)
-    POST: Create a new quiz for the lesson
-    
-    This enhanced endpoint allows teachers to:
-    - View complete quiz details including all questions and answers
-    - Access quiz configuration and settings
-    - Create new quizzes for lessons they teach
+    GET: Get quizzes for a specific lesson with questions (if any exist).
+    POST: Create another quiz for the lesson (multiple quizzes per lesson are allowed).
+
+    Returns quiz payloads compatible with older clients (first quiz fields at top level
+    plus ``quizzes`` list when multiple exist).
     
     Args:
         request: HTTP request object with authenticated teacher user
@@ -1455,19 +1458,14 @@ def lesson_quiz(request, lesson_id):
     
     if request.method == 'GET':
         try:
-            # Check if quiz exists for this lesson
-            try:
-                quiz = Quiz.objects.filter(lessons=lesson).first()
-                if quiz:
-                    print(f"✅ Quiz found: {quiz.title} (ID: {quiz.id})")
-                else:
-                    raise Quiz.DoesNotExist
-            except Quiz.DoesNotExist:
+            quizzes_qs = Quiz.objects.filter(lessons=lesson).order_by('title', 'created_at')
+            if not quizzes_qs.exists():
                 print(f"ℹ️ No quiz found for lesson {lesson.title}")
                 return Response(
                     {
                         'message': 'No quiz found for this lesson',
                         'quiz': None,
+                        'quizzes': [],
                         'lesson': {
                             'id': str(lesson.id),
                             'title': lesson.title,
@@ -1477,55 +1475,15 @@ def lesson_quiz(request, lesson_id):
                     status=status.HTTP_200_OK
                 )
             
-            # Get quiz questions with proper ordering
-            questions = quiz.questions.all().order_by('order')
-            print(f"✅ Questions loaded: {questions.count()} questions found")
+            quiz_payloads = [teacher_lesson_quiz_with_questions(q, lesson) for q in quizzes_qs]
+            first = quiz_payloads[0]
+            print(f"✅ Quiz data prepared successfully ({len(quiz_payloads)} quiz(es))")
             
-            # Prepare complete quiz data with questions
-            quiz_data = {
-                'id': str(quiz.id),
-                'title': quiz.title,
-                'description': quiz.description or '',
-                'time_limit': quiz.time_limit,
-                'passing_score': quiz.passing_score,
-                'max_attempts': quiz.max_attempts,
-                'show_correct_answers': quiz.show_correct_answers,
-                'randomize_questions': quiz.randomize_questions,
-                'total_points': quiz.total_points,
-                'question_count': quiz.question_count,
-                'created_at': quiz.created_at.isoformat() if quiz.created_at else None,
-                'updated_at': quiz.updated_at.isoformat() if quiz.updated_at else None,
-                'questions': []
-            }
-            
-            # Add questions with their content
-            for question in questions:
-                question_data = {
-                    'id': str(question.id),
-                    'question_text': question.question_text,
-                    'type': question.type,
-                    'points': question.points,
-                    'content': question.content,
-                    'explanation': question.explanation or '',
-                    'order': question.order,
-                    'created_at': question.created_at.isoformat() if question.created_at else None,
-                    'updated_at': question.updated_at.isoformat() if question.updated_at else None
-                }
-                quiz_data['questions'].append(question_data)
-            
-            # Add lesson context
-            quiz_data['lesson'] = {
-                'id': str(lesson.id),
-                'title': lesson.title,
-                'course': lesson.course.title,
-                'type': lesson.type,
-                'order': lesson.order
-            }
-            
-            print(f"✅ Quiz data prepared successfully")
-            print(f"📊 Quiz stats: {quiz_data['question_count']} questions, {quiz_data['total_points']} total points")
-            
-            return Response(quiz_data, status=status.HTTP_200_OK)
+            # Backward compatible flat shape for first quiz + explicit list for multiple
+            body = dict(first)
+            body['quizzes'] = quiz_payloads
+            body['quiz'] = first
+            return Response(body, status=status.HTTP_200_OK)
             
         except Exception as e:
             print(f"❌ Error fetching quiz: {e}")
@@ -1538,15 +1496,6 @@ def lesson_quiz(request, lesson_id):
     
     elif request.method == 'POST':
         try:
-            # Check if quiz already exists for this lesson
-            existing_quiz = Quiz.objects.filter(lessons=lesson).first()
-            if existing_quiz:
-                print(f"❌ Quiz already exists for lesson {lesson.title}")
-                return Response(
-                    {'error': 'Quiz already exists for this lesson'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
             print(f"🎯 Creating new quiz for lesson {lesson.title}")
             serializer = QuizCreateUpdateSerializer(data=request.data)
             if serializer.is_valid():
@@ -2872,109 +2821,125 @@ def teacher_quiz_submissions(request):
         lessons_data = []
         
         for lesson in lessons_with_quizzes:
-            quiz = lesson.quizzes.first() if lesson.quizzes.exists() else None
-            
-            if not quiz:
-                continue  # Skip lessons without quizzes
-            
-            # Get all quiz attempts for this quiz
-            quiz_attempts_filter = {
-                'quiz': quiz,
-                'completed_at__isnull': False  # Only completed attempts
-            }
-            
-            # Filter by student if specified
-            if student_id:
-                quiz_attempts_filter['student_id'] = student_id
-                
-            quiz_attempts = QuizAttempt.objects.filter(
-                **quiz_attempts_filter
-            ).select_related('student', 'enrollment').order_by('-completed_at')
-            
-            # Separate graded and ungraded attempts (using consolidated model)
-            ungraded_attempts = []
-            graded_attempts = []
-            
-            for attempt in quiz_attempts:
-                # Check if this attempt has been graded (auto-graded or teacher-enhanced)
-                is_graded = attempt.score is not None  # Auto-graded if score exists
-                is_teacher_enhanced = attempt.is_teacher_graded  # Teacher enhanced if flag is True
-                
-                attempt_data = {
-                    'id': attempt.id,
-                    'student_id': attempt.student.id,
-                    'student_name': attempt.student.get_full_name(),
-                    'student_email': attempt.student.email,
-                    'submitted_at': attempt.completed_at,
-                    'time_spent': None,  # Calculate from started_at to completed_at
-                    'score': attempt.final_score,  # Use computed property
-                    'points_earned': attempt.final_points_earned,  # Use computed property
-                    'passed': attempt.passed,
-                    'answers': attempt.answers,
-                    'attempt_number': attempt.attempt_number,
-                    'is_teacher_enhanced': is_teacher_enhanced
+            first_quiz = lesson.quizzes.order_by('title', 'created_at').first()
+            if not first_quiz:
+                continue
+
+            quizzes_payload = []
+            all_ungraded = []
+            all_graded = []
+
+            for quiz in lesson.quizzes.all().order_by('title', 'created_at'):
+                quiz_attempts_filter = {
+                    'quiz': quiz,
+                    'completed_at__isnull': False,
                 }
-                
-                # Calculate time spent
-                if attempt.started_at and attempt.completed_at:
-                    time_diff = attempt.completed_at - attempt.started_at
-                    attempt_data['time_spent'] = int(time_diff.total_seconds() / 60)  # minutes
-                
-                if is_graded:
-                    # Get the grade details from consolidated model
-                    if is_teacher_enhanced and attempt.teacher_grade_data:
-                        grade_data = attempt.teacher_grade_data
-                        attempt_data.update({
-                            'teacher_grade': {
-                                'percentage': float(grade_data.get('percentage', attempt.score)),
-                                'letter_grade': grade_data.get('letter_grade', None),
-                                'points_earned': float(grade_data.get('points_earned', attempt.points_earned)),
-                                'points_possible': float(grade_data.get('points_possible', attempt.quiz.total_points)),
-                                'teacher_comments': grade_data.get('teacher_comments', ''),
-                                'graded_date': grade_data.get('graded_date', attempt.completed_at.isoformat()),
-                                'graded_by': grade_data.get('graded_by', 'Auto-graded')
-                            }
-                        })
+                if student_id:
+                    quiz_attempts_filter['student_id'] = student_id
+
+                quiz_attempts = QuizAttempt.objects.filter(
+                    **quiz_attempts_filter
+                ).select_related('student', 'enrollment').order_by('-completed_at')
+
+                ungraded_attempts = []
+                graded_attempts = []
+
+                for attempt in quiz_attempts:
+                    is_graded = attempt.score is not None
+                    is_teacher_enhanced = attempt.is_teacher_graded
+
+                    attempt_data = {
+                        'id': attempt.id,
+                        'quiz_id': str(quiz.id),
+                        'quiz_title': quiz.title,
+                        'student_id': attempt.student.id,
+                        'student_name': attempt.student.get_full_name(),
+                        'student_email': attempt.student.email,
+                        'submitted_at': attempt.completed_at,
+                        'time_spent': None,
+                        'score': attempt.final_score,
+                        'points_earned': attempt.final_points_earned,
+                        'passed': attempt.passed,
+                        'answers': attempt.answers,
+                        'attempt_number': attempt.attempt_number,
+                        'is_teacher_enhanced': is_teacher_enhanced,
+                    }
+
+                    if attempt.started_at and attempt.completed_at:
+                        time_diff = attempt.completed_at - attempt.started_at
+                        attempt_data['time_spent'] = int(time_diff.total_seconds() / 60)
+
+                    if is_graded:
+                        if is_teacher_enhanced and attempt.teacher_grade_data:
+                            grade_data = attempt.teacher_grade_data
+                            attempt_data.update({
+                                'teacher_grade': {
+                                    'percentage': float(grade_data.get('percentage', attempt.score)),
+                                    'letter_grade': grade_data.get('letter_grade', None),
+                                    'points_earned': float(grade_data.get('points_earned', attempt.points_earned)),
+                                    'points_possible': float(grade_data.get('points_possible', attempt.quiz.total_points)),
+                                    'teacher_comments': grade_data.get('teacher_comments', ''),
+                                    'graded_date': grade_data.get('graded_date', attempt.completed_at.isoformat()),
+                                    'graded_by': grade_data.get('graded_by', 'Auto-graded'),
+                                }
+                            })
+                        else:
+                            attempt_data.update({
+                                'teacher_grade': {
+                                    'percentage': float(attempt.score),
+                                    'letter_grade': None,
+                                    'points_earned': float(attempt.points_earned),
+                                    'points_possible': float(attempt.quiz.total_points),
+                                    'teacher_comments': '',
+                                    'graded_date': attempt.completed_at.isoformat(),
+                                    'graded_by': 'Auto-graded',
+                                }
+                            })
+                        graded_attempts.append(attempt_data)
+                        all_graded.append(attempt_data)
                     else:
-                        # Auto-graded only
-                        attempt_data.update({
-                            'teacher_grade': {
-                                'percentage': float(attempt.score),
-                                'letter_grade': None,
-                                'points_earned': float(attempt.points_earned),
-                                'points_possible': float(attempt.quiz.total_points),
-                                'teacher_comments': '',
-                                'graded_date': attempt.completed_at.isoformat(),
-                                'graded_by': 'Auto-graded'
-                            }
-                        })
-                    graded_attempts.append(attempt_data)
-                else:
-                    ungraded_attempts.append(attempt_data)
-            
-            # Only include lessons that have quiz attempts
-            if ungraded_attempts or graded_attempts:
-                lesson_data = {
-                    'id': lesson.id,
-                    'title': lesson.title,
-                    'description': lesson.description,
-                    'course_id': lesson.course.id,
-                    'course_title': lesson.course.title,
-                    'quiz': {
-                        'id': quiz.id,
-                        'title': quiz.title,
-                        'description': quiz.description,
-                        'time_limit': quiz.time_limit,
-                        'passing_score': quiz.passing_score,
-                        'total_points': quiz.total_points,
-                        'question_count': quiz.question_count,
-                        'questions': []  # We'll populate this when grading
-                    },
+                        ungraded_attempts.append(attempt_data)
+                        all_ungraded.append(attempt_data)
+
+                quizzes_payload.append({
+                    'id': quiz.id,
+                    'title': quiz.title,
+                    'description': quiz.description,
+                    'time_limit': quiz.time_limit,
+                    'passing_score': quiz.passing_score,
+                    'total_points': quiz.total_points,
+                    'question_count': quiz.question_count,
+                    'questions': [],
                     'ungraded_attempts': ungraded_attempts,
                     'graded_attempts': graded_attempts,
-                    'total_attempts': len(ungraded_attempts) + len(graded_attempts)
-                }
-                lessons_data.append(lesson_data)
+                    'total_attempts': len(ungraded_attempts) + len(graded_attempts),
+                })
+
+            if not all_ungraded and not all_graded:
+                continue
+
+            lesson_data = {
+                'id': lesson.id,
+                'title': lesson.title,
+                'description': lesson.description,
+                'course_id': lesson.course.id,
+                'course_title': lesson.course.title,
+                'quiz': {
+                    'id': first_quiz.id,
+                    'title': first_quiz.title,
+                    'description': first_quiz.description,
+                    'time_limit': first_quiz.time_limit,
+                    'passing_score': first_quiz.passing_score,
+                    'total_points': first_quiz.total_points,
+                    'question_count': first_quiz.question_count,
+                    'questions': [],
+                },
+                'quizzes': quizzes_payload,
+                'ungraded_attempts': all_ungraded,
+                'graded_attempts': all_graded,
+                'total_attempts': len(all_ungraded) + len(all_graded),
+            }
+            lessons_data.append(lesson_data)
         
         # Organize response
         response_data = {
@@ -4685,15 +4650,6 @@ class StudentLessonDetailView(APIView):
             lesson = get_object_or_404(Lesson, id=lesson_id)
            
             
-            # Check if lesson has quiz
-            try:
-                quiz = lesson.quizzes.first() if lesson.quizzes.exists() else None
-                if quiz:
-                    print(f"🔍 Quiz questions count: {quiz.questions.count()}")
-                    print(f"🔍 Quiz details: time_limit={quiz.time_limit}, passing_score={quiz.passing_score}")
-            except Exception as e:
-                print(f"❌ Error checking quiz: {e}")
-            
             # Check if lesson has class event
             try:
                 from courses.models import ClassEvent
@@ -4724,148 +4680,22 @@ class StudentLessonDetailView(APIView):
             # Serialize the lesson
             print(f"🔍 About to serialize lesson with LessonDetailSerializer")
             
-            # Pre-compute quiz data (moved from serializer)
-            quiz_data = None
+            # Pre-compute quiz / assignment payloads (supports multiple per lesson)
+            quizzes_data = []
             try:
-                quiz = lesson.quizzes.first() if lesson.quizzes.exists() else None
-                if quiz:
-                    
-                    # Get questions
-                    questions = quiz.questions.all().order_by('order')
-                    
-                    # Get student attempts if available (using request.user directly)
-                    attempts = []
-                    if request.user.is_authenticated:
-                        attempts = QuizAttempt.objects.filter(
-                            student=request.user,  # Direct reference to User
-                            quiz=quiz
-                        ).order_by('-started_at')
-                        print(f"🔍 Student attempts found: {attempts.count()}")
-                    
-                    # Build quiz data
-                    quiz_data = {
-                        'id': str(quiz.id),
-                        'title': quiz.title,
-                        'description': quiz.description or '',
-                        'time_limit': quiz.time_limit,
-                        'passing_score': quiz.passing_score,
-                        'max_attempts': quiz.max_attempts,
-                        'show_correct_answers': quiz.show_correct_answers,
-                        'randomize_questions': quiz.randomize_questions,
-                        'total_points': quiz.total_points,
-                        'question_count': quiz.question_count,
-                        'questions': [
-                            {
-                                'id': str(q.id),
-                                'question_text': q.question_text,
-                                'type': q.type,
-                                'content': q.content,
-                                'points': q.points,
-                                'explanation': q.explanation or '',
-                                'order': q.order,
-                            } for q in questions
-                        ],
-                        "user_attempts_count": len(attempts),
-                        "user_attempts": [
-                            {
-                                "id": str(attempt.id),
-                                "attempt_number": attempt.attempt_number,
-                                "score": float(attempt.score) if attempt.score else None,
-                                "points_earned": attempt.points_earned,
-                                "passed": attempt.passed,
-                                "answers": attempt.answers,
-                                "started_at": attempt.started_at.isoformat(),
-                                "completed_at": attempt.completed_at.isoformat() if attempt.completed_at else None,
-                                "is_teacher_graded": attempt.is_teacher_graded,
-                                "display_status": attempt.display_status
-                            } for attempt in attempts
-                        ],
-                        'can_retake': len(attempts) < quiz.max_attempts if attempts else True,
-                        'has_passed': any(attempt.passed for attempt in attempts),
-                        'last_attempt': attempts[0].score if attempts else None,
-                        'last_attempt_passed': attempts[0].passed if attempts else None,
-                    }
-            except Exception as e:
-                pass
+                for quiz in lesson.quizzes.all().order_by('title', 'created_at'):
+                    quizzes_data.append(student_lesson_quiz_detail(quiz, request.user))
+            except Exception:
+                quizzes_data = []
+            quiz_data = quizzes_data[0] if quizzes_data else None
             
-            # Pre-compute assignment data (similar to quiz data)
-            assignment_data = None
+            assignments_data = []
             try:
-                from courses.models import Assignment, AssignmentQuestion
-                assignment = lesson.assignments.first() if lesson.assignments.exists() else None
-                
-                if assignment:
-                    # Get assignment questions
-                    questions = assignment.questions.all().order_by('order')
-                    
-                    # Get student submissions if available
-                    submissions = []
-                    submission_data = None
-                    if request.user.is_authenticated:
-                        from courses.models import AssignmentSubmission
-                        submissions = AssignmentSubmission.objects.filter(
-                            assignment=assignment,
-                            enrollment__student_profile__user=request.user
-                        ).order_by('-submitted_at')
-                        
-                        # Include the latest submission data
-                        if submissions:
-                            latest_submission = submissions[0]
-                            submission_data = {
-                                'id': str(latest_submission.id),
-                                'attempt_number': latest_submission.attempt_number,
-                                'status': latest_submission.status,
-                                'submitted_at': latest_submission.submitted_at.isoformat(),
-                                'answers': latest_submission.answers,
-                                'is_graded': latest_submission.is_graded,
-                                'points_earned': latest_submission.points_earned,
-                                'points_possible': latest_submission.points_possible,
-                                'percentage': latest_submission.percentage,
-                                'passed': latest_submission.passed,
-                                # Track how many times this submission has been returned for revision (TutorX)
-                                'return_for_revision_count': getattr(latest_submission, 'return_for_revision_count', 0),
-                            }
-                    
-                    # Build assignment data
-                    assignment_data = {
-                        'id': str(assignment.id),
-                        'title': assignment.title,
-                        'description': assignment.description or '',
-                        'assignment_type': assignment.assignment_type,
-                        'due_date': assignment.due_date.isoformat() if assignment.due_date else None,
-                        'passing_score': assignment.passing_score,
-                        'max_attempts': assignment.max_attempts,
-                        'show_correct_answers': assignment.show_correct_answers,
-                        'randomize_questions': assignment.randomize_questions,
-                        'question_count': assignment.question_count,
-                        'submission_count': assignment.submissions.count(),
-                        'questions': [
-                            {
-                                'id': str(q.id),
-                                'question_text': q.question_text,
-                                'type': q.type,
-                                'content': q.content,
-                                'points': q.points,
-                                'explanation': q.explanation or '',
-                                'order': q.order,
-                            } for q in questions
-                        ],
-                        'user_submissions_count': len(submissions),
-                        'can_submit': len(submissions) < assignment.max_attempts if submissions else True,
-                        'has_passed': any(submission.passed for submission in submissions),
-                        'last_submission': submissions[0].submitted_at.isoformat() if submissions else None,
-                        'last_submission_passed': submissions[0].passed if submissions else None,
-                        'submission': submission_data,  # Include the submission data
-                    }
-                    if submissions:
-                        from student.views import _submission_has_return_feedback, _attach_return_feedback_to_questions
-                        latest = submissions[0]
-                        if _submission_has_return_feedback(latest):
-                            assignment_data['questions'] = _attach_return_feedback_to_questions(
-                                assignment_data['questions'], latest.return_feedback
-                            )
-            except Exception as e:
-                pass
+                for assignment in lesson.assignments.all().order_by('title', 'created_at'):
+                    assignments_data.append(student_lesson_assignment_detail(assignment, request.user))
+            except Exception:
+                assignments_data = []
+            assignment_data = assignments_data[0] if assignments_data else None
             
             # Pre-compute class event data (moved from serializer)
             class_event_data = None
@@ -4973,7 +4803,9 @@ class StudentLessonDetailView(APIView):
             context = {
                 'request': request,
                 'quiz_data': quiz_data,
+                'quizzes_data': quizzes_data,
                 'assignment_data': assignment_data,
+                'assignments_data': assignments_data,
                 'class_event_data': class_event_data,
                 'materials_data': materials_data,
                 'is_material_available': is_material_available,
@@ -5322,19 +5154,41 @@ class MaterialContentView(APIView):
 @permission_classes([permissions.IsAuthenticated])
 def submit_quiz_attempt(request, lesson_id):
     """
-    Submit a quiz attempt for a specific lesson
+    Submit a quiz attempt for a specific lesson.
+
+    Body must include ``quiz_id`` (UUID string) when the lesson has more than one quiz.
+    When exactly one quiz is linked, ``quiz_id`` may be omitted (backward compatible).
     """
    
     
     try:
         # Get the lesson and quiz
         lesson = get_object_or_404(Lesson, id=lesson_id)
-        quiz = Quiz.objects.filter(lessons=lesson).first()
-        if not quiz:
-            return Response(
-                {'error': 'Quiz not found for this lesson'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        quizzes_qs = Quiz.objects.filter(lessons=lesson).order_by('title', 'created_at')
+        quiz_id = request.data.get('quiz_id')
+        if quiz_id:
+            quiz = quizzes_qs.filter(id=quiz_id).first()
+            if not quiz:
+                return Response(
+                    {'error': 'Quiz not found for this lesson', 'quiz_id': quiz_id},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        else:
+            count = quizzes_qs.count()
+            if count == 0:
+                return Response(
+                    {'error': 'Quiz not found for this lesson'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            if count > 1:
+                return Response(
+                    {
+                        'error': 'quiz_id is required when this lesson has multiple quizzes',
+                        'lesson_id': str(lesson.id),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            quiz = quizzes_qs.first()
         
         # Check if student is enrolled in this course
         student_profile = request.user.student_profile
@@ -5471,6 +5325,7 @@ def submit_quiz_attempt(request, lesson_id):
         # Prepare response data
         response_data = {
             'attempt_id': str(quiz_attempt.id),
+            'quiz_id': str(quiz.id),
             'score': score_percentage,
             'correct_answers': correct_answers,
             'total_questions': questions.count(),

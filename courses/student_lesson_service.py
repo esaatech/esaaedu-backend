@@ -30,8 +30,11 @@ class StudentLessonService:
             if not enrollment:
                 return None, "Student not enrolled in this course"
             
-            # Get quiz data with questions
-            quiz_data = StudentLessonService._get_quiz_data(lesson, student_profile)
+            quizzes_data = []
+            for quiz in Quiz.objects.filter(lessons=lesson).order_by('title', 'created_at'):
+                qd = StudentLessonService._get_quiz_data_for_quiz(quiz, student_profile)
+                if qd:
+                    quizzes_data.append(qd)
             
             # Get class event data (for live lessons)
             class_event_data = StudentLessonService._get_class_event_data(lesson)
@@ -68,8 +71,9 @@ class StudentLessonService:
                 # Lesson status
                 'status': lesson_status,
                 
-                # Quiz data (if exists)
-                'quiz': quiz_data,
+                # Quiz data (if exists); first item mirrors legacy single-quiz field
+                'quiz': quizzes_data[0] if quizzes_data else None,
+                'quizzes': quizzes_data,
                 
                 # Class event data (for live lessons)
                 'class_event': class_event_data,
@@ -87,14 +91,11 @@ class StudentLessonService:
             return None, f"Error fetching lesson data: {str(e)}"
     
     @staticmethod
-    def _get_quiz_data(lesson, student_profile):
+    def _get_quiz_data_for_quiz(quiz, student_profile):
         """
-        Get quiz data including questions and student attempts
+        Get quiz data including questions and student attempts for one quiz entity.
         """
         try:
-            quiz = Quiz.objects.filter(lessons=lesson).first()
-            if not quiz:
-                return None
             questions = quiz.questions.all().order_by('order')
             
             # Get student's attempts for this quiz
@@ -107,7 +108,7 @@ class StudentLessonService:
             total_attempts = attempts.count()
             last_attempt = attempts.first() if attempts.exists() else None
             can_retake = total_attempts < quiz.max_attempts
-            has_passed = last_attempt.passed if last_attempt else False
+            has_passed = attempts.filter(passed=True).exists()
             
             quiz_data = {
                 'id': str(quiz.id),
@@ -145,8 +146,6 @@ class StudentLessonService:
             
             return quiz_data
             
-        except Quiz.DoesNotExist:
-            return None
         except Exception as e:
             print(f"Error getting quiz data: {e}")
             return None
@@ -257,29 +256,26 @@ class StudentLessonService:
             
             lessons_data = []
             for lesson in lessons:
-                # Get basic quiz info (without questions for performance)
-                quiz_basic = None
+                quizzes_basic = []
                 try:
-                    quiz = Quiz.objects.filter(lessons=lesson).first()
-                    if quiz:
+                    for quiz in Quiz.objects.filter(lessons=lesson).order_by('title', 'created_at'):
                         attempts = QuizAttempt.objects.filter(
                             student=student_profile.user,
                             quiz=quiz
                         )
-                        
-                        quiz_basic = {
+                        quizzes_basic.append({
                             'id': str(quiz.id),
                             'title': quiz.title,
                             'has_quiz': True,
                             'attempts_count': attempts.count(),
                             'max_attempts': quiz.max_attempts,
                             'has_passed': attempts.filter(passed=True).exists(),
-                        }
-                    else:
-                        quiz_basic = {'has_quiz': False}
+                        })
                 except Exception:
-                    quiz_basic = {'has_quiz': False}
-                
+                    quizzes_basic = []
+
+                quiz_basic = quizzes_basic[0] if quizzes_basic else {'has_quiz': False}
+
                 lesson_data = {
                     'id': str(lesson.id),
                     'title': lesson.title,
@@ -289,6 +285,7 @@ class StudentLessonService:
                     'order': lesson.order,
                     'status': StudentLessonService._get_lesson_status(lesson, enrollment),
                     'quiz': quiz_basic,
+                    'quizzes': quizzes_basic,
                 }
                 
                 lessons_data.append(lesson_data)

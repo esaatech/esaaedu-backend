@@ -199,9 +199,9 @@ class SchedulingChecker:
     # --- Quiz / assignment completion for a lesson ---
 
     def is_lesson_quiz_completed(self, enrollment, lesson):
-        """True if the lesson has no quiz, or enrollment has passed the quiz for this lesson."""
+        """True if the lesson has no quiz, or the student has passed at least one lesson-linked quiz."""
         from student.models import StudentLessonProgress
-        from courses.models import Quiz
+        from courses.models import Quiz, QuizAttempt
         if not lesson:
             return True
         progress = StudentLessonProgress.objects.filter(
@@ -210,29 +210,34 @@ class SchedulingChecker:
         ).first()
         if progress and progress.quiz_passed:
             return True
-        quiz = Quiz.objects.filter(lessons=lesson).first()
-        if not quiz:
+        quizzes = Quiz.objects.filter(lessons=lesson)
+        if not quizzes.exists():
             return True
-        from courses.models import QuizAttempt
-        return QuizAttempt.objects.filter(
-            enrollment=enrollment,
-            quiz=quiz,
-            passed=True,
-            completed_at__isnull=False
-        ).exists()
+        for quiz in quizzes:
+            if QuizAttempt.objects.filter(
+                enrollment=enrollment,
+                quiz=quiz,
+                passed=True,
+                completed_at__isnull=False
+            ).exists():
+                return True
+        return False
 
     def is_lesson_assignment_completed(self, enrollment, lesson):
-        """True if the lesson has no assignment, or enrollment has a submitted/graded submission."""
+        """True if the lesson has no assignment, or at least one assignment has a submitted/graded submission."""
         from courses.models import Assignment, AssignmentSubmission
         if not lesson:
             return True
-        assignment = Assignment.objects.filter(lessons=lesson).first()
-        if not assignment:
+        assignments = Assignment.objects.filter(lessons=lesson)
+        if not assignments.exists():
             return True
-        return AssignmentSubmission.objects.filter(
-            enrollment=enrollment,
-            assignment=assignment
-        ).filter(status__in=('submitted', 'graded')).exists()
+        for assignment in assignments:
+            if AssignmentSubmission.objects.filter(
+                enrollment=enrollment,
+                assignment=assignment
+            ).filter(status__in=('submitted', 'graded')).exists():
+                return True
+        return False
 
     def is_lesson_requirements_met(self, enrollment, lesson):
         """True if both quiz and assignment for this lesson are completed."""

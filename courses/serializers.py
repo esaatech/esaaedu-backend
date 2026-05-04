@@ -248,7 +248,9 @@ class LessonDetailSerializer(serializers.ModelSerializer):
     """
     materials = serializers.SerializerMethodField()
     quiz = serializers.SerializerMethodField()
+    quizzes = serializers.SerializerMethodField()
     assignment = serializers.SerializerMethodField()
+    assignments = serializers.SerializerMethodField()
     has_assignment = serializers.SerializerMethodField()
     class_event = serializers.SerializerMethodField()
     teacher_name = serializers.SerializerMethodField()
@@ -265,7 +267,7 @@ class LessonDetailSerializer(serializers.ModelSerializer):
             'module_id', 'module_title',
             'text_content', 'video_url', 'audio_url', 'live_class_date', 
             'live_class_status', 'content', 'materials', 'prerequisites',
-            'quiz', 'assignment', 'has_assignment', 'class_event', 'teacher_name', 'course_title',
+            'quiz', 'quizzes', 'assignment', 'assignments', 'has_assignment', 'class_event', 'teacher_name', 'course_title',
             'is_material_available', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -280,12 +282,30 @@ class LessonDetailSerializer(serializers.ModelSerializer):
         """Get pre-computed quiz data from context"""
         return self.context.get('quiz_data')
     
+    def get_quizzes(self, obj):
+        """All quizzes linked to the lesson (new); falls back to [quiz] or []."""
+        qs = self.context.get('quizzes_data')
+        if qs is not None:
+            return qs
+        q = self.context.get('quiz_data')
+        return [q] if q else []
+    
     def get_assignment(self, obj):
         """Get pre-computed assignment data from context"""
         return self.context.get('assignment_data')
     
+    def get_assignments(self, obj):
+        assignments = self.context.get('assignments_data')
+        if assignments is not None:
+            return assignments
+        a = self.context.get('assignment_data')
+        return [a] if a else []
+    
     def get_has_assignment(self, obj):
         """Check if lesson has an assignment"""
+        assignments = self.context.get('assignments_data')
+        if assignments is not None:
+            return len(assignments) > 0
         assignment_data = self.context.get('assignment_data')
         return assignment_data is not None
     
