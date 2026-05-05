@@ -16,6 +16,8 @@ def teacher_lesson_quiz_with_questions(quiz, lesson):
         'max_attempts': quiz.max_attempts,
         'show_correct_answers': quiz.show_correct_answers,
         'randomize_questions': quiz.randomize_questions,
+        'visible_to_students': getattr(quiz, 'visible_to_students', True),
+        'attempt_count': quiz.attempts.count(),
         'total_points': quiz.total_points,
         'question_count': quiz.question_count,
         'created_at': quiz.created_at.isoformat() if quiz.created_at else None,

@@ -199,7 +199,7 @@ class SchedulingChecker:
     # --- Quiz / assignment completion for a lesson ---
 
     def is_lesson_quiz_completed(self, enrollment, lesson):
-        """True if the lesson has no quiz, or the student has passed at least one lesson-linked quiz."""
+        """True if no applicable quiz blocks progression, or at least one applicable quiz is passed."""
         from student.models import StudentLessonProgress
         from courses.models import Quiz, QuizAttempt
         if not lesson:
@@ -213,7 +213,15 @@ class SchedulingChecker:
         quizzes = Quiz.objects.filter(lessons=lesson)
         if not quizzes.exists():
             return True
+        applicable = []
         for quiz in quizzes:
+            if getattr(quiz, 'visible_to_students', True):
+                applicable.append(quiz)
+            elif QuizAttempt.objects.filter(enrollment=enrollment, quiz=quiz).exists():
+                applicable.append(quiz)
+        if not applicable:
+            return True
+        for quiz in applicable:
             if QuizAttempt.objects.filter(
                 enrollment=enrollment,
                 quiz=quiz,
@@ -224,14 +232,25 @@ class SchedulingChecker:
         return False
 
     def is_lesson_assignment_completed(self, enrollment, lesson):
-        """True if the lesson has no assignment, or at least one assignment has a submitted/graded submission."""
+        """True if no applicable assignment blocks progression, or one has submitted/graded work."""
         from courses.models import Assignment, AssignmentSubmission
         if not lesson:
             return True
         assignments = Assignment.objects.filter(lessons=lesson)
         if not assignments.exists():
             return True
+        applicable = []
         for assignment in assignments:
+            if getattr(assignment, 'visible_to_students', True):
+                applicable.append(assignment)
+            elif AssignmentSubmission.objects.filter(
+                enrollment=enrollment,
+                assignment=assignment,
+            ).exists():
+                applicable.append(assignment)
+        if not applicable:
+            return True
+        for assignment in applicable:
             if AssignmentSubmission.objects.filter(
                 enrollment=enrollment,
                 assignment=assignment

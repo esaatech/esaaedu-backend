@@ -1,5 +1,6 @@
 from django.utils import timezone
 from django.db.models import Q
+from .assessment_visibility import quiz_visible_for_student_payload
 from .models import Lesson, Quiz, Question, QuizAttempt, ClassEvent, LessonMaterial
 from student.models import EnrolledCourse
 from datetime import datetime, timedelta
@@ -30,8 +31,11 @@ class StudentLessonService:
             if not enrollment:
                 return None, "Student not enrolled in this course"
             
+            user = student_profile.user
             quizzes_data = []
             for quiz in Quiz.objects.filter(lessons=lesson).order_by('title', 'created_at'):
+                if not quiz_visible_for_student_payload(quiz, user):
+                    continue
                 qd = StudentLessonService._get_quiz_data_for_quiz(quiz, student_profile)
                 if qd:
                     quizzes_data.append(qd)

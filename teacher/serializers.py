@@ -456,6 +456,7 @@ class AssignmentListSerializer(serializers.ModelSerializer):
         model = Assignment
         fields = [
             'id', 'title', 'description', 'assignment_type', 'due_date',
+            'visible_to_students',
             'lesson_title', 'course_title', 'question_count', 'submission_count',
             'graded_count', 'created_at'
         ]
@@ -498,6 +499,7 @@ class AssignmentDetailSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'description', 'assignment_type', 'due_date',
             'passing_score', 'max_attempts', 'show_correct_answers', 'randomize_questions',
+            'visible_to_students',
             'lesson_title', 'course_title', 'questions', 'question_count',
             'submission_count', 'graded_count', 'pending_count', 'created_at', 'updated_at'
         ]
@@ -526,7 +528,8 @@ class AssignmentCreateUpdateSerializer(serializers.ModelSerializer):
         model = Assignment
         fields = [
             'lesson', 'title', 'description', 'assignment_type', 'due_date',
-            'passing_score', 'max_attempts', 'show_correct_answers', 'randomize_questions'
+            'passing_score', 'max_attempts', 'show_correct_answers', 'randomize_questions',
+            'visible_to_students',
         ]
     
     def validate_lesson(self, value):

@@ -1428,6 +1428,7 @@ class QuizListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'description', 'time_limit', 'passing_score',
             'max_attempts', 'show_correct_answers', 'randomize_questions',
+            'visible_to_students',
             'question_count', 'total_points', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'question_count', 'total_points', 'created_at', 'updated_at']
@@ -1441,6 +1442,11 @@ class QuizDetailSerializer(serializers.ModelSerializer):
     lesson_title = serializers.SerializerMethodField()
     question_count = serializers.IntegerField(read_only=True)
     total_points = serializers.IntegerField(read_only=True)
+    attempt_count = serializers.SerializerMethodField()
+
+    def get_attempt_count(self, obj):
+        return obj.attempts.count()
+
     
     def get_lesson_id(self, obj):
         """Get the first lesson ID (for backward compatibility)"""
@@ -1457,10 +1463,10 @@ class QuizDetailSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'lesson_id', 'lesson_title', 'title', 'description',
             'time_limit', 'passing_score', 'max_attempts', 'show_correct_answers',
-            'randomize_questions', 'question_count', 'total_points',
+            'randomize_questions', 'visible_to_students', 'attempt_count', 'question_count', 'total_points',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'lesson_id', 'lesson_title', 'question_count', 'total_points', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'lesson_id', 'lesson_title', 'attempt_count', 'question_count', 'total_points', 'created_at', 'updated_at']
 
 
 class QuizCreateUpdateSerializer(serializers.ModelSerializer):
@@ -1471,7 +1477,8 @@ class QuizCreateUpdateSerializer(serializers.ModelSerializer):
         model = Quiz
         fields = [
             'title', 'description', 'time_limit', 'passing_score',
-            'max_attempts', 'show_correct_answers', 'randomize_questions'
+            'max_attempts', 'show_correct_answers', 'randomize_questions',
+            'visible_to_students',
         ]
     
     def validate_time_limit(self, value):

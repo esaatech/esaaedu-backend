@@ -1061,7 +1061,11 @@ class Quiz(models.Model):
         default=False,
         help_text="Randomize question order for each attempt"
     )
-    
+    visible_to_students = models.BooleanField(
+        default=True,
+        help_text="When False, quiz is hidden from students who have no attempts yet.",
+    )
+
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -1135,7 +1139,11 @@ class Assignment(models.Model):
         default='homework',
         help_text="Type of assignment"
     )
-    
+    visible_to_students = models.BooleanField(
+        default=True,
+        help_text="When False, assignment is hidden from students who have no submissions yet.",
+    )
+
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

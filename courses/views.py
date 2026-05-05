@@ -47,6 +47,10 @@ from .lesson_assessment_payloads import (
     student_lesson_quiz_detail,
     student_lesson_assignment_detail,
 )
+from .assessment_visibility import (
+    quiz_visible_for_student_payload,
+    assignment_visible_for_student_payload,
+)
 
 
 def delete_course_with_cleanup(course, skip_enrollment_check=False):
@@ -1568,6 +1572,17 @@ def quiz_detail(request, quiz_id):
     
     elif request.method == 'DELETE':
         try:
+            attempt_count = quiz.attempts.count()
+            if attempt_count > 0:
+                return Response(
+                    {
+                        'error': (
+                            f'Cannot delete quiz with {attempt_count} student attempt(s). '
+                            'Hide it from students or remove attempts first.'
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             quiz.delete()
             return Response(
                 {'message': 'Quiz deleted successfully'},
@@ -4684,15 +4699,17 @@ class StudentLessonDetailView(APIView):
             quizzes_data = []
             try:
                 for quiz in lesson.quizzes.all().order_by('title', 'created_at'):
-                    quizzes_data.append(student_lesson_quiz_detail(quiz, request.user))
+                    if quiz_visible_for_student_payload(quiz, request.user):
+                        quizzes_data.append(student_lesson_quiz_detail(quiz, request.user))
             except Exception:
                 quizzes_data = []
             quiz_data = quizzes_data[0] if quizzes_data else None
-            
+
             assignments_data = []
             try:
                 for assignment in lesson.assignments.all().order_by('title', 'created_at'):
-                    assignments_data.append(student_lesson_assignment_detail(assignment, request.user))
+                    if assignment_visible_for_student_payload(assignment, request.user):
+                        assignments_data.append(student_lesson_assignment_detail(assignment, request.user))
             except Exception:
                 assignments_data = []
             assignment_data = assignments_data[0] if assignments_data else None
