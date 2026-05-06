@@ -3,6 +3,7 @@ from .views import CreateCheckoutSessionView, ListMySubscriptionsView, CancelSub
 from .views  import StripeWebhookView
 from .views import CreatePaymentIntentView, ConfirmEnrollmentView, CancelIncompleteSubscriptionView, BillingDashboardView, DownloadInvoiceView, CancelCourseView, CreateCustomerPortalSessionView
 from .staff_payments import StaffPaymentListView
+from .ledger_views import StaffPaymentLedgerDetailView
 
 
 app_name = 'billing'
@@ -24,7 +25,12 @@ urlpatterns = [
     # Subscription patterns with parameters
     path('subscriptions/<uuid:subscription_id>/cancel/', CancelSubscriptionView.as_view(), name='billing-subscription-cancel'),
     path('subscriptions/<int:subscription_id>/cancel/', CancelCourseView.as_view(), name='cancel-course'),
-    
+
+    path(
+        'staff/ledger/payments/<int:payment_id>/',
+        StaffPaymentLedgerDetailView.as_view(),
+        name='billing-staff-ledger-payment-detail',
+    ),
     # Payment patterns (list before payments/<int:…> routes)
     path('payments/', StaffPaymentListView.as_view(), name='billing-payment-list'),
     path('payments/<int:payment_id>/download-invoice/', DownloadInvoiceView.as_view(), name='download-invoice'),

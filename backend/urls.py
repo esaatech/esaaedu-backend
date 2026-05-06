@@ -23,6 +23,7 @@ from student import views as student_views
 from communication.staff_messages_views import StaffMessagesInboxPageView
 from teacher.calendar_views import StaffCalendarWeekPageView
 from teacher.roster_views import StaffTeacherRosterPageView
+from billings.ledger_views import StaffPaymentLedgerPageView
 
 # Create API router
 router = DefaultRouter()
@@ -32,6 +33,7 @@ urlpatterns = [
     path("staff/calendar/", StaffCalendarWeekPageView.as_view(), name="staff-calendar-week"),
     path("staff/teachers/", StaffTeacherRosterPageView.as_view(), name="staff-teacher-roster"),
     path("staff/messages/", StaffMessagesInboxPageView.as_view(), name="staff-messages-inbox"),
+    path("staff/billing/payments/", StaffPaymentLedgerPageView.as_view(), name="staff-payment-ledger"),
 
     # API endpoints
     path("api/auth/", include('authentication.urls')),

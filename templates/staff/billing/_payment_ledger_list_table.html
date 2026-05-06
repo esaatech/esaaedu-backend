@@ -1,0 +1,22 @@
+<table class="pay-ledger-table">
+  <thead>
+    <tr>
+      <th>Payer</th>
+      <th>Email</th>
+      <th>Course</th>
+      <th>Class</th>
+      <th>Amount</th>
+      <th>Status</th>
+      <th>Paid</th>
+      <th>Recorded</th>
+      <th>Source</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for payment in payments %}
+      {% include "staff/billing/_payment_ledger_row.html" with payment=payment %}
+    {% empty %}
+      <tr><td colspan="9">No payment records found.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

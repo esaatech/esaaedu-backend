@@ -1,0 +1,332 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+  :root {
+    --pay-primary: #0c4b33;
+    --pay-secondary: #417690;
+    --pay-tertiary: #333;
+    --pay-muted: #666;
+    --pay-line: #dce6eb;
+    --pay-row-line: #ececec;
+    --pay-bg: #fff;
+  }
+  .pay-ledger-wrap { padding: 12px; }
+  .pay-ledger-wrap h1 {
+    margin: 0 0 8px;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--pay-tertiary);
+  }
+  .pay-ledger-wrap p {
+    margin: 0 0 12px;
+    color: var(--pay-muted);
+    font-size: 13px;
+  }
+  .pay-ledger-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: var(--pay-muted);
+  }
+  .pay-ledger-toolbar a {
+    color: var(--pay-secondary);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .pay-ledger-toolbar a:hover { text-decoration: underline; }
+  .pay-ledger-toolbar .pay-ledger-limit-current {
+    color: var(--pay-tertiary);
+    font-weight: 700;
+  }
+  .pay-ledger-summary {
+    margin: 0 0 14px;
+    padding: 12px 14px;
+    border: 1px solid var(--pay-line);
+    border-radius: 6px;
+    background: #fafafa;
+  }
+  .pay-ledger-summary-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px 32px;
+    align-items: baseline;
+  }
+  .pay-ledger-summary-item {
+    flex: 1 1 auto;
+    min-width: 140px;
+  }
+  .pay-ledger-summary-label {
+    display: block;
+    margin: 0 0 4px;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.25;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--pay-secondary);
+  }
+  .pay-ledger-summary-value {
+    display: block;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--pay-primary);
+    line-height: 1.2;
+  }
+  .pay-ledger-summary-note {
+    margin: 10px 0 0;
+    font-size: 12px;
+    color: var(--pay-muted);
+    line-height: 1.35;
+  }
+  .pay-ledger-table { width: 100%; border-collapse: collapse; background: var(--pay-bg); }
+  .pay-ledger-table th, .pay-ledger-table td {
+    border-bottom: 1px solid var(--pay-row-line);
+    padding: 8px;
+    vertical-align: top;
+    text-align: left;
+    color: var(--pay-tertiary);
+  }
+  .pay-ledger-table th {
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.25;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--pay-secondary);
+    border-bottom: 1px solid var(--pay-line);
+    background: var(--pay-bg);
+  }
+  .pay-ledger-table td { font-size: 13px; line-height: 1.35; }
+  .pay-ledger-open-btn {
+    border: none;
+    background: transparent;
+    color: var(--pay-secondary);
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+  }
+  .pay-ledger-open-btn:hover { text-decoration: underline; }
+  .pay-ledger-detail-row td { background: #fcfcfc; }
+  .pay-ledger-detail-placeholder { color: var(--pay-muted); font-style: italic; }
+  .pay-ledger-breadcrumbs { font-size: 12px; margin: 0 0 12px; color: var(--pay-muted); }
+  .pay-ledger-breadcrumbs a { color: var(--pay-secondary); font-weight: 600; text-decoration: none; }
+  .pay-ledger-breadcrumbs a:hover { text-decoration: underline; }
+  .pay-ledger-bc-sep { margin: 0 0.35em; color: #999; }
+  .pay-ledger-bc-current { color: var(--pay-tertiary); font-weight: 600; }
+  .pay-ledger-detail-header { color: var(--pay-tertiary); margin-bottom: 6px; }
+  .pay-ledger-detail-header a { color: var(--pay-secondary); font-weight: 700; text-decoration: none; }
+  .pay-ledger-detail-header a:hover { text-decoration: underline; }
+  .pay-ledger-detail-meta { color: var(--pay-muted); font-size: 12px; margin-bottom: 8px; }
+  .pay-ledger-block {
+    margin: 10px 0;
+    padding: 8px;
+    border: 1px solid var(--pay-row-line);
+    border-radius: 4px;
+  }
+  .pay-ledger-block h4 {
+    margin: 0 0 6px;
+    color: var(--pay-secondary);
+    font-size: 13px;
+  }
+  .pay-ledger-grid {
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    gap: 6px 12px;
+    font-size: 12px;
+  }
+  .pay-ledger-grid dt {
+    color: var(--pay-secondary);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+  }
+  .pay-ledger-grid dd { margin: 0; color: var(--pay-tertiary); }
+  .pay-ledger-src--manual { color: var(--pay-primary); font-weight: 700; }
+  .pay-ledger-src--stripe { color: var(--pay-secondary); font-weight: 700; }
+  .pay-ledger-status { font-weight: 600; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="pay-ledger-wrap">
+  <nav class="pay-ledger-breadcrumbs" aria-label="Breadcrumb">
+    <a href="{% url 'admin:index' %}">Home</a>
+    <span class="pay-ledger-bc-sep">›</span>
+    <span class="pay-ledger-bc-current">Payment ledger</span>
+  </nav>
+  <h1>Payment ledger</h1>
+  <p>Recent payment records. Click a payer name for subscription, enrollment, class, and Stripe identifiers.</p>
+  <section class="pay-ledger-summary" aria-label="Period totals">
+    <div class="pay-ledger-summary-grid">
+      <div class="pay-ledger-summary-item">
+        <span class="pay-ledger-summary-label">Paid this month</span>
+        <span class="pay-ledger-summary-value">${{ ledger_totals.month_total|floatformat:2 }}</span>
+      </div>
+      <div class="pay-ledger-summary-item">
+        <span class="pay-ledger-summary-label">Paid YTD ({{ ledger_totals.calendar_year }})</span>
+        <span class="pay-ledger-summary-value">${{ ledger_totals.ytd_total|floatformat:2 }}</span>
+      </div>
+    </div>
+    <p class="pay-ledger-summary-note">Totals include succeeded payments only, by <code>paid_at</code>. Calendar uses {{ ledger_totals.timezone_name }} (same as admin dashboard).</p>
+  </section>
+  <div class="pay-ledger-toolbar">
+    <span>Show latest</span>
+    {% for opt in limit_options %}
+      {% if opt == limit %}
+        <span class="pay-ledger-limit-current">{{ opt }}</span>
+      {% else %}
+        <a href="?limit={{ opt }}">{{ opt }}</a>
+      {% endif %}
+    {% endfor %}
+    <span>rows · <a href="{% url 'admin:billings_payment_changelist' %}">Open Payments in admin</a></span>
+  </div>
+  {% include "staff/billing/_payment_ledger_list_table.html" with payments=payments %}
+</div>
+<script>
+(function () {
+  function escHtml(s) {
+    if (s == null || s === undefined) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function escAttr(s) {
+    if (s == null || s === undefined) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function dlRow(label, value) {
+    return `<dt>${escHtml(label)}</dt><dd>${value}</dd>`;
+  }
+
+  function renderDetail(d) {
+    const payUrl = d.payment_admin_url ? escAttr(d.payment_admin_url) : '';
+    const nameHtml = payUrl
+      ? `<a href="${payUrl}"><strong>${escHtml(d.payer_display)}</strong></a>`
+      : `<strong>${escHtml(d.payer_display)}</strong>`;
+    let html = `<div class="pay-ledger-detail-header">${nameHtml}`;
+    const ud = d.user_detail || {};
+    if (ud.admin_url) {
+      html += ` · <a href="${escAttr(ud.admin_url)}">User admin</a>`;
+    }
+    html += '</div>';
+
+    html += `<div class="pay-ledger-detail-meta">`;
+    html += `Amount: ${escHtml(d.amount)} ${escHtml((d.currency || '').toUpperCase())} · `;
+    html += `Status: ${escHtml(d.status)} · `;
+    html += `Source: ${d.is_manual ? 'Manual / non-Stripe' : 'Stripe'}`;
+    html += '</div>';
+
+    html += '<div class="pay-ledger-block"><h4>Stripe &amp; identifiers</h4><dl class="pay-ledger-grid">';
+    html += dlRow('Paid at', escHtml(d.paid_at || '—'));
+    html += dlRow('Recorded', escHtml(d.created_at || '—'));
+    html += dlRow('Customer (Stripe)', escHtml(d.customer_account_stripe_id || '—'));
+    html += dlRow('PaymentIntent', escHtml(d.stripe_payment_intent_id || '—'));
+    html += dlRow('Invoice', escHtml(d.stripe_invoice_id || '—'));
+    html += dlRow('Charge', escHtml(d.stripe_charge_id || '—'));
+    html += '</dl></div>';
+
+    const sub = d.subscriber;
+    html += '<div class="pay-ledger-block"><h4>Subscription (same user + course)</h4>';
+    if (!sub) {
+      html += '<div class="pay-ledger-detail-placeholder">No subscriber row linked to this user and course.</div>';
+    } else {
+      html += '<dl class="pay-ledger-grid">';
+      html += dlRow('Status', escHtml(sub.status || '—'));
+      html += dlRow('Type', escHtml(sub.subscription_type || '—'));
+      html += dlRow('Next invoice', escHtml(sub.next_invoice_date || '—'));
+      html += dlRow('Next amount', escHtml(sub.next_invoice_amount || '—'));
+      html += dlRow('Period ends', escHtml(sub.current_period_end || '—'));
+      html += dlRow('Cancel at', escHtml(sub.cancel_at || '—'));
+      html += '</dl>';
+    }
+    html += '</div>';
+
+    html += '<div class="pay-ledger-block"><h4>Enrollment</h4>';
+    const ec = d.enrolled_course_detail;
+    if (!ec) {
+      html += '<div class="pay-ledger-detail-placeholder">No EnrolledCourse row linked from this Payment.</div>';
+    } else {
+      const encUrl = ec.admin_url ? `<a href="${escAttr(ec.admin_url)}">${escHtml(ec.id)}</a>` : escHtml(ec.id);
+      html += '<dl class="pay-ledger-grid">';
+      html += dlRow('Enrollment id', encUrl);
+      html += dlRow('Enrollment status', escHtml(ec.status || '—'));
+      html += dlRow('Billing status', escHtml(ec.payment_status || '—'));
+      html += dlRow('Payment due', escHtml(ec.payment_due_date || '—'));
+      html += dlRow('Amount paid (enrollment)', escHtml(ec.amount_paid || '—'));
+      html += dlRow('Completion', escHtml(ec.completion_date || '—'));
+      html += '</dl>';
+    }
+    html += '</div>';
+
+    html += '<div class="pay-ledger-block"><h4>Course</h4>';
+    const cr = d.course_detail;
+    if (!cr) {
+      html += '<div class="pay-ledger-detail-placeholder">No course resolved for this Payment.</div>';
+    } else {
+      const ct = cr.admin_url ? `<a href="${escAttr(cr.admin_url)}">${escHtml(cr.title)}</a>` : escHtml(cr.title);
+      html += `<div>${ct}</div>`;
+    }
+    html += '</div>';
+
+    html += '<div class="pay-ledger-block"><h4>Classes (student in class for this course)</h4>';
+    const classes = d.classes || [];
+    if (!classes.length) {
+      html += '<div class="pay-ledger-detail-placeholder">No matching class rows.</div>';
+    } else {
+      classes.forEach((c) => {
+        html += '<div style="margin:6px 0;">';
+        html += `<strong>${escHtml(c.name)}</strong> · ${c.is_active ? 'active' : 'inactive'} · `;
+        html += `Teacher: ${escHtml(c.teacher_display || '—')} · `;
+        html += `Start: ${escHtml(c.start_date || '—')} · End: ${escHtml(c.end_date || '—')}`;
+        html += '</div>';
+      });
+    }
+    html += '</div>';
+
+    return html;
+  }
+
+  async function loadPaymentDetail(paymentId) {
+    const row = document.getElementById(`pay-ledger-detail-${paymentId}`);
+    const container = row && row.querySelector('.pay-ledger-detail-container');
+    if (!row || !container) return;
+
+    const shouldOpen = row.hasAttribute('hidden');
+    document.querySelectorAll('.pay-ledger-detail-row').forEach((r) => r.setAttribute('hidden', 'hidden'));
+    if (!shouldOpen) return;
+
+    row.removeAttribute('hidden');
+    if (container.dataset.loaded === '1') return;
+
+    container.innerHTML = '<div class="pay-ledger-detail-placeholder">Loading…</div>';
+    const response = await fetch(`/api/billing/staff/ledger/payments/${paymentId}/`, { credentials: 'same-origin' });
+    if (!response.ok) {
+      container.textContent = 'Failed to load payment details.';
+      return;
+    }
+    const detail = await response.json();
+    container.innerHTML = renderDetail(detail);
+    container.dataset.loaded = '1';
+  }
+
+  document.querySelectorAll('.pay-ledger-open-btn').forEach((btn) => {
+    btn.addEventListener('click', () => loadPaymentDetail(btn.dataset.paymentId));
+  });
+})();
+</script>
+{% endblock %}

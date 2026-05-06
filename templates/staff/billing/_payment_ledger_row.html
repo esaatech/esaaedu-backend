@@ -1,0 +1,18 @@
+<tr class="pay-ledger-row" data-payment-id="{{ payment.id }}">
+  <td><button type="button" class="pay-ledger-open-btn" data-payment-id="{{ payment.id }}">{{ payment.payer_display }}</button></td>
+  <td>{{ payment.user_email }}</td>
+  <td>{{ payment.course_title|default:"—" }}</td>
+  <td>{{ payment.class_summary|default:"—" }}</td>
+  <td>{{ payment.amount }} {{ payment.currency|upper }}</td>
+  <td><span class="pay-ledger-status">{{ payment.status }}</span></td>
+  <td>{{ payment.paid_at|default:"—" }}</td>
+  <td>{{ payment.created_at }}</td>
+  <td>{% if payment.is_manual %}<span class="pay-ledger-src pay-ledger-src--manual">Manual</span>{% else %}<span class="pay-ledger-src pay-ledger-src--stripe">Stripe</span>{% endif %}</td>
+</tr>
+<tr class="pay-ledger-detail-row" id="pay-ledger-detail-{{ payment.id }}" hidden>
+  <td colspan="9">
+    <div class="pay-ledger-detail-container" data-payment-id="{{ payment.id }}">
+      {% include "staff/billing/_payment_ledger_detail_panel.html" with detail=None %}
+    </div>
+  </td>
+</tr>
