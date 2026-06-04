@@ -12,6 +12,8 @@ from vertexai.generative_models import GenerativeModel, ChatSession, Tool, Funct
 from google.api_core import exceptions as google_exceptions
 from decouple import config
 
+from .gemini_service import resolve_model_name
+
 # Handle imports for both script and module usage
 try:
     from .schemas import (
@@ -52,10 +54,7 @@ class GeminiAgent:
         """Initialize Vertex AI client"""
         self.project_id = config('GCP_PROJECT_ID', default=None)
         self.location = config('VERTEX_AI_LOCATION', default='us-central1')
-        # Model name should be just the model identifier, not the full path
-        # Available models: gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash-001, gemini-2.0-flash-lite-001
-        # Using gemini-2.0-flash-001 as default (fast and cost-effective)
-        self.model_name = config('GEMINI_MODEL', default='gemini-2.0-flash-001')
+        self.model_name = resolve_model_name()
         
         if not self.project_id:
             logger.warning("GCP_PROJECT_ID not set, Vertex AI may not work correctly")

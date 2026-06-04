@@ -317,8 +317,9 @@ class AIPromptTemplate(models.Model):
     # AI Configuration (from template, not overridable by teachers)
     model_name = models.CharField(
         max_length=100,
-        default='gemini-2.0-flash-001',
-        help_text="Gemini model to use"
+        blank=True,
+        default='',
+        help_text="Optional Gemini model override. Leave blank to use GEMINI_MODEL env."
     )
     temperature = models.FloatField(
         default=0.7,

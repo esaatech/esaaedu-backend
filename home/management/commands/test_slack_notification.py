@@ -1,4 +1,5 @@
 from django.core.management.base import BaseCommand
+from decouple import config
 from home.models import ContactSubmission
 from slack_notifications import send_contact_notification, send_system_notification
 
@@ -10,7 +11,7 @@ class Command(BaseCommand):
         parser.add_argument(
             '--type',
             type=str,
-            choices=['contact', 'system'],
+            choices=['contact', 'system', 'error-alerts'],
             default='contact',
             help='Type of notification to test'
         )
@@ -22,6 +23,8 @@ class Command(BaseCommand):
             self.test_contact_notification()
         elif notification_type == 'system':
             self.test_system_notification()
+        elif notification_type == 'error-alerts':
+            self.test_error_alerts_notification()
 
     def test_contact_notification(self):
         """Test contact form notification"""
@@ -74,4 +77,36 @@ class Command(BaseCommand):
         else:
             self.stdout.write(
                 self.style.ERROR("❌ Failed to send system notification")
+            )
+
+    def test_error_alerts_notification(self):
+        """Test error alerts channel (SLACK_ERROR_ALERTS)"""
+        channel = (config("SLACK_ERROR_ALERTS", default="") or "").strip()
+        if not channel:
+            self.stdout.write(
+                self.style.ERROR("❌ SLACK_ERROR_ALERTS is not set in .env")
+            )
+            return
+
+        self.stdout.write(f"Testing error alerts notification to {channel}...")
+
+        success = send_system_notification(
+            title="Application Error: test_alert",
+            message=(
+                "*Source:* test\n"
+                "*Error code:* `test_alert`\n"
+                "*Context:* test_slack_notification command\n"
+                "This is a test error alert."
+            ),
+            color="#e01e5a",
+            channel=channel,
+        )
+
+        if success:
+            self.stdout.write(
+                self.style.SUCCESS("✅ Error alerts notification sent successfully!")
+            )
+        else:
+            self.stdout.write(
+                self.style.ERROR("❌ Failed to send error alerts notification")
             )

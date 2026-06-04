@@ -354,12 +354,18 @@ class SlackNotificationService:
         
         return blocks
     
-    def send_system_notification(self, title, message, color="#36a64f"):
+    def send_system_notification(self, title, message, color="#36a64f", channel=None):
         """
-        Send a general system notification
+        Send a general system notification.
+        channel: optional override (e.g. SLACK_ERROR_ALERTS); defaults to SLACK_CHANNEL.
         """
         if not self.is_available():
             print("Slack notifications not available")
+            return False
+
+        target_channel = (channel or self.channel or "").strip()
+        if not target_channel:
+            print("Slack channel not configured")
             return False
         
         try:
@@ -390,7 +396,7 @@ class SlackNotificationService:
             ]
             
             response = self.client.chat_postMessage(
-                channel=self.channel,
+                channel=target_channel,
                 text=title,
                 blocks=blocks
             )
@@ -417,11 +423,12 @@ def send_contact_notification(contact_submission):
     return slack_service.send_contact_form_notification(contact_submission)
 
 
-def send_system_notification(title, message, color="#36a64f"):
+def send_system_notification(title, message, color="#36a64f", channel=None):
     """
-    Convenience function to send system notification
+    Convenience function to send system notification.
+    channel: optional override (e.g. SLACK_ERROR_ALERTS for error alerts).
     """
-    return slack_service.send_system_notification(title, message, color)
+    return slack_service.send_system_notification(title, message, color, channel=channel)
 
 
 def send_assessment_notification(assessment_submission):

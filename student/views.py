@@ -18,6 +18,7 @@ import re
 
 from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback, Conversation, Message, CodeSnippet
 from teacher.utils import FileUploadService
+from ai.api_errors import ai_error_response
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -6513,10 +6514,11 @@ class StudentIdeExplainErrorView(APIView):
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error('StudentIdeExplainErrorView failed: %s', e, exc_info=True)
-            return Response(
-                {'error': 'Failed to explain error', 'details': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return ai_error_response(
+                e,
+                context="IDE error explanation",
+                user=request.user,
+                endpoint=request.path,
             )
 
 
@@ -6566,10 +6568,11 @@ class StudentIdeExplainOutputView(APIView):
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error('StudentIdeExplainOutputView failed: %s', e, exc_info=True)
-            return Response(
-                {'error': 'Failed to explain output', 'details': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return ai_error_response(
+                e,
+                context="IDE output explanation",
+                user=request.user,
+                endpoint=request.path,
             )
 
 
@@ -6619,8 +6622,9 @@ class StudentIdeExplainNoOutputView(APIView):
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error('StudentIdeExplainNoOutputView failed: %s', e, exc_info=True)
-            return Response(
-                {'error': 'Failed to explain missing output', 'details': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return ai_error_response(
+                e,
+                context="IDE no-output explanation",
+                user=request.user,
+                endpoint=request.path,
             )

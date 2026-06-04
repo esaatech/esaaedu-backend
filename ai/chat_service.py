@@ -10,6 +10,8 @@ from google.oauth2 import service_account
 from vertexai.generative_models import GenerativeModel, ChatSession
 from decouple import config
 
+from .gemini_service import resolve_model_name
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,7 +25,7 @@ class ChatService:
         """Initialize Vertex AI client"""
         self.project_id = config('GCP_PROJECT_ID', default=None)
         self.location = config('VERTEX_AI_LOCATION', default='us-central1')
-        self.model_name = config('GEMINI_MODEL', default='gemini-2.0-flash-001')
+        self.model_name = resolve_model_name()
         
         if not self.project_id:
             logger.warning("GCP_PROJECT_ID not set, Vertex AI may not work correctly")

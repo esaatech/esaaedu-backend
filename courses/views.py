@@ -8217,7 +8217,7 @@ class AIGenerateAssessmentQuestionsView(APIView):
         "short_answer_count": 0,
         "essay_count": 0,
         "temperature": 0.7,  // Optional
-        "model_name": "gemini-2.0-flash-001",  // Optional
+        "model_name": "gemini-2.5-flash",  // Optional override; omit to use GEMINI_MODEL env
         "max_tokens": null  // Optional
     }
     
@@ -8512,9 +8512,10 @@ Generate thorough exam questions that evaluate deep understanding, critical thin
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            import traceback
-            logger.error(f"Error in AI assessment generation: {e}\n{traceback.format_exc()}")
-            return Response(
-                {'error': f'Error during AI generation: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            from ai.api_errors import ai_error_response
+            return ai_error_response(
+                e,
+                context="AI assessment generation",
+                user=request.user,
+                endpoint=request.path,
             )

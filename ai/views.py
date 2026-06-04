@@ -4,6 +4,7 @@ from rest_framework import status, permissions
 from django.http import Http404
 import logging
 from .models import AIPromptTemplate
+from .gemini_service import resolve_model_name
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,8 @@ class AIPromptTemplateView(APIView):
         "display_name": "Course Detail Generation",
         "description": "...",
         "default_system_instruction": "...",
-        "model_name": "gemini-2.0-flash-001",
+        "model_name": "",
+        "effective_model_name": "gemini-2.5-flash",
         "temperature": 0.7,
         "max_tokens": null,
         "is_active": true
@@ -51,6 +53,7 @@ class AIPromptTemplateView(APIView):
                 'description': template.description,
                 'default_system_instruction': template.default_system_instruction,
                 'model_name': template.model_name,
+                'effective_model_name': resolve_model_name(template.model_name),
                 'temperature': template.temperature,
                 'max_tokens': template.max_tokens,
                 'is_active': template.is_active

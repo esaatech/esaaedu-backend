@@ -44,7 +44,7 @@ Guidelines:
 - Difficulty levels should accurately reflect the course content (beginner, intermediate, or advanced)
 - All content should be age-appropriate and motivating
 - Ensure all information is accurate, engaging, and appropriate for the target audience""",
-                'model_name': 'gemini-2.0-flash-001',
+                'model_name': '',
                 'temperature': 0.7,
                 'max_tokens': None
             },
@@ -56,7 +56,7 @@ Guidelines:
 Generate comprehensive course introductions that are engaging, clear, and informative.
 Focus on creating value for students and highlighting what makes the course unique.
 Ensure the introduction includes detailed overview, learning objectives, prerequisites, duration, sessions per week, total projects, max students, and value propositions.""",
-                'model_name': 'gemini-2.0-flash-001',
+                'model_name': '',
                 'temperature': 0.7,
                 'max_tokens': None
             },
@@ -75,7 +75,7 @@ Guidelines:
 - Include appropriate lesson types (live_class, video_audio, text_lesson)
 - Set realistic durations based on content complexity
 - Ensure lessons align with course duration and sessions per week""",
-                'model_name': 'gemini-2.0-flash-001',
+                'model_name': '',
                 'temperature': 0.7,
                 'max_tokens': None
             },
@@ -94,7 +94,7 @@ Guidelines:
 - Include helpful explanations for each question
 - Ensure questions cover different aspects of the lesson content
 - Questions should be appropriate for the target age group""",
-                'model_name': 'gemini-2.0-flash-001',
+                'model_name': '',
                 'temperature': 0.7,
                 'max_tokens': None
             },
@@ -113,7 +113,7 @@ Guidelines:
 - Provide clear requirements and rubrics where appropriate
 - Ensure questions align with learning objectives
 - Questions should be appropriate for the target age group""",
-                'model_name': 'gemini-2.0-flash-001',
+                'model_name': '',
                 'temperature': 0.7,
                 'max_tokens': None
             },
@@ -136,7 +136,7 @@ IMPORTANT: After providing feedback, you must also generate a correct answer or 
 - It will be shown to the student as a correction/reference, so make it clear and educational
 
 If you cannot grade the question due to unclear question, unclear answer, or insufficient information, award 0 points and provide feedback explaining why grading is not possible.""",
-                'model_name': 'gemini-2.0-flash-001',
+                'model_name': '',
                 'temperature': 0.3,
                 'max_tokens': None
             },
@@ -161,7 +161,7 @@ IMPORTANT: After providing feedback, you must also generate a correct answer or 
 - It will be shown to the student as a correction/reference, so make it clear and educational
 
 If you cannot grade the question due to unclear question, unclear answer, or insufficient information, award 0 points and provide feedback explaining why grading is not possible.""",
-                'model_name': 'gemini-2.0-flash-001',
+                'model_name': '',
                 'temperature': 0.3,
                 'max_tokens': None
             },
@@ -240,7 +240,7 @@ GENERATION STRATEGY:
 
 
 Remember: Tests should comprehensively assess student knowledge across all covered topics while emphasizing recent material when question count exceeds lesson count.""",
-                'model_name': 'gemini-2.0-flash-001',
+                'model_name': '',
                 'temperature': 0.7,
                 'max_tokens': None
             },
@@ -341,7 +341,7 @@ GENERATION STRATEGY:
 
 
 Remember: Exams should provide a comprehensive evaluation of student mastery across all course topics, with appropriate emphasis on recent material when question count exceeds lesson count. Questions should test deep understanding and the ability to synthesize knowledge.""",
-                'model_name': 'gemini-2.0-flash-001',
+                'model_name': '',
                 'temperature': 0.7,
                 'max_tokens': None
             },
@@ -368,7 +368,7 @@ SAFETY AND HONESTY:
 - Do not invent line numbers that are not in the error or the code.
 - If the error is from the environment (e.g. failed to load interpreter), say so simply and suggest retry or asking a teacher.
 - Encourage them to read the red error text first; you are backup help.""",
-                'model_name': 'gemini-2.0-flash-001',
+                'model_name': '',
                 'temperature': 0.45,
                 'max_tokens': None
             },
@@ -396,7 +396,7 @@ CONTENT:
 SAFETY:
 - Do not fabricate output that was not in the program output section.
 - Prefer hints and one-line fixes over pasting a full program unless the snippet is very small.""",
-                'model_name': 'gemini-2.0-flash-001',
+                'model_name': '',
                 'temperature': 0.45,
                 'max_tokens': None
             },
@@ -422,7 +422,7 @@ CONTENT:
 SAFETY:
 - Do not invent a traceback or say the program crashed unless the user message clearly includes an error.
 - Do not promise behavior of the specific IDE beyond what is reasonable for in-browser Python/JavaScript learning.""",
-                'model_name': 'gemini-2.0-flash-001',
+                'model_name': '',
                 'temperature': 0.45,
                 'max_tokens': None
             }
@@ -488,6 +488,15 @@ SAFETY:
                     updated = True
                 if not template.is_active:
                     template.is_active = True
+                    updated = True
+                seeded_models = {
+                    'gemini-2.0-flash-001',
+                    'gemini-2.0-flash',
+                    'gemini-2.0-flash-lite-001',
+                    'gemini-2.0-flash-lite',
+                }
+                if template.model_name in seeded_models:
+                    template.model_name = ''
                     updated = True
                 if updated:
                     template.save()

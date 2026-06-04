@@ -635,6 +635,7 @@ else:
 # Slack Configuration
 SLACK_BOT_TOKEN = config('SLACK_BOT_TOKEN', default='')
 SLACK_CHANNEL = config('SLACK_CHANNEL', default='#general')
+SLACK_ERROR_ALERTS = config('SLACK_ERROR_ALERTS', default='')
 ADMIN_URL = config('ADMIN_URL', default='http://localhost:8000')
 
 # Jitsi Configuration

@@ -45,6 +45,7 @@ from ai.gemini_course_lessons_service import GeminiCourseLessonsService
 from ai.video_transcription_service import VideoTranscriptionService
 from ai.gemini_quiz_service import GeminiQuizService
 from ai.gemini_assignment_service import GeminiAssignmentService
+from ai.api_errors import ai_error_response
 from courses.serializers import VideoMaterialSerializer, VideoMaterialCreateSerializer, VideoMaterialTranscribeSerializer, CourseAssessmentGradingSerializer, CourseAssessmentSubmissionResponseSerializer
 from .utils import FileUploadService
 
@@ -2465,11 +2466,11 @@ class AssignmentAIGradingView(APIView):
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
-            import traceback
-            logger.error(f"Error in AI grading: {e}\n{traceback.format_exc()}")
-            return Response(
-                {'error': f'Error during AI grading: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return ai_error_response(
+                e,
+                context="AI assignment grading",
+                user=request.user,
+                endpoint=request.path,
             )
 
 
@@ -2548,11 +2549,11 @@ class CourseAssessmentAIGradingView(APIView):
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
-            import traceback
-            logger.error(f"Error in assessment AI grading: {e}\n{traceback.format_exc()}")
-            return Response(
-                {'error': f'Error during AI grading: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return ai_error_response(
+                e,
+                context="AI assessment grading",
+                user=request.user,
+                endpoint=request.path,
             )
 
 
@@ -3208,11 +3209,11 @@ Focus on creating value for students and highlighting what makes the course uniq
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            import traceback
-            logger.error(f"Error in AI course introduction generation: {e}\n{traceback.format_exc()}")
-            return Response(
-                {'error': f'Error during AI generation: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return ai_error_response(
+                e,
+                context="AI course introduction generation",
+                user=request.user,
+                endpoint=request.path,
             )
 
 
@@ -3311,11 +3312,11 @@ class AIGenerateCourseDetailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            import traceback
-            logger.error(f"Error in AI course detail generation: {e}\n{traceback.format_exc()}")
-            return Response(
-                {'error': f'Error during AI generation: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return ai_error_response(
+                e,
+                context="AI course detail generation",
+                user=request.user,
+                endpoint=request.path,
             )
 
 
@@ -3413,11 +3414,11 @@ Each lesson should be clear, focused, and contribute to the overall course learn
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            import traceback
-            logger.error(f"Error in AI lessons generation: {e}\n{traceback.format_exc()}")
-            return Response(
-                {'error': f'Error during AI generation: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return ai_error_response(
+                e,
+                context="AI lessons generation",
+                user=request.user,
+                endpoint=request.path,
             )
 
 
@@ -4767,11 +4768,11 @@ Generate comprehensive quiz questions that test understanding of the lesson mate
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            import traceback
-            logger.error(f"Error in AI quiz generation: {e}\n{traceback.format_exc()}")
-            return Response(
-                {'error': f'Error during AI generation: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return ai_error_response(
+                e,
+                context="AI quiz generation",
+                user=request.user,
+                endpoint=request.path,
             )
 
 
@@ -5070,11 +5071,11 @@ Generate comprehensive assignment questions that require students to demonstrate
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            import traceback
-            logger.error(f"Error in AI assignment generation: {e}\n{traceback.format_exc()}")
-            return Response(
-                {'error': f'Error during AI generation: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return ai_error_response(
+                e,
+                context="AI assignment generation",
+                user=request.user,
+                endpoint=request.path,
             )
 
 

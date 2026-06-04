@@ -49,8 +49,31 @@ from google.oauth2 import service_account
 from vertexai.generative_models import GenerativeModel, Part, Tool, FunctionDeclaration
 from google.api_core import exceptions as google_exceptions
 from decouple import config
+from django.core.exceptions import ImproperlyConfigured
+
+from ai.exceptions import from_google_api_error, invalid_response_error
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_model_name(override: Optional[str] = None) -> str:
+    """
+    Resolve the Gemini model to use.
+
+    Priority: explicit override (non-blank) → GEMINI_MODEL env (required).
+    AIPromptTemplate.model_name and API request model_name should pass override here;
+    blank/None means use the env default.
+    """
+    explicit = (override or "").strip()
+    if explicit:
+        return explicit
+    value = (config("GEMINI_MODEL", default="") or "").strip()
+    if not value:
+        raise ImproperlyConfigured(
+            "GEMINI_MODEL environment variable is required. "
+            "Set it in .env (see env.example)."
+        )
+    return value
 
 
 class GeminiService:
@@ -73,12 +96,12 @@ class GeminiService:
         Reads configuration from environment variables:
         - GCP_PROJECT_ID: Google Cloud project ID
         - VERTEX_AI_LOCATION: Region (default: us-central1)
-        - GEMINI_MODEL: Model name (default: gemini-2.0-flash-001)
+        - GEMINI_MODEL: Model name (required)
         - GOOGLE_APPLICATION_CREDENTIALS: Path to service account JSON (optional)
         """
         self.project_id = config('GCP_PROJECT_ID', default=None)
         self.location = config('VERTEX_AI_LOCATION', default='us-central1')
-        self.model_name = config('GEMINI_MODEL', default='gemini-2.0-flash-001')
+        self.model_name = resolve_model_name()
         
         if not self.project_id:
             logger.warning("GCP_PROJECT_ID not set, Vertex AI may not work correctly")
@@ -166,8 +189,7 @@ class GeminiService:
         if tools:
             model_kwargs['tools'] = tools
         
-        # Use provided model_name or fall back to instance default
-        model_to_use = model_name if model_name else self.model_name
+        model_to_use = resolve_model_name(model_name)
         
         return GenerativeModel(
             model_name=model_to_use,
@@ -247,7 +269,7 @@ Return ONLY valid JSON, no additional text before or after."""
                 logger.debug(f"Including {len(file_parts)} file part(s) in request")
             
             # Generate content
-            logger.debug(f"Generating content with model: {self.model_name}")
+            logger.debug(f"Generating content with model: {resolve_model_name(model_name)}")
             logger.debug(f"System instruction: {system_instruction[:100]}...")
             logger.debug(f"Prompt: {final_prompt[:100]}...")
             
@@ -280,10 +302,12 @@ Return ONLY valid JSON, no additional text before or after."""
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse JSON response: {e}")
                     logger.error(f"Raw response: {raw_text}")
-                    raise ValueError(f"Invalid JSON response from AI: {e}")
+                    raise invalid_response_error(
+                        f"Invalid JSON response from AI: {e}",
+                        cause=e,
+                    )
             
-            # Use the actual model name that was used (from parameter or default)
-            actual_model_name = model_name if model_name else self.model_name
+            actual_model_name = resolve_model_name(model_name)
             
             return {
                 'raw': raw_text,
@@ -293,7 +317,9 @@ Return ONLY valid JSON, no additional text before or after."""
             
         except google_exceptions.GoogleAPIError as e:
             logger.error(f"Google API error: {e}", exc_info=True)
-            raise Exception(f"Gemini API error: {e}")
+            raise from_google_api_error(e) from e
+        except ImproperlyConfigured:
+            raise
         except Exception as e:
             logger.error(f"Unexpected error in generate: {e}", exc_info=True)
             raise
@@ -333,7 +359,11 @@ Return ONLY valid JSON, no additional text before or after."""
         generation_config = {"temperature": temperature}
         if max_tokens:
             generation_config["max_output_tokens"] = max_tokens
-        response = model.generate_content(prompt, generation_config=generation_config)
+        try:
+            response = model.generate_content(prompt, generation_config=generation_config)
+        except google_exceptions.GoogleAPIError as e:
+            logger.error(f"Google API error in generate_with_tools: {e}", exc_info=True)
+            raise from_google_api_error(e) from e
         # Parse: function_call in parts or text
         if not response.candidates:
             return {"text": ""}
