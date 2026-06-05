@@ -13,7 +13,24 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+try:
+    from django_redis.exceptions import ConnectionInterrupted
+except ImportError:  # pragma: no cover
+    ConnectionInterrupted = None  # type: ignore
+
 CACHE_KEY_PREFIX = 'lesson_chat:'
+
+
+def _cache_unreachable(exc: BaseException) -> bool:
+    """True when Redis/django-redis cannot be reached (DNS, network, down)."""
+    if ConnectionInterrupted is not None and isinstance(exc, ConnectionInterrupted):
+        return True
+    try:
+        from redis.exceptions import ConnectionError as RedisConnectionError
+        from redis.exceptions import TimeoutError as RedisTimeoutError
+    except ImportError:  # pragma: no cover
+        return False
+    return isinstance(exc, (RedisConnectionError, RedisTimeoutError))
 
 
 def get_lesson_context(lesson_id):
@@ -25,9 +42,16 @@ def get_lesson_context(lesson_id):
     cache_key = f'{CACHE_KEY_PREFIX}{lesson_id}'
     ttl = getattr(settings, 'LESSON_CHAT_CACHE_TTL_SECONDS', 600)
 
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return cached
+    try:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+    except Exception as e:
+        if not _cache_unreachable(e):
+            raise
+        logger.debug(
+            "Lesson context cache get skipped (unreachable), loading from DB: %s", e
+        )
 
     from courses.models import Lesson
     try:
@@ -39,8 +63,13 @@ def get_lesson_context(lesson_id):
     body = getattr(lesson, 'tutorx_content', '') or ''
     context = f"Lesson: {title}\n\n{body}".strip()
 
-    cache.set(cache_key, context, timeout=ttl)
-    logger.debug("Lesson context cached for lesson_id=%s (ttl=%ss)", lesson_id, ttl)
+    try:
+        cache.set(cache_key, context, timeout=ttl)
+        logger.debug("Lesson context cached for lesson_id=%s (ttl=%ss)", lesson_id, ttl)
+    except Exception as e:
+        if not _cache_unreachable(e):
+            raise
+        logger.debug("Lesson context cache set skipped (unreachable): %s", e)
     return context
 
 
@@ -50,8 +79,16 @@ def invalidate_lesson_chat_cache(lesson_id) -> None:
     Call after saving lesson content (e.g. PUT /content/ or admin save) so chat sees updates immediately.
     """
     cache_key = f"{CACHE_KEY_PREFIX}{lesson_id}"
-    cache.delete(cache_key)
-    logger.debug("Lesson chat cache invalidated for lesson_id=%s", lesson_id)
+    try:
+        cache.delete(cache_key)
+        logger.debug("Lesson chat cache invalidated for lesson_id=%s", lesson_id)
+    except Exception as e:
+        if _cache_unreachable(e):
+            logger.debug(
+                "Lesson chat cache invalidate skipped (unreachable): %s", e
+            )
+            return
+        raise
 
 
 def is_generate_questions_intent(message: str) -> bool:
