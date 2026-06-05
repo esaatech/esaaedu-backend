@@ -3,6 +3,8 @@ from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase, override_settings
 from google.api_core.exceptions import NotFound, ResourceExhausted
 
+from unittest.mock import patch
+
 from ai.exceptions import (
     USER_FACING_AI_ERROR,
     from_exception,
@@ -54,3 +56,22 @@ class GeminiExceptionsTests(SimpleTestCase):
             )
         self.assertIn("projects/foo", response.data["error"])
         self.assertEqual(response.data["error_code"], "model_unavailable")
+
+    @patch("error_alerts.notify_ai_failure")
+    def test_raise_gemini_error_notifies_once(self, mock_notify):
+        from ai.exceptions import GeminiServiceError
+        from ai.gemini_service import _raise_gemini_error
+
+        err = from_google_api_error(NotFound("model missing"))
+        with self.assertRaises(GeminiServiceError):
+            _raise_gemini_error(err, context="GeminiService.generate")
+        mock_notify.assert_called_once()
+        self.assertTrue(err.slack_notified)
+
+    @patch("error_alerts.notify_ai_failure")
+    def test_ai_error_response_skips_duplicate_slack_when_already_notified(self, mock_notify):
+        exc = from_google_api_error(NotFound("projects/foo/models/bar"))
+        exc.slack_notified = True
+        with override_settings(DEBUG=False):
+            ai_error_response(exc, context="test", endpoint="/test/")
+        mock_notify.assert_not_called()

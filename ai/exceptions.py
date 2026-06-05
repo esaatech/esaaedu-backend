@@ -26,11 +26,13 @@ class GeminiServiceError(Exception):
         status_code: int = 500,
         notify_admin: bool = True,
         cause: Optional[BaseException] = None,
+        slack_notified: bool = False,
     ):
         self.error_code = error_code
         self.log_message = log_message
         self.status_code = status_code
         self.notify_admin = notify_admin
+        self.slack_notified = slack_notified
         super().__init__(log_message)
         self.__cause__ = cause
 

@@ -51,9 +51,27 @@ from google.api_core import exceptions as google_exceptions
 from decouple import config
 from django.core.exceptions import ImproperlyConfigured
 
-from ai.exceptions import from_google_api_error, invalid_response_error
+from ai.exceptions import GeminiServiceError, from_google_api_error, invalid_response_error
 
 logger = logging.getLogger(__name__)
+
+
+def _raise_gemini_error(err: GeminiServiceError, *, context: str) -> None:
+    """Send throttled Slack alert (once per error) and re-raise."""
+    if not err.slack_notified:
+        try:
+            from error_alerts import notify_ai_failure
+
+            notify_ai_failure(
+                error_code=err.error_code,
+                log_message=err.log_message,
+                context=context,
+                notify_admin=err.notify_admin,
+            )
+        except Exception as notify_exc:
+            logger.warning("Gemini error notify step failed: %s", notify_exc, exc_info=True)
+        err.slack_notified = True
+    raise err
 
 
 def resolve_model_name(override: Optional[str] = None) -> str:
@@ -302,9 +320,12 @@ Return ONLY valid JSON, no additional text before or after."""
                 except json.JSONDecodeError as e:
                     logger.error(f"Failed to parse JSON response: {e}")
                     logger.error(f"Raw response: {raw_text}")
-                    raise invalid_response_error(
-                        f"Invalid JSON response from AI: {e}",
-                        cause=e,
+                    _raise_gemini_error(
+                        invalid_response_error(
+                            f"Invalid JSON response from AI: {e}",
+                            cause=e,
+                        ),
+                        context="GeminiService.generate",
                     )
             
             actual_model_name = resolve_model_name(model_name)
@@ -317,7 +338,9 @@ Return ONLY valid JSON, no additional text before or after."""
             
         except google_exceptions.GoogleAPIError as e:
             logger.error(f"Google API error: {e}", exc_info=True)
-            raise from_google_api_error(e) from e
+            _raise_gemini_error(from_google_api_error(e), context="GeminiService.generate")
+        except GeminiServiceError:
+            raise
         except ImproperlyConfigured:
             raise
         except Exception as e:
@@ -363,7 +386,10 @@ Return ONLY valid JSON, no additional text before or after."""
             response = model.generate_content(prompt, generation_config=generation_config)
         except google_exceptions.GoogleAPIError as e:
             logger.error(f"Google API error in generate_with_tools: {e}", exc_info=True)
-            raise from_google_api_error(e) from e
+            _raise_gemini_error(
+                from_google_api_error(e),
+                context="GeminiService.generate_with_tools",
+            )
         # Parse: function_call in parts or text
         if not response.candidates:
             return {"text": ""}

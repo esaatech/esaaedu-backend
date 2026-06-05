@@ -37,17 +37,18 @@ def ai_error_response(
 
     gemini_exc = from_exception(exc)
 
-    try:
-        notify_ai_failure(
-            error_code=gemini_exc.error_code,
-            log_message=gemini_exc.log_message,
-            context=context,
-            user=user,
-            endpoint=endpoint,
-            notify_admin=gemini_exc.notify_admin,
-        )
-    except Exception as notify_exc:
-        logger.warning("AI failure notify step failed: %s", notify_exc, exc_info=True)
+    if not gemini_exc.slack_notified:
+        try:
+            notify_ai_failure(
+                error_code=gemini_exc.error_code,
+                log_message=gemini_exc.log_message,
+                context=context,
+                user=user,
+                endpoint=endpoint,
+                notify_admin=gemini_exc.notify_admin,
+            )
+        except Exception as notify_exc:
+            logger.warning("AI failure notify step failed: %s", notify_exc, exc_info=True)
 
     if isinstance(exc, ImproperlyConfigured) or not isinstance(exc, GeminiServiceError):
         logger.exception("AI failure in %s", context)

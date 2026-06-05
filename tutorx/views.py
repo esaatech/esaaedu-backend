@@ -31,6 +31,7 @@ from .serializers import (
     InteractiveEventSerializer,
     InteractiveVideoSerializer,
 )
+from ai.api_errors import ai_error_response
 from settings.models import UserTutorXInstruction
 from courses.models import Lesson, AudioVideoMaterial
 from django.core.files.storage import default_storage
@@ -381,10 +382,11 @@ class BlockActionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
-            logger.error(f"Error in {action_type}: {e}", exc_info=True)
-            return Response(
-                {'error': f'Failed to process {action_type} action', 'details': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return ai_error_response(
+                e,
+                context=f"TutorX {action_type}",
+                user=request.user,
+                endpoint=request.path,
             )
 
 
@@ -1426,10 +1428,11 @@ class TutorXLessonAskView(APIView):
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error(f"Error in TutorXLessonAskView: {e}", exc_info=True)
-            return Response(
-                {'error': 'Failed to get answer', 'details': str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            return ai_error_response(
+                e,
+                context="TutorX lesson ask",
+                user=request.user,
+                endpoint=request.path,
             )
 
 
