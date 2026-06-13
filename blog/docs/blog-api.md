@@ -25,12 +25,40 @@ Returns a paginated list of published posts, ordered by `published_at` (newest f
 | `excerpt`    | string | Short preview (~160 chars)     |
 | `published_at` | string \| null | ISO 8601 datetime          |
 | `author`     | object | `{ id, email }`                |
+| `categories` | array  | `[{ id, name, slug, post_count? }]` |
+
+**Query parameters:**
+
+| Param      | Description                                      |
+|-----------|--------------------------------------------------|
+| `category` | Filter by category slug (e.g. `?category=programming`) |
 
 **Example:**
 
 ```bash
 curl -s http://127.0.0.1:8000/api/blog/
+curl -s "http://127.0.0.1:8000/api/blog/?category=programming"
 ```
+
+---
+
+### List or create categories
+
+**GET** `/api/blog/categories/`
+
+Returns all blog categories (public). Each item includes `post_count` (published posts only).
+
+**POST** `/api/blog/categories/` (authenticated)
+
+Create a new category. Teachers use this from the blog tool; admins can also add categories in Django Admin.
+
+**Request body:**
+
+| Field  | Type   | Required | Description   |
+|--------|--------|----------|---------------|
+| `name` | string | Yes      | Category name |
+
+**Response:** `{ id, name, slug, post_count }`
 
 ---
 
@@ -78,7 +106,8 @@ Creates a **draft** blog post. Used by the frontend "Export as blog" flow when e
 |-----------|--------|----------|------------------------------------------------------------|
 | `title`   | string | Yes      | Post title                                                 |
 | `content` | string | Yes      | Full post body (e.g. JSON string from book export)         |
-| `excerpt` | string | No       | Short preview (~160 chars)                                 |
+| `excerpt` | string | No       | Short preview (~160 chars) — accepted by frontend; not persisted yet |
+| `category_ids` | number[] | No  | IDs of categories to assign (many-to-many)                  |
 
 **Response:** Same shape as **Get post by slug** (created post; `status` will be `draft`). The post does not appear in the public list or detail API until it is set to **published** in Django Admin.
 
@@ -126,7 +155,7 @@ Returns a single post by primary key `id`. Allowed only if `post.author == reque
 
 Updates a post (title, content). Allowed only if `post.author == request.user`. **Always sets `status` to `draft`** so admin can review before republishing. **Requires authentication.**
 
-**Request body (JSON):** `title` (optional), `content` (optional). At least one field required.
+**Request body (JSON):** `title` (optional), `content` (optional), `category_ids` (optional, replaces full category set). At least one field required.
 
 **Response:** Same shape as **Get post by slug** (updated post).
 
@@ -142,15 +171,17 @@ Deletes a post. Allowed only if `post.author == request.user`. **Requires authen
 
 ## Model (admin)
 
-- **Post**: `title`, `slug` (unique, can be auto from title), `content`, `author` (user), `status` (draft / published), `published_at`, timestamps.
+- **BlogCategory**: `name` (unique), `slug` (auto from name). Manage in **Django Admin** → Blog → Blog categories.
+- **Post**: `title`, `slug`, `content`, `author`, `status`, `published_at`, `categories` (many-to-many to BlogCategory), timestamps.
 - Only posts with `status=published` appear in the list and detail API.
-- Slug is used in the URL; create/edit/publish posts in **Django Admin** → Blog → Blog posts.
+- Teachers assign categories in **Tools → Blog** or admins assign via Django Admin (`filter_horizontal` on posts).
 
 ---
 
 ## URL design
 
 - List: `.../api/blog/`
+- Categories: `.../api/blog/categories/`
 - Create: `.../api/blog/create/`
 - My list: `.../api/blog/mine/`
 - My detail/update/delete: `.../api/blog/mine/<id>/`

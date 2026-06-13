@@ -1,10 +1,12 @@
-from rest_framework.generics import ListAPIView, RetrieveAPIView, CreateAPIView, RetrieveUpdateDestroyAPIView
+from rest_framework.generics import ListAPIView, RetrieveAPIView, CreateAPIView, RetrieveUpdateDestroyAPIView, ListCreateAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 
-from .models import Post
+from .models import BlogCategory, Post
 from .serializers import (
+    BlogCategorySerializer,
+    BlogCategoryCreateSerializer,
     PostListSerializer,
     PostDetailSerializer,
     PostCreateSerializer,
@@ -13,14 +15,26 @@ from .serializers import (
 )
 
 
+def _posts_with_categories():
+    return Post.objects.prefetch_related('categories')
+
+
 class PostListView(ListAPIView):
     """
     List published blog posts.
-    GET /api/blog/
+    GET /api/blog/?category=<slug>
     """
     permission_classes = [AllowAny]
     serializer_class = PostListSerializer
-    queryset = Post.objects.filter(status=Post.Status.PUBLISHED).order_by('-published_at')
+
+    def get_queryset(self):
+        queryset = _posts_with_categories().filter(
+            status=Post.Status.PUBLISHED,
+        ).order_by('-published_at')
+        category_slug = self.request.query_params.get('category')
+        if category_slug:
+            queryset = queryset.filter(categories__slug__iexact=category_slug).distinct()
+        return queryset
 
 
 class PostDetailView(RetrieveAPIView):
@@ -34,7 +48,7 @@ class PostDetailView(RetrieveAPIView):
     lookup_field = 'slug'
 
     def get_queryset(self):
-        return Post.objects.filter(status=Post.Status.PUBLISHED)
+        return _posts_with_categories().filter(status=Post.Status.PUBLISHED)
 
 
 class PostCreateView(CreateAPIView):
@@ -55,6 +69,7 @@ class PostCreateView(CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         instance = serializer.save()
+        instance = _posts_with_categories().get(pk=instance.pk)
         return Response(
             PostDetailSerializer(instance).data,
             status=status.HTTP_201_CREATED,
@@ -70,7 +85,9 @@ class MyPostListView(ListAPIView):
     serializer_class = PostMyListSerializer
 
     def get_queryset(self):
-        return Post.objects.filter(author=self.request.user).order_by('-updated_at')
+        return _posts_with_categories().filter(
+            author=self.request.user,
+        ).order_by('-updated_at')
 
 
 class MyPostDetailView(RetrieveUpdateDestroyAPIView):
@@ -85,7 +102,7 @@ class MyPostDetailView(RetrieveUpdateDestroyAPIView):
     lookup_field = 'pk'
 
     def get_queryset(self):
-        return Post.objects.filter(author=self.request.user)
+        return _posts_with_categories().filter(author=self.request.user)
 
     def get_serializer_class(self):
         if self.request.method in ('PUT', 'PATCH'):
@@ -96,3 +113,40 @@ class MyPostDetailView(RetrieveUpdateDestroyAPIView):
         instance = serializer.save()
         instance.status = Post.Status.DRAFT
         instance.save(update_fields=['status', 'updated_at'])
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        instance = _posts_with_categories().get(pk=instance.pk)
+        return Response(PostDetailSerializer(instance).data)
+
+
+class BlogCategoryListCreateView(ListCreateAPIView):
+    """
+    List all blog categories or create a new one.
+    GET /api/blog/categories/
+    POST /api/blog/categories/  (authenticated teachers)
+    """
+    queryset = BlogCategory.objects.all().order_by('name')
+
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [IsAuthenticated()]
+        return [AllowAny()]
+
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return BlogCategoryCreateSerializer
+        return BlogCategorySerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save()
+        return Response(
+            BlogCategorySerializer(instance).data,
+            status=status.HTTP_201_CREATED,
+        )
