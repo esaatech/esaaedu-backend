@@ -42,7 +42,12 @@ class CourseAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
         ('Display & Marketing', {
-            'fields': ('featured', 'popular', 'color', 'icon', 'image', 'landing_page_url', 'get_full_landing_page_url_display')
+            'fields': (
+                'featured', 'popular', 'color', 'icon', 'image',
+                'landing_page_url', 'get_full_landing_page_url_display',
+                'promo_video_url',
+            ),
+            'description': 'Landing page URL and optional YouTube promo video for ad traffic (?landing=true).',
         }),
         ('Settings', {
             'fields': ('max_students', 'schedule', 'certificate', 'status')

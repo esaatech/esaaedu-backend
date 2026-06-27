@@ -800,7 +800,7 @@ class CourseDetailSerializer(serializers.ModelSerializer):
             'value_propositions',
             
             # Landing page URL
-            'landing_page_url', 'get_landing_page_url',
+            'landing_page_url', 'get_landing_page_url', 'promo_video_url',
             
             # Reviews and ratings
             'reviews', 'average_rating', 'review_count',
@@ -870,8 +870,16 @@ class CourseCreateUpdateSerializer(serializers.ModelSerializer):
             'value_propositions',
             
             # Landing page URL (admin editable)
-            'landing_page_url'
+            'landing_page_url', 'promo_video_url'
         ]
+    
+    def validate_promo_video_url(self, value):
+        if not value:
+            return ''
+        url = value.strip()
+        if 'youtube.com' not in url and 'youtu.be' not in url:
+            raise serializers.ValidationError('Promo video must be a YouTube URL.')
+        return url
     
     def validate_landing_page_url(self, value):
         """Only allow admin to set custom landing page URL"""

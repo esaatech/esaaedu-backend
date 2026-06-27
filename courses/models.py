@@ -171,6 +171,13 @@ class Course(models.Model):
         null=True,
         help_text="Custom landing page URL for marketing. If empty, will auto-generate from course title and ID. Format: /courses/slug-uuid?landing=true"
     )
+    promo_video_url = models.URLField(
+        blank=True,
+        default='',
+        max_length=500,
+        verbose_name='Promo video URL (YouTube)',
+        help_text="Optional YouTube URL for the ad landing page hero. Replaces course image and header text when set.",
+    )
     
     # Course Management
     max_students = models.IntegerField(
