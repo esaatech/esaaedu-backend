@@ -59,10 +59,8 @@ class CourseAdmin(admin.ModelAdmin):
         """
         if not obj:
             return "-"
-        
-        # Get request from admin instance if available
-        request = getattr(self, '_request', None)
-        full_url = obj.get_full_landing_page_url(request=request)
+
+        full_url = obj.get_full_landing_page_url()
         
         # Create unique IDs for this instance
         input_id = f"landing-url-{obj.id}"
@@ -147,7 +145,11 @@ class CourseAdmin(admin.ModelAdmin):
             input_id,
             button_id
         )
-        return html
+        return format_html(
+            '{}<p style="margin: 8px 0 0; font-size: 12px; color: #666;">'
+            'Opens the React frontend (FRONTEND_URL), not the Django API server.</p>',
+            html,
+        )
     
     get_full_landing_page_url_display.short_description = 'Full Landing Page URL'
     

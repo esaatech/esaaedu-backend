@@ -267,33 +267,19 @@ class Course(models.Model):
     def get_full_landing_page_url(self, request=None):
         """
         Get full landing page URL with domain.
-        Returns full URL (e.g., https://www.sbtyacedemy.com/courses/...)
+        Uses FRONTEND_URL — landing pages are React routes, not Django API paths.
         """
-        from django.conf import settings
         from decouple import config
-        
-        # Get the path (custom or auto-generated)
+
         path = self.get_landing_page_url
-        
-        # If path already contains a full URL (starts with http), return as is
+
         if path.startswith('http://') or path.startswith('https://'):
             return path
-        
-        # Determine domain
-        if request:
-            # Use request domain if available
-            scheme = 'https' if request.is_secure() else 'http'
-            domain = request.get_host()
-            return f"{scheme}://{domain}{path}"
-        else:
-            # Fallback to environment variable or default
-            frontend_url = config('FRONTEND_URL', default='https://www.sbtyacedemy.com')
-            # Remove trailing slash if present
-            frontend_url = frontend_url.rstrip('/')
-            # Ensure path starts with /
-            if not path.startswith('/'):
-                path = '/' + path
-            return f"{frontend_url}{path}"
+
+        frontend_url = config('FRONTEND_URL', default='https://www.sbtyacedemy.com').rstrip('/')
+        if not path.startswith('/'):
+            path = '/' + path
+        return f"{frontend_url}{path}"
     
     # Student Relationships (using through model)
     enrolled_students = models.ManyToManyField(
