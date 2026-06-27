@@ -143,6 +143,31 @@ def complete_enrollment_without_stripe(
     from student.models import EnrolledCourse
     from courses.models import Class
 
+    # Apply per-course trial defaults so every non-Stripe entry point (frontend enroll,
+    # Django admin, teacher roster) behaves consistently. A paid course with a trial
+    # enrolls for free during the trial window, tracked as 'pending' with a
+    # payment_due_date = today + trial_period_days. Genuinely free courses, paid
+    # enrollments, scholarships, or callers that supplied an explicit due date are left
+    # untouched.
+    # A priced course (price > 0) with a trial enabled is a trial enrollment regardless
+    # of the legacy `is_free` flag (which was sometimes set as an "enroll without paying"
+    # workaround). Trial bookkeeping therefore keys off price + trial fields only.
+    course_has_trial = (
+        getattr(course, "trial_enabled", False)
+        and getattr(course, "trial_period_days", 0) > 0
+        and (course.price or 0) > 0
+    )
+    if (
+        course_has_trial
+        and (amount_paid or 0) <= 0
+        and payment_status in ("free", "pending")
+        and not payment_due_date
+    ):
+        payment_status = "pending"
+        payment_due_date = timezone.now().date() + timezone.timedelta(
+            days=course.trial_period_days
+        )
+
     print(
         f"🎓 ENROLLMENT WITHOUT STRIPE: {student_profile.user.email} → {course.title} "
         f"(Status: {payment_status}, Amount: {amount_paid})"

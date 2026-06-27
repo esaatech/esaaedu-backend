@@ -365,7 +365,8 @@ class CourseWithLessonsSerializer(serializers.ModelSerializer):
         model = Course
         fields = [
             'id', 'title', 'description', 'long_description', 'category', 'level',
-            'age_range', 'price', 'features', 'overview', 'learning_objectives',
+            'age_range', 'price', 'is_free', 'trial_enabled', 'trial_period_days',
+            'features', 'overview', 'learning_objectives',
             'prerequisites_text', 'duration_weeks', 'sessions_per_week', 
             'total_projects', 'value_propositions', 'featured', 'popular',
             'color', 'icon', 'image', 'max_students', 'schedule', 'certificate',
@@ -743,7 +744,8 @@ class CourseListSerializer(serializers.ModelSerializer):
         model = Course
         fields = [
             'id', 'title', 'description', 'category', 'age_range', 'duration_weeks', 'duration', 
-            'level', 'required_computer_skills_level', 'price', 'featured', 'popular', 'color', 'icon',
+            'level', 'required_computer_skills_level', 'price', 'is_free', 'trial_enabled', 'trial_period_days',
+            'featured', 'popular', 'color', 'icon',
             'max_students', 'schedule', 'certificate', 'status',
             'teacher_name', 'total_lessons', 'enrolled_students_count', 'active_students_count',
             'modules', 'created_at', 'updated_at'
@@ -790,7 +792,8 @@ class CourseDetailSerializer(serializers.ModelSerializer):
         fields = [
             # Basic course info
             'id', 'title', 'description', 'long_description', 'category',
-            'age_range', 'level', 'required_computer_skills_level', 'price', 'features',
+            'age_range', 'level', 'required_computer_skills_level', 'price', 'is_free',
+            'trial_enabled', 'trial_period_days', 'features',
             'featured', 'popular', 'color', 'icon', 'image', 'max_students',
             'schedule', 'certificate', 'status', 'teacher_name', 'teacher_id',
             
@@ -860,7 +863,8 @@ class CourseCreateUpdateSerializer(serializers.ModelSerializer):
         fields = [
             # Basic course info
             'title', 'description', 'long_description', 'category',
-            'age_range', 'level', 'required_computer_skills_level', 'price', 'is_free', 'features',
+            'age_range', 'level', 'required_computer_skills_level', 'price', 'is_free',
+            'trial_enabled', 'trial_period_days', 'features',
             'featured', 'popular', 'color', 'icon', 'image', 'thumbnail', 'max_students',
             'schedule', 'certificate', 'status',
             
@@ -1077,6 +1081,7 @@ class FrontendCourseSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'icon', 'title', 'description', 'longDescription',
             'age', 'duration_weeks', 'duration', 'level', 'required_computer_skills_level', 'color', 'projects', 'price',
+            'is_free', 'trial_enabled', 'trial_period_days',
             'popular', 'featured', 'features', 'schedule', 'classSize', 'certificate', 'status', 'category', 'age_range',
             'image', 'thumbnail', 'billing'  # Added image, thumbnail, and billing fields
         ]

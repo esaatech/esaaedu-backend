@@ -98,6 +98,14 @@ class Course(models.Model):
         default=False,
         help_text="Whether this course is free to access"
     )
+    trial_enabled = models.BooleanField(
+        default=False,
+        help_text="Whether this paid course offers a free trial period. When enabled, students can enroll without paying and are given access for the trial duration."
+    )
+    trial_period_days = models.PositiveIntegerField(
+        default=14,
+        help_text="Length of the free trial in days (used when trial is enabled)."
+    )
     features = models.JSONField(
         default=list, 
         help_text="List of course features/highlights"

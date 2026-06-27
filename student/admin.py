@@ -203,10 +203,10 @@ class EnrolledCourseAdmin(admin.ModelAdmin):
     autocomplete_fields = ['student_profile', 'course']
     list_display = [
         'student_profile', 'course', 'status', 'progress_percentage', 
-        'enrollment_date', 'payment_status', 'last_accessed'
+        'enrollment_date', 'payment_status', 'payment_due_date', 'last_accessed'
     ]
     list_filter = [
-        'status', 'payment_status', 'enrollment_date', 'certificate_issued',
+        'status', 'payment_status', 'enrollment_date', 'payment_due_date', 'certificate_issued',
         'parent_notifications_enabled', 'final_grade_issued'
     ]
     search_fields = [
@@ -222,7 +222,7 @@ class EnrolledCourseAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Basic Information', {
-            'fields': ('student_profile', 'course', 'class_instance', 'status', 'enrolled_by')
+            'fields': ('student_profile', 'course', 'class_instance', 'status', 'enrolled_by', 'enrollment_date')
         }),
         ('Academic Progress', {
             'fields': (
@@ -270,7 +270,7 @@ class EnrolledCourseAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
         ('Metadata', {
-            'fields': ('id', 'enrollment_date', 'created_at', 'updated_at', 'last_progress_update'),
+            'fields': ('id', 'created_at', 'updated_at', 'last_progress_update'),
             'classes': ('collapse',)
         }),
     )

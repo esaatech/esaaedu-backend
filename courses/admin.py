@@ -1,3 +1,4 @@
+from django import forms
 from django.contrib import admin
 from django.contrib import messages
 from django.utils.html import format_html
@@ -6,10 +7,49 @@ from .models import Course, Lesson, LessonMaterial, Module, Quiz, Question, Quiz
 from .views import delete_course_with_cleanup
 
 
+class CourseAdminForm(forms.ModelForm):
+    """Enforce pricing/trial data integrity on the Course admin form.
+
+    A course is either free OR priced — never both. A free trial only makes sense
+    on a paid course. This prevents the contradictory state (e.g. price=400 with
+    'Is free' checked) that otherwise causes enrollments to be treated as genuinely
+    free instead of as a paid-with-trial enrollment.
+    """
+
+    class Meta:
+        model = Course
+        fields = '__all__'
+
+    def clean(self):
+        cleaned = super().clean()
+        price = cleaned.get('price') or 0
+        is_free = cleaned.get('is_free')
+        trial_enabled = cleaned.get('trial_enabled')
+
+        if is_free and price > 0:
+            raise forms.ValidationError({
+                'is_free': (
+                    "This course has a price greater than 0, so it can't also be marked free. "
+                    "Set the price to 0 for a free course, or uncheck 'Is free' for a paid course."
+                ),
+            })
+
+        if trial_enabled and (is_free or price <= 0):
+            raise forms.ValidationError({
+                'trial_enabled': (
+                    "A free trial only applies to paid courses. Set a price greater than 0 and "
+                    "uncheck 'Is free' to offer a trial."
+                ),
+            })
+
+        return cleaned
+
+
 @admin.register(Course)
 class CourseAdmin(admin.ModelAdmin):
-    list_display = ['title', 'teacher', 'category', 'level', 'status', 'featured', 'popular', 'enrolled_students_count', 'created_at']
-    list_filter = ['status', 'level', 'category', 'featured', 'popular', 'created_at']
+    form = CourseAdminForm
+    list_display = ['title', 'teacher', 'category', 'level', 'status', 'trial_enabled', 'featured', 'popular', 'enrolled_students_count', 'created_at']
+    list_filter = ['status', 'level', 'category', 'trial_enabled', 'featured', 'popular', 'created_at']
     search_fields = ['title', 'description', 'teacher__email', 'teacher__first_name', 'teacher__last_name']
     readonly_fields = ['id', 'created_at', 'updated_at', 'total_lessons', 'enrolled_students_count', 'get_full_landing_page_url_display']
     actions = ['approve_courses', 'feature_courses', 'unfeature_courses']
@@ -34,7 +74,11 @@ class CourseAdmin(admin.ModelAdmin):
             'fields': ('title', 'description', 'long_description', 'teacher', 'category')
         }),
         ('Course Details', {
-            'fields': ('age_range', 'level', 'required_computer_skills_level', 'delivery_type', 'price', 'features')
+            'fields': ('age_range', 'level', 'required_computer_skills_level', 'delivery_type', 'price', 'is_free', 'features')
+        }),
+        ('Trial Period', {
+            'fields': ('trial_enabled', 'trial_period_days'),
+            'description': 'Enable a free trial on a paid course. Students can enroll without paying and get access for the trial duration; an admin then follows up for payment (see Payment due date on the enrollment).',
         }),
         ('Introduction/Detailed Info', {
             'fields': ('overview', 'learning_objectives', 'prerequisites_text', 

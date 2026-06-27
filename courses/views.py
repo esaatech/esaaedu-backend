@@ -285,9 +285,16 @@ def get_course_billing_data_helper(course):
         if not billing_product:
             return None
         
-        # Get course settings for trial period configuration
+        # Get course settings for global trial fallback defaults
         from settings.models import CourseSettings
         course_settings = CourseSettings.get_settings()
+
+        # Trial availability is purely per-course (the legacy global CourseSettings flag is
+        # no longer used as a gate, so a course's trial shows consistently everywhere it has
+        # opted in). Duration comes from the course, falling back to the global default if unset.
+        course_trial_enabled = getattr(course, 'trial_enabled', False)
+        trial_available = bool(course_trial_enabled)
+        trial_duration_days = getattr(course, 'trial_period_days', None) or course_settings.trial_period_days
         
         # Calculate prices using existing logic
         from .price_calculator import calculate_course_prices
@@ -308,8 +315,8 @@ def get_course_billing_data_helper(course):
                 }
             },
             "trial": {
-                "duration_days": course_settings.trial_period_days,
-                "available": course_settings.enable_trial_period,
+                "duration_days": trial_duration_days,
+                "available": trial_available,
                 "requires_payment_method": True
             }
         }
@@ -3568,9 +3575,15 @@ def student_enroll_course(request, course_id):
 @permission_classes([permissions.IsAuthenticated])
 def student_enroll_free_course(request, course_id):
     """
-    Enroll the current student in a free course (bypasses Stripe payment flow).
-    This endpoint is called by the frontend when a course is determined to be free.
-    
+    Enroll the current student without going through the Stripe payment flow.
+
+    Handles two cases:
+    - Genuinely free courses (price 0 / is_free): payment_status='free', no due date.
+    - Paid courses with a free trial enabled (trial_enabled): the student enrolls
+      without paying and is granted access for the trial window. We record
+      payment_status='pending' and payment_due_date = today + trial_period_days so
+      an admin can manually follow up for payment when the trial elapses.
+
     Response format matches ConfirmEnrollmentView for consistency with paid enrollments.
     """
     try:
@@ -3590,9 +3603,26 @@ def student_enroll_free_course(request, course_id):
                 {'error': 'Course not found or not available for enrollment'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
-        # Verify course is actually free
-        if not course.is_free and course.price > 0:
+
+        # Determine enrollment type: genuinely free vs paid-with-trial.
+        # The actual trial bookkeeping (payment_status='pending' + payment_due_date) is
+        # applied centrally in complete_enrollment_without_stripe so every enrollment
+        # entry point behaves the same; here we only gate access to this endpoint.
+        #
+        # A priced course (price > 0) with a trial enabled is a TRIAL enrollment, even if
+        # the legacy `is_free` flag is mistakenly set on it (some courses were marked
+        # is_free=True as the old "enroll without paying" workaround). Trial therefore
+        # takes precedence over is_free whenever there is a real price. Genuinely free =
+        # is_free/price<=0 AND not a trial.
+        is_trial_course = (
+            getattr(course, 'trial_enabled', False)
+            and getattr(course, 'trial_period_days', 0) > 0
+            and (course.price or 0) > 0
+        )
+        is_free_course = (course.is_free or course.price <= 0) and not is_trial_course
+
+        # A paid course without a trial must use the Stripe payment flow
+        if not is_free_course and not is_trial_course:
             return Response(
                 {'error': 'This course is not free. Please use the payment enrollment flow.'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -3600,8 +3630,9 @@ def student_enroll_free_course(request, course_id):
         
         # Get class_id from request (optional)
         class_id = request.data.get('class_id')
-        
-        # Use the shared enrollment function
+
+        # Use the shared enrollment function. Pass the free defaults; the helper will
+        # upgrade trial courses to 'pending' with a payment_due_date automatically.
         from student.utils import complete_enrollment_without_stripe
         
         enrollment = complete_enrollment_without_stripe(
@@ -3620,13 +3651,17 @@ def student_enroll_free_course(request, course_id):
                 {'error': 'Failed to create enrollment. Please try again or contact support.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-        
+
+        # Reflect whatever the helper actually recorded (trial -> pending + due date).
+        recorded_due_date = enrollment.payment_due_date
+        recorded_is_trial = enrollment.payment_status == 'pending' and recorded_due_date is not None
+
         # Return response matching ConfirmEnrollmentView format for consistency
         return Response({
-            'message': 'Free enrollment successful',
+            'message': 'Trial enrollment successful' if recorded_is_trial else 'Free enrollment successful',
             'enrollment_id': str(enrollment.id),
-            'is_trial': False,
-            'trial_end_date': None
+            'is_trial': recorded_is_trial,
+            'trial_end_date': recorded_due_date.isoformat() if recorded_due_date else None
         }, status=status.HTTP_201_CREATED)
     
     except Exception as e:
@@ -5923,6 +5958,9 @@ class StudentCourseDashboardView(APIView):
                         'category': course.category,
                         'rating': get_course_average_rating(course),
                         'price': float(course.price) if course.price else 0,
+                        'is_free': course.is_free,
+                        'trial_enabled': getattr(course, 'trial_enabled', False),
+                        'trial_period_days': getattr(course, 'trial_period_days', 0),
                         'enrolled_students': 0,  # Can be calculated from enrollments
                         
                         # COMPREHENSIVE DATA (eliminates additional API calls)
