@@ -440,16 +440,28 @@ def course_introduction_detail(request, course_id):
     Includes billing data for enrollment flow consistency
     """
     try:
-        course = get_object_or_404(Course, id=course_id, status='published')
-        
-        # Prefetch related reviews
-        course = Course.objects.select_related('teacher').prefetch_related('reviews').get(id=course_id, status='published')
+        from django.db.models import Prefetch
+        from .serializers import build_public_curriculum_outline, build_public_projects_outline
+
+        course = Course.objects.select_related('teacher').prefetch_related(
+            'reviews',
+            Prefetch('modules', queryset=Module.objects.order_by('order')),
+            Prefetch(
+                'lessons',
+                queryset=Lesson.objects.select_related('module').order_by('order'),
+            ),
+            Prefetch('projects', queryset=Project.objects.order_by('order')),
+        ).get(id=course_id, status='published')
         
         serializer = CourseDetailSerializer(course)
         response_data = serializer.data
         
         # Add billing data for enrollment flow (same as dashboard endpoint)
         response_data['billing'] = get_course_billing_data_helper(course)
+        response_data['curriculum'] = build_public_curriculum_outline(course)
+        projects_outline = build_public_projects_outline(course)
+        if projects_outline is not None:
+            response_data['projects_outline'] = projects_outline
         
         return Response(response_data, status=status.HTTP_200_OK)
         

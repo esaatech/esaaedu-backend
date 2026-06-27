@@ -668,6 +668,66 @@ class ModuleSerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'description', 'order']
 
 
+# ===== PUBLIC LANDING PAGE OUTLINE (titles only) =====
+
+class PublicLessonOutlineSerializer(serializers.ModelSerializer):
+    """Minimal lesson data for public landing page curriculum breakdown."""
+    class Meta:
+        model = Lesson
+        fields = ['id', 'title', 'order']
+
+
+class PublicProjectOutlineSerializer(serializers.ModelSerializer):
+    """Project title + instructions for public landing page (description shown on expand)."""
+    description = serializers.CharField(source='instructions', read_only=True)
+
+    class Meta:
+        model = Project
+        fields = ['id', 'title', 'order', 'description']
+
+
+def build_public_curriculum_outline(course):
+    """Build module-grouped lesson titles for published course landing pages."""
+    lessons = list(course.lessons.all())
+    modules = list(course.modules.all())
+
+    lessons_by_module = {}
+    uncategorized = []
+    for lesson in lessons:
+        module_id = getattr(lesson, 'module_id', None)
+        if module_id:
+            lessons_by_module.setdefault(module_id, []).append(lesson)
+        else:
+            uncategorized.append(lesson)
+
+    module_outlines = []
+    for module in modules:
+        module_lessons = lessons_by_module.get(module.id, [])
+        module_outlines.append({
+            'id': module.id,
+            'title': module.title,
+            'order': module.order,
+            'lessons': PublicLessonOutlineSerializer(module_lessons, many=True).data,
+        })
+
+    return {
+        'total_lessons': len(lessons),
+        'modules': module_outlines,
+        'uncategorized_lessons': PublicLessonOutlineSerializer(uncategorized, many=True).data,
+    }
+
+
+def build_public_projects_outline(course):
+    """Build project list for public landing page. Returns None when course has no projects."""
+    projects = list(course.projects.all())
+    if not projects:
+        return None
+    return {
+        'total_projects': len(projects),
+        'projects': PublicProjectOutlineSerializer(projects, many=True).data,
+    }
+
+
 class CourseListSerializer(serializers.ModelSerializer):
     """
     Serializer for course list view (minimal data for performance).
