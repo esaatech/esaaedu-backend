@@ -41,15 +41,26 @@ Add these variables to your `.env` file:
 ```bash
 # Slack Configuration
 SLACK_BOT_TOKEN=xoxb-your-bot-token-here
+# Contact form + STEM assessment submissions
 SLACK_CHANNEL=#contact-notifications
+# Application error alerts
+SLACK_ERROR_ALERTS=#error-alerts
+# New course enrollments
+SLACK_ENROLLMENT=#enrollments
 ADMIN_URL=https://your-domain.com/admin
 ```
 
-### 5. Create Notification Channel
+> Note: `SLACK_ENROLLMENT` falls back to `SLACK_CHANNEL` if it is not set, so set it
+> explicitly to keep enrollment alerts out of the contact channel.
 
-1. In your Slack workspace, create a new channel (e.g., `#contact-notifications`)
-2. Invite your bot to the channel: `/invite @EsaaEdu Contact Notifications`
-3. Update `SLACK_CHANNEL` in your `.env` file
+### 5. Create Notification Channels
+
+1. In your Slack workspace, create the channels you plan to use, e.g.:
+   - `#contact-notifications` (contact + assessment forms)
+   - `#error-alerts` (application/AI errors)
+   - `#enrollments` (new course enrollments)
+2. Invite your bot to each channel: `/invite @YourBotName`
+3. Update `SLACK_CHANNEL`, `SLACK_ERROR_ALERTS`, and `SLACK_ENROLLMENT` in your `.env` file
 
 ### 6. Test the Integration
 
@@ -61,6 +72,12 @@ poetry run python manage.py test_slack_notification --type=contact
 
 # Test system notification
 poetry run python manage.py test_slack_notification --type=system
+
+# Test error alerts notification
+poetry run python manage.py test_slack_notification --type=error-alerts
+
+# Test enrollment notification (uses the most recent enrollment)
+poetry run python manage.py test_slack_notification --type=enrollment
 ```
 
 ## 📱 What You'll Receive
@@ -76,6 +93,16 @@ When someone submits a contact form, you'll receive a rich Slack message with:
 - **Action Buttons**:
   - View in Admin (direct link)
   - Reply via Email (pre-filled)
+
+### Enrollment Notifications
+
+Sent to `SLACK_ENROLLMENT` whenever a new course enrollment is created (Stripe,
+free/admin, self-enroll, or Django admin). Each message includes:
+
+- **Header**: New course enrollment
+- **Details**: Student name + email, course title/category, payment status, amount paid, enrollment status, who enrolled them
+- **Metadata**: Enrollment date and ID
+- **Action Button**: View in Admin (direct link)
 
 ### System Notifications
 

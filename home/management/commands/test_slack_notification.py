@@ -1,7 +1,11 @@
 from django.core.management.base import BaseCommand
 from decouple import config
 from home.models import ContactSubmission
-from slack_notifications import send_contact_notification, send_system_notification
+from slack_notifications import (
+    send_contact_notification,
+    send_system_notification,
+    send_enrollment_notification,
+)
 
 
 class Command(BaseCommand):
@@ -11,7 +15,7 @@ class Command(BaseCommand):
         parser.add_argument(
             '--type',
             type=str,
-            choices=['contact', 'system', 'error-alerts'],
+            choices=['contact', 'system', 'error-alerts', 'enrollment'],
             default='contact',
             help='Type of notification to test'
         )
@@ -25,6 +29,8 @@ class Command(BaseCommand):
             self.test_system_notification()
         elif notification_type == 'error-alerts':
             self.test_error_alerts_notification()
+        elif notification_type == 'enrollment':
+            self.test_enrollment_notification()
 
     def test_contact_notification(self):
         """Test contact form notification"""
@@ -109,4 +115,38 @@ class Command(BaseCommand):
         else:
             self.stdout.write(
                 self.style.ERROR("❌ Failed to send error alerts notification")
+            )
+
+    def test_enrollment_notification(self):
+        """Test enrollment notification (SLACK_ENROLLMENT) using the most recent enrollment"""
+        from student.models import EnrolledCourse
+
+        self.stdout.write("Testing enrollment notification...")
+
+        enrollment = (
+            EnrolledCourse.objects.select_related(
+                "student_profile__user", "course", "enrolled_by"
+            )
+            .order_by("-enrollment_date")
+            .first()
+        )
+
+        if not enrollment:
+            self.stdout.write(
+                self.style.ERROR(
+                    "❌ No EnrolledCourse rows found. Create an enrollment first, "
+                    "then re-run this command."
+                )
+            )
+            return
+
+        success = send_enrollment_notification(enrollment)
+
+        if success:
+            self.stdout.write(
+                self.style.SUCCESS("✅ Enrollment notification sent successfully!")
+            )
+        else:
+            self.stdout.write(
+                self.style.ERROR("❌ Failed to send enrollment notification")
             )

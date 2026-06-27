@@ -354,6 +354,141 @@ class SlackNotificationService:
         
         return blocks
     
+    def send_enrollment_form_notification(self, enrollment):
+        """
+        Send notification for a new course enrollment.
+        Routes to SLACK_ENROLLMENT (falls back to the default channel).
+        """
+        if not self.is_available():
+            print("Slack notifications not available")
+            return False
+
+        enrollment_channel = config('SLACK_ENROLLMENT', default=self.channel)
+        if not enrollment_channel:
+            print("Slack enrollment channel not configured")
+            return False
+
+        try:
+            blocks = self._format_enrollment_message(enrollment)
+
+            response = self.client.chat_postMessage(
+                channel=enrollment_channel,
+                text="New Course Enrollment",
+                blocks=blocks
+            )
+
+            print(f"Enrollment notification sent successfully: {response['ts']}")
+            return True
+
+        except SlackApiError as e:
+            print(f"Error sending enrollment notification: {e.response['error']}")
+            return False
+        except Exception as e:
+            print(f"Unexpected error sending enrollment notification: {str(e)}")
+            return False
+
+    def _format_enrollment_message(self, enrollment):
+        """
+        Format an EnrolledCourse into Slack message blocks
+        """
+        student_user = enrollment.student_profile.user
+        student_name = student_user.get_full_name() or student_user.email
+        course = enrollment.course
+
+        # Who performed the enrollment (admin/teacher) vs the student self-enrolling
+        enrolled_by_user = getattr(enrollment, 'enrolled_by', None)
+        if enrolled_by_user and enrolled_by_user != student_user:
+            enrolled_by_display = enrolled_by_user.get_full_name() or enrolled_by_user.email
+        elif enrolled_by_user == student_user:
+            enrolled_by_display = "Self (student)"
+        else:
+            enrolled_by_display = "System"
+
+        # Format amount paid
+        amount_paid = getattr(enrollment, 'amount_paid', None)
+        try:
+            amount_display = f"${float(amount_paid):.2f}" if amount_paid is not None else "N/A"
+        except (TypeError, ValueError):
+            amount_display = str(amount_paid)
+
+        payment_status = enrollment.get_payment_status_display() if hasattr(enrollment, 'get_payment_status_display') else getattr(enrollment, 'payment_status', 'N/A')
+        enrollment_status = enrollment.get_status_display() if hasattr(enrollment, 'get_status_display') else getattr(enrollment, 'status', 'N/A')
+
+        enrollment_date = getattr(enrollment, 'enrollment_date', None)
+        date_display = enrollment_date.strftime('%Y-%m-%d') if enrollment_date else 'N/A'
+
+        blocks = [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": "🎉 New Course Enrollment"
+                }
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Student:*\n{student_name}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Email:*\n{student_user.email}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Course:*\n{course.title}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Category:*\n{getattr(course, 'category', None) or 'N/A'}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Payment Status:*\n{payment_status}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Amount Paid:*\n{amount_display}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Enrollment Status:*\n{enrollment_status}"
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Enrolled By:*\n{enrolled_by_display}"
+                    }
+                ]
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"Enrolled: {date_display} | ID: {str(enrollment.id)[:8]}..."
+                    }
+                ]
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "View in Admin"
+                        },
+                        "url": f"{settings.ADMIN_URL}/admin/student/enrolledcourse/{enrollment.id}/change/",
+                        "action_id": "view_admin"
+                    }
+                ]
+            }
+        ]
+
+        return blocks
+
     def send_system_notification(self, title, message, color="#36a64f", channel=None):
         """
         Send a general system notification.
@@ -436,3 +571,10 @@ def send_assessment_notification(assessment_submission):
     Convenience function to send assessment form notification
     """
     return slack_service.send_assessment_form_notification(assessment_submission)
+
+
+def send_enrollment_notification(enrollment):
+    """
+    Convenience function to send course enrollment notification
+    """
+    return slack_service.send_enrollment_form_notification(enrollment)

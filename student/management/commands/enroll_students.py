@@ -4,6 +4,7 @@ from django.db import transaction
 from courses.models import Course
 from users.models import StudentProfile
 from student.models import EnrolledCourse
+from student.signals import suppress_enrollment_notifications
 from decimal import Decimal
 import random
 
@@ -100,7 +101,7 @@ class Command(BaseCommand):
             # Create enrollments
             enrollments_created = 0
             
-            with transaction.atomic():
+            with suppress_enrollment_notifications(), transaction.atomic():
                 for student_profile in available_students:
                     try:
                         # Create realistic enrollment data
