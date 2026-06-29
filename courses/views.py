@@ -2114,6 +2114,60 @@ def teacher_class_detail(request, class_id):
             )
 
 
+@api_view(['DELETE'])
+@permission_classes([permissions.IsAuthenticated])
+def remove_student_from_class(request, class_id, student_id):
+    """
+    Remove a student from a class.
+
+    This mirrors the enrollment flow's two writes in reverse, inside one
+    transaction:
+      1. Remove the student from the class roster (Class.students M2M).
+      2. Soft-drop the student's course enrollment (EnrolledCourse -> 'dropped').
+
+    Attendance records are intentionally left untouched so re-adding the
+    student restores their history.
+    """
+    if request.user.role != 'teacher':
+        return Response(
+            {'error': 'Only teachers can access this endpoint'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    class_instance = get_object_or_404(
+        Class.objects.select_related('course'),
+        id=class_id,
+        teacher=request.user
+    )
+
+    # Look up the student through the class roster: this both finds the user
+    # and confirms they are actually enrolled in this class.
+    student = class_instance.students.filter(id=student_id, role='student').first()
+    if student is None:
+        return Response(
+            {'error': 'Student is not enrolled in this class'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        with transaction.atomic():
+            class_instance.students.remove(student)
+            EnrolledCourse.objects.filter(
+                student_profile__user=student,
+                course=class_instance.course,
+                status__in=['active', 'pending', 'paused'],
+            ).update(status='dropped')
+
+        class_instance.refresh_from_db()
+        serializer = ClassDetailSerializer(class_instance)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response(
+            {'error': 'Failed to remove student from class', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
 @api_view(['GET', 'POST', 'PATCH'])
 @permission_classes([permissions.IsAuthenticated])
 def teacher_class_attendance(request, class_id):
