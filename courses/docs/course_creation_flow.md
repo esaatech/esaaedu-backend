@@ -279,6 +279,93 @@ When a course is deleted via `DELETE /api/courses/teacher/{course_id}/`:
 4. Local billing records are deactivated
 5. Course is deleted from database
 
+## Course Cloning Flow
+
+Teachers can create a brand-new course by cloning an existing one of their own.
+
+### Endpoint
+- **File**: `courses/views.py`
+- **Class**: `CourseCloneView` (POST)
+- **URL**: `POST /api/courses/create/{course_id}/clone/`
+- **Auth**: teacher role required; the requester must own the source course.
+
+### Request body
+```json
+{
+  "include_content": false,
+  "include_assessments": false,
+  "title": "Copy of Introduction To Electronics"
+}
+```
+- `include_content` - copy modules, lessons (+ materials) and the course introduction.
+- `include_assessments` - copy quizzes, assignments, projects, tests and exams (requires `include_content`).
+- `title` - optional; defaults to `"<source title> (Copy)"`.
+
+### Phasing
+
+The endpoint has two execution paths, chosen by the request flags:
+
+- **Phase 1 - base-only clone (implemented, synchronous)**: when both flags are
+  `false`, the clone is performed inline. This is cheap because the only media to copy
+  is the single course image/thumbnail.
+- **Phase 2 - content/assessment clone (not implemented yet)**: when either flag is
+  `true`, the endpoint returns **HTTP 501**. Deep-copying lessons/assessments also
+  requires duplicating potentially hundreds of GCS objects, which belongs in a
+  background worker. The frontend keeps those options disabled until Phase 2 ships.
+
+### Phase 1 process (base-only)
+
+1. Validate teacher role and load the source course with ownership
+   (`Course.objects.get(id=course_id, teacher=request.user)` → 404 otherwise).
+2. In a transaction, copy the source `Course` row into a new instance with a fresh
+   UUID and these overrides:
+   - `teacher = request.user`, `status = 'draft'`, `featured = False`, `popular = False`
+   - `title` = provided/derived title
+   - `landing_page_url = ''` so it regenerates from the new title + id
+   - `image` and `thumbnail` are each **duplicated to a NEW GCS object** via
+     `_copy_course_image_to_new_object()` (see below).
+3. Copy the `prerequisites` M2M relationships.
+4. Create the clone's **own** Stripe product/prices via
+   `create_stripe_product_for_course(clone)` (same as the create flow). If billing
+   setup fails, the clone is deleted and a 500 is returned.
+5. Return the new course via `CourseDetailSerializer` (same response shape as create,
+   including `billing_setup` and a `message`), with HTTP 201.
+
+What Phase 1 does **not** copy: modules, lessons, materials, the course introduction,
+assessments, enrollments, submissions, attempts, grades, or classes.
+
+### Why the course image is physically copied
+
+GCS objects are hard-deleted when a material/image is deleted or replaced (see
+`courses/signals.py`, `tutorx/services/storage.py`). If a clone simply reused the
+source image URL, deleting/replacing the source image would break the clone. So the
+clone gets an independent copy of the image.
+
+#### `_copy_course_image_to_new_object(image_url)` (in `courses/views.py`)
+- Parses a `https://storage.googleapis.com/<bucket>/<path>` URL down to the storage path.
+- Copies the object to a new `clone-<uuid>-<filename>` path via `default_storage`.
+- Returns the new GCS URL. If GCS is unavailable or the object is missing, it falls
+  back to the original URL so a clone is never blocked by an image issue.
+
+### Frontend integration
+
+- `apiService.cloneCourse(courseId, { include_content, include_assessments, title })`
+  in `src/services/api.ts`.
+- `CloneCourseDialog` (`src/components/teacher/sections/CloneCourseDialog.tsx`) provides
+  the title field and three cumulative options. The content/assessment options are
+  disabled ("Coming soon") while Phase 2 is unbuilt (`CONTENT_CLONING_ENABLED = false`).
+- Triggered from the course card's three-dot menu ("Clone Course") in
+  `src/components/ui/course-card.tsx`, wired in the teacher `CoursesSection.tsx` which
+  revalidates the `teacher-courses` list and toasts on success.
+
+### Phase 2 (future) outline
+
+Add a `clone_status` field to `Course` (`cloning | ready | failed`) + progress counters;
+when a content flag is set, create the course row in `cloning` state, enqueue a worker
+(Celery + Redis/Memorystore) that deep-copies modules/lessons/materials/assessments and
+duplicates every referenced GCS object (rewriting URLs embedded in lesson content JSON),
+and expose `GET /api/courses/create/{course_id}/clone-status/` for the frontend to poll.
+
 ## Configuration
 
 ### Environment Variables Required

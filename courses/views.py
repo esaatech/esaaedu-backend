@@ -916,6 +916,155 @@ class CourseCreationView(APIView):
             )
 
 
+def _copy_course_image_to_new_object(image_url):
+    """
+    Duplicate a course image/thumbnail GCS object so a cloned course owns an
+    INDEPENDENT file. Deleting or replacing the source image must never affect the
+    clone (GCS objects are hard-deleted on delete/replace).
+
+    Returns a NEW GCS URL on success, or the original value when copying is not
+    possible (so a clone is never blocked by image issues). Safe for None/empty.
+    """
+    if not image_url or not isinstance(image_url, str):
+        return image_url
+
+    url = image_url.strip()
+    if not url.startswith(('http://', 'https://')):
+        return image_url
+
+    try:
+        from django.core.files.storage import default_storage
+        from urllib.parse import urlparse, unquote
+        import posixpath
+        import uuid as _uuid
+
+        # URL format: https://storage.googleapis.com/<bucket>/<object-path>
+        parsed = urlparse(url)
+        parts = parsed.path.strip('/').split('/', 1)
+        if len(parts) < 2:
+            return image_url
+        source_path = unquote(parts[1])
+
+        if not default_storage.exists(source_path):
+            return image_url
+
+        directory, filename = posixpath.split(source_path)
+        new_filename = f"clone-{_uuid.uuid4().hex}-{filename}"
+        new_path = posixpath.join(directory, new_filename) if directory else new_filename
+
+        with default_storage.open(source_path, 'rb') as src:
+            saved_path = default_storage.save(new_path, src)
+
+        new_url = default_storage.url(saved_path)
+        if not new_url.startswith('http'):
+            bucket = getattr(settings, 'GS_BUCKET_NAME', '')
+            new_url = f"https://storage.googleapis.com/{bucket}/{saved_path}"
+        return new_url
+    except Exception as e:
+        logger.warning(f"Clone: course image copy failed, reusing source URL: {e}")
+        return image_url
+
+
+class CourseCloneView(APIView):
+    """
+    Clone an existing course into a NEW draft course (teacher-owned).
+
+    POST /api/courses/create/<course_id>/clone/
+    Body: { include_content?: bool, include_assessments?: bool, title?: str }
+
+    Phase 1 (implemented): base-only clone. Copies the course settings and the
+    course image + thumbnail (each duplicated to a NEW GCS object so deleting or
+    replacing the source media never affects the clone), and creates its own
+    Stripe product/prices. The new course is always an unpublished draft with no
+    enrollments.
+
+    Phase 2 (not implemented here): include_content / include_assessments deep-copy
+    of modules, lessons, materials and assessments belongs in a background worker
+    because it may duplicate many GCS objects. Those flags return 501 for now.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, course_id=None):
+        try:
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can clone courses'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Load source course and enforce ownership
+            try:
+                source = Course.objects.get(id=course_id, teacher=request.user)
+            except Course.DoesNotExist:
+                return Response(
+                    {'error': 'Course not found or you do not have permission to clone it'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            include_content = bool(request.data.get('include_content', False))
+            include_assessments = bool(request.data.get('include_assessments', False))
+            new_title = (request.data.get('title') or '').strip() or f"{source.title} (Copy)"
+
+            # Phase 2 guard: content/assessment cloning needs the async worker
+            if include_content or include_assessments:
+                return Response(
+                    {
+                        'error': 'Cloning lessons and assessments is not available yet.',
+                        'details': 'Content/assessment cloning runs in a background '
+                                   'worker (Phase 2) and is not enabled on this server.'
+                    },
+                    status=status.HTTP_501_NOT_IMPLEMENTED
+                )
+
+            # Phase 1: synchronous base-only clone
+            import uuid as _uuid
+            with transaction.atomic():
+                clone = Course.objects.get(pk=source.pk)
+                clone.pk = _uuid.uuid4()
+                clone._state.adding = True
+                clone.teacher = request.user
+                clone.title = new_title
+                clone.status = 'draft'
+                clone.featured = False
+                clone.popular = False
+                clone.landing_page_url = ''  # regenerate from new title + id
+                # Independent copies of the (single) course image and thumbnail
+                clone.image = _copy_course_image_to_new_object(source.image)
+                clone.thumbnail = _copy_course_image_to_new_object(source.thumbnail)
+                clone.save()
+
+                # Copy prerequisite relationships (references to other courses)
+                try:
+                    clone.prerequisites.set(source.prerequisites.all())
+                except Exception as e:
+                    logger.warning(f"Clone: failed to copy prerequisites: {e}")
+
+            # Give the clone its own Stripe product/prices (same as create flow)
+            from .stripe_integration import create_stripe_product_for_course
+            stripe_result = create_stripe_product_for_course(clone)
+            if not stripe_result.get('success'):
+                clone.delete()
+                return Response(
+                    {'error': 'Course clone failed - billing setup error',
+                     'details': stripe_result.get('error')},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+            response_serializer = CourseDetailSerializer(clone)
+            response_data = response_serializer.data
+            response_data['billing_setup'] = stripe_result
+            response_data['message'] = 'Course cloned successfully'
+
+            return Response(response_data, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            print(f"Error in CourseCloneView POST: {str(e)}")
+            return Response(
+                {'error': 'Failed to clone course', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def assign_courses_to_teacher(request):

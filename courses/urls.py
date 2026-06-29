@@ -17,6 +17,7 @@ urlpatterns = [
     # Course management endpoints (complete CRUD CBV)
     path('create/', views.CourseCreationView.as_view(), name='course_creation'),
     path('create/<uuid:course_id>/', views.CourseCreationView.as_view(), name='course_management'),
+    path('create/<uuid:course_id>/clone/', views.CourseCloneView.as_view(), name='course_clone'),
     
     # Lesson management endpoints
     path('<uuid:course_id>/lessons/', views.course_lessons, name='course_lessons'),
