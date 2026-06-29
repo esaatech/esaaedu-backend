@@ -3319,10 +3319,10 @@ def student_enrolled_courses(request):
             }, status=status.HTTP_200_OK)
         
       
-        # In-progress enrollments only (completed are listed via dashboard completed_courses / other flows)
+        # In-progress enrollments only (completed/dropped are listed via dashboard completed_courses / dropped_courses)
         enrolled_courses = EnrolledCourse.objects.filter(
             student_profile=student_profile,
-        ).exclude(status='completed').select_related('course', 'current_lesson').order_by('-enrollment_date')
+        ).exclude(status__in=['completed', 'dropped']).select_related('course', 'current_lesson').order_by('-enrollment_date')
         
      
         
@@ -5848,6 +5848,12 @@ class StudentCourseDashboardView(APIView):
             completed_courses_data = self.get_completed_courses_data(student_profile)
             response_data['completed_courses'] = completed_courses_data['courses']
             response_data['total_completed'] = completed_courses_data['total']
+
+            # 5. GET DROPPED COURSES (dropped enrollments where course is not archived)
+            print("Step 5: Getting dropped courses...")
+            dropped_courses_data = self.get_dropped_courses_data(student_profile)
+            response_data['dropped_courses'] = dropped_courses_data['courses']
+            response_data['total_dropped'] = dropped_courses_data['total']
             
             # 3. ADD DASHBOARD METADATA
             response_data['dashboard_metadata'] = {
@@ -5857,7 +5863,7 @@ class StudentCourseDashboardView(APIView):
                 'api_version': '2.0'
             }
             
-            print(f"Dashboard response complete: {len(response_data['enrolled_courses'])} enrolled, {len(response_data['recommended_courses'])} recommended, {len(response_data['archived_courses'])} archived, {len(response_data['completed_courses'])} completed")
+            print(f"Dashboard response complete: {len(response_data['enrolled_courses'])} enrolled, {len(response_data['recommended_courses'])} recommended, {len(response_data['archived_courses'])} archived, {len(response_data['completed_courses'])} completed, {len(response_data['dropped_courses'])} dropped")
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -5878,12 +5884,12 @@ class StudentCourseDashboardView(APIView):
             if not student_profile:
                 return {'courses': [], 'total': 0}
             
-            # In-progress enrollments only (exclude archived courses; exclude completed)
+            # In-progress enrollments only (exclude archived courses; exclude completed and dropped)
             enrolled_courses = EnrolledCourse.objects.filter(
                 student_profile=student_profile,
                 course__status__in=['draft', 'published'],  # Exclude archived courses
             ).exclude(
-                status='completed',
+                status__in=['completed', 'dropped'],
             ).select_related('course', 'current_lesson').order_by('-enrollment_date')
             
             courses_data = []
@@ -5960,10 +5966,12 @@ class StudentCourseDashboardView(APIView):
             # Get enrolled course IDs to exclude
             enrolled_course_ids = []
             if student_profile:
+                # Exclude dropped courses too so they do not appear in both
+                # the dedicated "Dropped" section and "Recommended".
                 enrolled_course_ids = list(
                     EnrolledCourse.objects.filter(
                         student_profile=student_profile,
-                        status__in=['active', 'completed']
+                        status__in=['active', 'completed', 'dropped']
                     ).values_list('course_id', flat=True)
                 )
             
@@ -6177,6 +6185,96 @@ class StudentCourseDashboardView(APIView):
             print(f"Error getting completed courses: {e}")
             return {'courses': [], 'total': 0}
     
+    def get_dropped_courses_data(self, student_profile):
+        """
+        Get dropped courses (enrollments with status='dropped' where course is not archived).
+
+        Includes billing + available classes + a re-enrollable enrollment_status so the
+        student can re-join through the normal enrollment flow. The course content itself
+        stays closed; past results remain viewable via the global Assessment section.
+        """
+        try:
+            if not student_profile:
+                return {'courses': [], 'total': 0}
+
+            dropped_enrollments = EnrolledCourse.objects.filter(
+                student_profile=student_profile,
+                status='dropped',
+                course__status__in=['draft', 'published']  # Exclude archived
+            ).select_related('course').order_by('-enrollment_date')
+
+            courses_data = []
+            for enrollment in dropped_enrollments:
+                course = enrollment.course
+
+                try:
+                    # Get course image
+                    course_image = getattr(course, 'image', None)
+                    if course_image:
+                        image_url = course_image.url if hasattr(course_image, 'url') else str(course_image)
+                    else:
+                        image_url = None  # Let CourseImage handle the fallback
+
+                    # Get course thumbnail
+                    course_thumbnail = getattr(course, 'thumbnail', None)
+                    if course_thumbnail:
+                        thumbnail_url = course_thumbnail.url if hasattr(course_thumbnail, 'url') else str(course_thumbnail)
+                    else:
+                        thumbnail_url = None
+
+                    # Get instructor name
+                    instructor_name = "Little Learners Tech"
+                    if hasattr(course, 'teacher') and course.teacher:
+                        instructor_name = course.teacher.get_full_name() or course.teacher.email
+
+                    # Build course data (recommended-like shape so the enrollment flow works)
+                    course_data = {
+                        'id': str(course.id),
+                        'uuid': str(course.id),
+                        'title': course.title,
+                        'description': course.description,
+                        'instructor': instructor_name,
+                        'image': image_url,
+                        'thumbnail': thumbnail_url,
+                        'icon': course.icon,
+                        'total_lessons': getattr(course, 'total_lessons', 12),
+                        'completed_lessons': enrollment.completed_lessons_count,
+                        'duration': getattr(course, 'duration', '8 weeks'),
+                        'max_students': getattr(course, 'max_students', 12),
+                        'difficulty': getattr(course, 'level', 'beginner'),
+                        'category': course.category,
+                        'rating': get_course_average_rating(course),
+                        'price': float(course.price) if course.price else 0,
+                        'is_free': course.is_free,
+                        'trial_enabled': getattr(course, 'trial_enabled', False),
+                        'trial_period_days': getattr(course, 'trial_period_days', 0),
+                        'enrolled_students': 0,
+                        'status': 'dropped',  # Mark as dropped
+                        'progress': float(enrollment.progress_percentage),
+                        'overall_grade': enrollment.overall_grade,
+
+                        # Comprehensive data so the Re-enroll flow needs no extra calls
+                        'billing': self.get_course_billing_data(course),
+                        'available_classes': self.get_course_available_classes_data(course),
+                        'enrollment_status': {
+                            'is_enrolled': False,
+                            'can_enroll': True,
+                            'enrollment_date': enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
+                            'status': enrollment.status
+                        }
+                    }
+                    courses_data.append(course_data)
+
+                except Exception as course_error:
+                    print(f"ERROR processing dropped course {course.title}: {course_error}")
+                    continue
+
+            return {'courses': courses_data, 'total': len(courses_data)}
+
+        except Exception as e:
+            print(f"Error getting dropped courses: {e}")
+            return {'courses': [], 'total': 0}
+    
     def get_course_billing_data(self, course):
         """
         Get comprehensive billing information for a course
@@ -6210,9 +6308,12 @@ class StudentCourseDashboardView(APIView):
                 course=course
             ).first()
             
+            # A dropped enrollment should be treated as re-enrollable: the student
+            # is not actively enrolled, and re-joining reactivates the existing row.
+            is_active_enrollment = enrollment is not None and enrollment.status in ['active', 'completed']
             return {
-                "is_enrolled": enrollment is not None,
-                "can_enroll": enrollment is None,
+                "is_enrolled": is_active_enrollment,
+                "can_enroll": enrollment is None or enrollment.status == 'dropped',
                 "enrollment_date": enrollment.enrollment_date.isoformat() if enrollment else None,
                 "status": enrollment.status if enrollment else None
             }

@@ -378,6 +378,13 @@ def complete_enrollment_process(subscription_id, user, course, class_id, pricing
                 existing_enrollment.status = 'active'
                 existing_enrollment.save()
                 print(f"✅ Reactivated existing enrollment: {existing_enrollment.id}")
+                # Re-add the student to the selected class (they were removed on drop)
+                try:
+                    if user not in selected_class.students.all() and selected_class.student_count < selected_class.max_capacity:
+                        selected_class.students.add(user)
+                        print(f"✅ Re-added student to class: {selected_class.name}")
+                except Exception as e:
+                    print(f"⚠️ Failed to re-add student to class: {e}")
                 # Update subscription status
                 subscription.status = 'active' if not is_trial else 'trialing'
                 subscription.save()
@@ -2844,37 +2851,50 @@ class ConfirmEnrollmentView(APIView):
                 payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
                 amount_paid = payment_intent.amount / 100  # Convert from cents
                 
-                # Create enrollment
-                enrollment = EnrolledCourse.objects.create(
-                    student_profile=student_profile,
-                    course=course,
-                    status='active',
-                    enrolled_by=user,
-                    
-                    # Payment information
-                    payment_status='paid',
-                    amount_paid=amount_paid,
-                    payment_due_date=None,
-                    discount_applied=0,
-                    
-                    # Course initialization
-                    total_lessons_count=course.total_lessons or 0,
-                    total_assignments_assigned=getattr(course, 'total_assignments', 0),
-                    
-                    # Progress tracking initialization
-                    progress_percentage=0,
-                    completed_lessons_count=0,
-                    total_assignments_completed=0,
-                    
-                    # Engagement defaults
-                    total_study_time=timezone.timedelta(),
-                    total_video_watch_time=timezone.timedelta(),
-                    login_count=0,
-                    
-                    # Communication preferences
-                    parent_notifications_enabled=True,
-                    reminder_emails_enabled=True,
-                )
+                if existing_enrollment:
+                    # Reactivate a previously dropped/inactive enrollment.
+                    # EnrolledCourse is unique per (student_profile, course), so we must
+                    # update the existing row rather than create a duplicate.
+                    existing_enrollment.status = 'active'
+                    existing_enrollment.enrolled_by = user
+                    existing_enrollment.payment_status = 'paid'
+                    existing_enrollment.amount_paid = amount_paid
+                    existing_enrollment.payment_due_date = None
+                    existing_enrollment.save()
+                    enrollment = existing_enrollment
+                    print(f"✅ Reactivated existing enrollment: {enrollment.id}")
+                else:
+                    # Create enrollment
+                    enrollment = EnrolledCourse.objects.create(
+                        student_profile=student_profile,
+                        course=course,
+                        status='active',
+                        enrolled_by=user,
+                        
+                        # Payment information
+                        payment_status='paid',
+                        amount_paid=amount_paid,
+                        payment_due_date=None,
+                        discount_applied=0,
+                        
+                        # Course initialization
+                        total_lessons_count=course.total_lessons or 0,
+                        total_assignments_assigned=getattr(course, 'total_assignments', 0),
+                        
+                        # Progress tracking initialization
+                        progress_percentage=0,
+                        completed_lessons_count=0,
+                        total_assignments_completed=0,
+                        
+                        # Engagement defaults
+                        total_study_time=timezone.timedelta(),
+                        total_video_watch_time=timezone.timedelta(),
+                        login_count=0,
+                        
+                        # Communication preferences
+                        parent_notifications_enabled=True,
+                        reminder_emails_enabled=True,
+                    )
                 
                 # Add student to the selected class
                 try:
