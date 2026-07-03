@@ -35,6 +35,7 @@ urlpatterns = [
     path('lessons/<uuid:lesson_id>/quiz/', views.lesson_quiz, name='lesson_quiz'),
     path('quizzes/<uuid:quiz_id>/', views.quiz_detail, name='quiz_detail'),
     path('quizzes/<uuid:quiz_id>/questions/', views.quiz_questions, name='quiz_questions'),
+    path('quizzes/<uuid:quiz_id>/questions/reorder/', views.QuizQuestionReorderView.as_view(), name='quiz_question_reorder'),
     path('questions/<uuid:question_id>/', views.question_detail, name='question_detail'),
     
     # Course introduction endpoint

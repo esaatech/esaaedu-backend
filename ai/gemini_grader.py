@@ -57,10 +57,30 @@ API Endpoint:
 """
 import logging
 import json
+import time
 from typing import Dict, List, Optional, Any
 from .gemini_service import GeminiService
+from ai.exceptions import GeminiServiceError
 
 logger = logging.getLogger(__name__)
+
+# Pause between questions when grading large batches (TutorX auto-grade bursts).
+BATCH_THROTTLE_MIN_QUESTIONS = 4
+BATCH_THROTTLE_DELAY_SEC = 0.75
+
+RATE_LIMIT_FEEDBACK = (
+    "Grading temporarily unavailable due to high demand. Please try again in a minute."
+)
+
+
+def _grading_error_feedback(exc: Exception) -> str:
+    if isinstance(exc, GeminiServiceError) and exc.error_code == "rate_limited":
+        return RATE_LIMIT_FEEDBACK
+    msg = str(exc)
+    lower = msg.lower()
+    if "429" in msg or "resource exhausted" in lower:
+        return RATE_LIMIT_FEEDBACK
+    return f"Error occurred during AI grading: {msg}. Please grade manually."
 
 
 class GeminiGrader:
@@ -219,7 +239,7 @@ If you cannot grade the question due to unclear question, unclear answer, or ins
             logger.error(f"Error grading question: {e}", exc_info=True)
             return {
                 'points_earned': 0,
-                'feedback': f'Error occurred during AI grading: {str(e)}. Please grade manually.',
+                'feedback': _grading_error_feedback(e),
                 'correct_answer': '',
                 'confidence': 0.0,
                 'error': str(e)
@@ -258,8 +278,9 @@ If you cannot grade the question due to unclear question, unclear answer, or ins
         grades = []
         total_score = 0
         total_possible = 0
+        should_throttle = len(questions) >= BATCH_THROTTLE_MIN_QUESTIONS
         
-        for question_data in questions:
+        for idx, question_data in enumerate(questions):
             question_id = question_data.get('question_id')
             if not question_id:
                 logger.warning("Question missing question_id, skipping")
@@ -282,6 +303,13 @@ If you cannot grade the question due to unclear question, unclear answer, or ins
                 
                 total_score += grade_result.get('points_earned', 0)
                 total_possible += question_data.get('points_possible', 0)
+
+                if (
+                    should_throttle
+                    and idx < len(questions) - 1
+                    and not grade_result.get('error')
+                ):
+                    time.sleep(BATCH_THROTTLE_DELAY_SEC)
                 
             except Exception as e:
                 logger.error(f"Error grading question {question_id}: {e}", exc_info=True)
@@ -289,7 +317,7 @@ If you cannot grade the question due to unclear question, unclear answer, or ins
                     'question_id': question_id,
                     'points_earned': 0,
                     'points_possible': question_data.get('points_possible', 0),
-                    'feedback': f'Error grading this question: {str(e)}. Please grade manually.',
+                    'feedback': _grading_error_feedback(e),
                     'correct_answer': '',
                     'confidence': 0.0,
                     'error': str(e)

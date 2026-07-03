@@ -14,10 +14,17 @@ from ai.exceptions import (
 from ai.api_errors import ai_error_response
 from ai.gemini_service import (
     GeminiService,
+    DEFAULT_RATE_LIMIT_MAX_ATTEMPTS,
     _extract_response_text,
     _extract_text_parts,
     _parse_structured_response,
     _raise_gemini_error,
+)
+from ai.gemini_grader import (
+    BATCH_THROTTLE_MIN_QUESTIONS,
+    GeminiGrader,
+    RATE_LIMIT_FEEDBACK,
+    _grading_error_feedback,
 )
 
 LOC_MEM_CACHE = {
@@ -247,3 +254,122 @@ class GeminiServiceGenerateTests(SimpleTestCase):
             context="GeminiService.generate",
             notify_admin=False,
         )
+
+    @patch("ai.gemini_service.time.sleep")
+    @patch("ai.gemini_service.resolve_model_name", return_value="gemini-2.5-flash")
+    @patch.object(GeminiService, "_get_model")
+    def test_generate_retries_on_rate_limit(
+        self, mock_get_model, _mock_resolve, mock_sleep
+    ):
+        part = '{"points_earned": 5, "feedback": "Good", "correct_answer": "Model"}'
+        success_response = _make_multi_part_response([part])
+        rate_err = ResourceExhausted("429 Resource exhausted")
+
+        mock_model = MagicMock()
+        mock_model.generate_content.side_effect = [rate_err, success_response]
+        mock_get_model.return_value = mock_model
+
+        service = self._mock_service()
+        result = service.generate(
+            system_instruction="You are a grader.",
+            prompt="Grade this answer.",
+            response_schema=self.GRADING_SCHEMA,
+            temperature=0.3,
+        )
+
+        self.assertEqual(result["parsed"]["points_earned"], 5)
+        self.assertEqual(mock_model.generate_content.call_count, 2)
+        mock_sleep.assert_called_once()
+
+    @patch("ai.gemini_service.time.sleep")
+    @patch("error_alerts.notify_ai_failure")
+    @patch("ai.gemini_service.resolve_model_name", return_value="gemini-2.5-flash")
+    @patch.object(GeminiService, "_get_model")
+    def test_generate_raises_rate_limited_after_max_retries(
+        self, mock_get_model, _mock_resolve, mock_notify, mock_sleep
+    ):
+        rate_err = ResourceExhausted("429 Resource exhausted")
+        mock_model = MagicMock()
+        mock_model.generate_content.side_effect = [rate_err] * DEFAULT_RATE_LIMIT_MAX_ATTEMPTS
+        mock_get_model.return_value = mock_model
+
+        service = self._mock_service()
+        with self.assertRaises(GeminiServiceError) as ctx:
+            service.generate(
+                system_instruction="You are a grader.",
+                prompt="Grade this answer.",
+                response_schema=self.GRADING_SCHEMA,
+                temperature=0.3,
+            )
+
+        self.assertEqual(ctx.exception.error_code, "rate_limited")
+        self.assertEqual(mock_model.generate_content.call_count, DEFAULT_RATE_LIMIT_MAX_ATTEMPTS)
+        self.assertEqual(mock_sleep.call_count, DEFAULT_RATE_LIMIT_MAX_ATTEMPTS - 1)
+        mock_notify.assert_called_once_with(
+            error_code="rate_limited",
+            log_message=ctx.exception.log_message,
+            context="GeminiService.generate",
+            notify_admin=False,
+        )
+
+
+@override_settings(CACHES=LOC_MEM_CACHE)
+class GeminiGraderBatchTests(SimpleTestCase):
+    def _make_grader(self):
+        with patch.object(GeminiGrader, "__init__", lambda self, **kwargs: None):
+            grader = GeminiGrader()
+            grader.gemini_service = MagicMock()
+            grader._prompt_template_name = "assignment_grading"
+            grader._system_instruction = "You grade."
+            grader._template_temperature = 0.3
+            return grader
+
+    def _question(self, qid: str):
+        return {
+            "question_id": qid,
+            "question_text": "Explain frontend vs backend.",
+            "question_type": "essay",
+            "student_answer": "They are different.",
+            "points_possible": 10,
+        }
+
+    def test_grading_error_feedback_for_rate_limit(self):
+        err = from_google_api_error(ResourceExhausted("429 Resource exhausted"))
+        self.assertEqual(_grading_error_feedback(err), RATE_LIMIT_FEEDBACK)
+
+    @patch("ai.gemini_grader.time.sleep")
+    @patch.object(GeminiGrader, "grade_question")
+    def test_grade_questions_batch_throttles_large_batches(
+        self, mock_grade_question, mock_sleep
+    ):
+        mock_grade_question.return_value = {
+            "points_earned": 8,
+            "feedback": "Good",
+            "correct_answer": "Model",
+            "confidence": 0.9,
+        }
+        grader = self._make_grader()
+        questions = [self._question(f"q{i}") for i in range(BATCH_THROTTLE_MIN_QUESTIONS)]
+
+        result = grader.grade_questions_batch(questions)
+
+        self.assertEqual(len(result["grades"]), BATCH_THROTTLE_MIN_QUESTIONS)
+        self.assertEqual(mock_sleep.call_count, BATCH_THROTTLE_MIN_QUESTIONS - 1)
+
+    @patch("ai.gemini_grader.time.sleep")
+    @patch.object(GeminiGrader, "grade_question")
+    def test_grade_questions_batch_skips_throttle_for_small_batches(
+        self, mock_grade_question, mock_sleep
+    ):
+        mock_grade_question.return_value = {
+            "points_earned": 8,
+            "feedback": "Good",
+            "correct_answer": "Model",
+            "confidence": 0.9,
+        }
+        grader = self._make_grader()
+        questions = [self._question(f"q{i}") for i in range(BATCH_THROTTLE_MIN_QUESTIONS - 1)]
+
+        grader.grade_questions_batch(questions)
+
+        mock_sleep.assert_not_called()

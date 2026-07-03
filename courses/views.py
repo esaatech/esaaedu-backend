@@ -25,7 +25,7 @@ from .serializers import (
     LessonListSerializer, LessonDetailSerializer, LessonCreateUpdateSerializer,
     LessonReorderSerializer, ProjectReorderSerializer, QuizListSerializer, QuizDetailSerializer,
     QuizCreateUpdateSerializer, QuestionListSerializer, QuestionDetailSerializer,
-    QuestionCreateUpdateSerializer, NoteSerializer, NoteCreateSerializer,
+    QuestionCreateUpdateSerializer, QuizQuestionReorderSerializer, NoteSerializer, NoteCreateSerializer,
     ModuleSerializer,
     ClassListSerializer, ClassDetailSerializer, ClassCreateUpdateSerializer,
     StudentBasicSerializer, TeacherStudentDetailSerializer, TeacherStudentSummarySerializer,
@@ -1763,6 +1763,23 @@ def quiz_detail(request, quiz_id):
             )
 
 
+def renumber_quiz_questions(quiz):
+    """
+    Set question.order to contiguous 1..n by current sort order.
+    Two-phase update avoids unique_together (quiz, order) violations mid-update.
+    """
+    qs = list(Question.objects.filter(quiz=quiz).order_by('order'))
+    if not qs:
+        return
+    with transaction.atomic():
+        for i, cq in enumerate(qs):
+            cq.order = -(i + 1)
+        Question.objects.bulk_update(qs, ['order'])
+        for i, cq in enumerate(qs, start=1):
+            cq.order = i
+        Question.objects.bulk_update(qs, ['order'])
+
+
 @api_view(['GET', 'POST'])
 @permission_classes([permissions.IsAuthenticated])
 def quiz_questions(request, quiz_id):
@@ -1880,7 +1897,10 @@ def question_detail(request, question_id):
     
     elif request.method == 'DELETE':
         try:
-            question.delete()
+            quiz = question.quiz
+            with transaction.atomic():
+                question.delete()
+                renumber_quiz_questions(quiz)
             return Response(
                 {'message': 'Question deleted successfully'},
                 status=status.HTTP_200_OK
@@ -1889,6 +1909,72 @@ def question_detail(request, question_id):
             return Response(
                 {'error': 'Failed to delete question', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class QuizQuestionReorderView(APIView):
+    """
+    PUT: Reorder all questions for a quiz (same two-phase pattern as assessments).
+    Body: { "questions": [ {"id": "<uuid>", "order": 1}, ... ] } — must include every question once.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def put(self, request, quiz_id):
+        try:
+            quiz = get_object_or_404(Quiz, id=quiz_id)
+            if not quiz.lessons.filter(course__teacher=request.user).exists():
+                return Response(
+                    {'error': 'Only the course teacher can manage quiz questions'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            serializer = QuizQuestionReorderSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+            questions_data = serializer.validated_data['questions']
+            db_count = quiz.questions.count()
+            if db_count == 0:
+                return Response([], status=status.HTTP_200_OK)
+            if len(questions_data) != db_count:
+                return Response(
+                    {
+                        'error': 'Invalid reorder payload',
+                        'details': f'Expected {db_count} questions, got {len(questions_data)}',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            incoming_ids = {str(qd['id']) for qd in questions_data}
+            db_ids = {str(q.id) for q in quiz.questions.all()}
+            if incoming_ids != db_ids:
+                return Response(
+                    {'error': 'Payload must list each quiz question exactly once'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            with transaction.atomic():
+                to_update = []
+                for qd in questions_data:
+                    q = get_object_or_404(Question, id=qd['id'], quiz=quiz)
+                    to_update.append((q, int(qd['order'])))
+
+                for i, (q, _) in enumerate(to_update):
+                    q.order = -(i + 1)
+                    q.save(update_fields=['order'])
+                for q, new_order in to_update:
+                    q.order = new_order
+                    q.save(update_fields=['order'])
+
+            questions = quiz.questions.all().order_by('order')
+            out = QuestionListSerializer(questions, many=True)
+            return Response(out.data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f'Error reordering quiz questions: {e}', exc_info=True)
+            return Response(
+                {'error': 'Failed to reorder questions', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 

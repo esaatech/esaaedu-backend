@@ -473,7 +473,18 @@ def get_quiz_generation_schema() -> Dict[str, Any]:
                         },
                         "content": {
                             "type": "object",
-                            "description": "Question-specific content. For multiple_choice: {\"options\": [\"string\"], \"correct_answer\": \"string\" (index or option text)}. For true_false: {\"correct_answer\": \"true\" or \"false\"}."
+                            "description": "Question-specific content. For multiple_choice: must include options (at least 2 strings) and correct_answer (exact text of the correct option). For true_false: {\"correct_answer\": \"true\" or \"false\"}.",
+                            "properties": {
+                                "options": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "For multiple_choice only: at least 2 answer choices as plain strings",
+                                },
+                                "correct_answer": {
+                                    "type": "string",
+                                    "description": "For multiple_choice: exact text of the correct option. For true_false: 'true' or 'false'.",
+                                },
+                            },
                         },
                         "explanation": {
                             "type": "string",

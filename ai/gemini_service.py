@@ -43,6 +43,7 @@ Direct Testing:
 import logging
 import json
 import os
+import time
 from typing import Dict, List, Optional, Any, Union
 from google.cloud import aiplatform
 from google.oauth2 import service_account
@@ -60,6 +61,53 @@ from django.core.exceptions import ImproperlyConfigured
 from ai.exceptions import GeminiServiceError, from_google_api_error, invalid_response_error
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_RATE_LIMIT_MAX_ATTEMPTS = 4
+DEFAULT_RATE_LIMIT_BASE_DELAY_SEC = 2.0
+
+
+def _is_rate_limited_error(exc: BaseException) -> bool:
+    if isinstance(exc, google_exceptions.ResourceExhausted):
+        return True
+    if isinstance(exc, GeminiServiceError) and exc.error_code == "rate_limited":
+        return True
+    return False
+
+
+def _generate_with_retry(
+    model,
+    content_list,
+    generation_config,
+    *,
+    max_attempts: int = DEFAULT_RATE_LIMIT_MAX_ATTEMPTS,
+    base_delay_sec: float = DEFAULT_RATE_LIMIT_BASE_DELAY_SEC,
+):
+    """
+    Call generate_content with exponential backoff on Vertex 429 / ResourceExhausted.
+    """
+    last_exc: Optional[google_exceptions.ResourceExhausted] = None
+    for attempt in range(max_attempts):
+        try:
+            return model.generate_content(
+                content_list,
+                generation_config=generation_config,
+            )
+        except google_exceptions.ResourceExhausted as e:
+            last_exc = e
+            if attempt >= max_attempts - 1:
+                break
+            delay = base_delay_sec * (2 ** attempt)
+            logger.warning(
+                "Vertex AI rate limited (attempt %s/%s), retrying in %.1fs: %s",
+                attempt + 1,
+                max_attempts,
+                delay,
+                e,
+            )
+            time.sleep(delay)
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("_generate_with_retry exhausted without response or exception")
 
 
 def _raise_gemini_error(err: GeminiServiceError, *, context: str) -> None:
@@ -385,12 +433,13 @@ class GeminiService:
             logger.debug(f"Prompt: {final_prompt[:100]}...")
 
             try:
-                response = model.generate_content(
+                response = _generate_with_retry(
+                    model,
                     content_list,
-                    generation_config=generation_config,
+                    generation_config,
                 )
             except google_exceptions.GoogleAPIError as native_schema_err:
-                if not response_schema:
+                if not response_schema or _is_rate_limited_error(native_schema_err):
                     raise
                 # Fallback: prompt-based schema if native JSON mode is unsupported
                 logger.warning(
@@ -414,9 +463,10 @@ Return ONLY valid JSON, no additional text before or after."""
                         if k not in ("response_mime_type", "response_schema")
                     }
                 )
-                response = model.generate_content(
+                response = _generate_with_retry(
+                    model,
                     [fallback_prompt] + (file_parts or []),
-                    generation_config=fallback_config,
+                    fallback_config,
                 )
                 final_prompt = fallback_prompt
 

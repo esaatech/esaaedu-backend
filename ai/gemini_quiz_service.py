@@ -164,25 +164,68 @@ Each question should have clear correct answers and helpful explanations. Ensure
             # Ensure questions have correct structure
             validated_questions = []
             for q in result['questions']:
+                raw_content = q.get('content') or {}
+                if not isinstance(raw_content, dict):
+                    raw_content = {}
+
                 validated_q = {
                     'question_text': q.get('question_text', ''),
                     'type': q.get('type', 'multiple_choice'),
                     'points': q.get('points', 1),
-                    'content': q.get('content', {}),
+                    'content': dict(raw_content),
                     'explanation': q.get('explanation', '')
                 }
-                
-                # Validate content based on question type
+
+                # Normalize options/correct_answer (model may place fields at top level)
                 if validated_q['type'] == 'multiple_choice':
-                    if 'options' not in validated_q['content']:
-                        validated_q['content']['options'] = []
-                    if 'correct_answer' not in validated_q['content']:
-                        validated_q['content']['correct_answer'] = ''
+                    options = validated_q['content'].get('options')
+                    if not isinstance(options, list) or len(options) < 2:
+                        top_level_options = q.get('options')
+                        if isinstance(top_level_options, list) and len(top_level_options) >= 2:
+                            options = top_level_options
+                    if not isinstance(options, list):
+                        options = []
+                    # Coerce option objects to strings if needed
+                    normalized_options = []
+                    for opt in options:
+                        if isinstance(opt, str) and opt.strip():
+                            normalized_options.append(opt.strip())
+                        elif isinstance(opt, dict) and opt.get('text'):
+                            normalized_options.append(str(opt['text']).strip())
+                    validated_q['content']['options'] = normalized_options
+
+                    correct_answer = (
+                        validated_q['content'].get('correct_answer')
+                        or q.get('correct_answer')
+                        or ''
+                    )
+                    if isinstance(correct_answer, str):
+                        validated_q['content']['correct_answer'] = correct_answer.strip()
+                    else:
+                        validated_q['content']['correct_answer'] = str(correct_answer)
+
+                    if len(validated_q['content']['options']) < 2:
+                        logger.warning(
+                            "Skipping multiple_choice question with fewer than 2 options: %s",
+                            validated_q.get('question_text', '')[:80],
+                        )
+                        continue
+
                 elif validated_q['type'] == 'true_false':
-                    if 'correct_answer' not in validated_q['content']:
-                        validated_q['content']['correct_answer'] = 'true'
-                
+                    correct_answer = (
+                        validated_q['content'].get('correct_answer')
+                        or q.get('correct_answer')
+                        or 'true'
+                    )
+                    validated_q['content']['correct_answer'] = str(correct_answer).lower()
+
                 validated_questions.append(validated_q)
+
+            if not validated_questions and result['questions']:
+                raise ValueError(
+                    "AI generated quiz questions but none passed validation "
+                    "(multiple choice questions need at least 2 options)"
+                )
             
             result['questions'] = validated_questions
             
