@@ -46,7 +46,13 @@ import os
 from typing import Dict, List, Optional, Any, Union
 from google.cloud import aiplatform
 from google.oauth2 import service_account
-from vertexai.generative_models import GenerativeModel, Part, Tool, FunctionDeclaration
+from vertexai.generative_models import (
+    GenerativeModel,
+    Part,
+    Tool,
+    FunctionDeclaration,
+    GenerationConfig,
+)
 from google.api_core import exceptions as google_exceptions
 from decouple import config
 from django.core.exceptions import ImproperlyConfigured
@@ -72,6 +78,87 @@ def _raise_gemini_error(err: GeminiServiceError, *, context: str) -> None:
             logger.warning("Gemini error notify step failed: %s", notify_exc, exc_info=True)
         err.slack_notified = True
     raise err
+
+
+def _extract_text_parts(response) -> List[str]:
+    """Collect text from all candidate content parts (skips function-call parts)."""
+    if not getattr(response, "candidates", None):
+        return []
+    content = response.candidates[0].content
+    if not getattr(content, "parts", None):
+        return []
+    text_parts: List[str] = []
+    for part in content.parts:
+        if hasattr(part, "function_call") and part.function_call:
+            continue
+        if hasattr(part, "text") and part.text:
+            text_parts.append(part.text)
+    return text_parts
+
+
+def _extract_response_text(response) -> str:
+    """
+    Safely extract text from a Gemini response.
+
+    response.text raises when multiple content parts are present (common on
+    Gemini 2.5 thinking models). Prefer the last non-empty text part when
+    multiple parts exist, since later parts are often the complete answer.
+    """
+    text_parts = _extract_text_parts(response)
+    if text_parts:
+        return text_parts[-1].strip() if len(text_parts) > 1 else text_parts[0].strip()
+    if hasattr(response, "text"):
+        try:
+            return (response.text or "").strip()
+        except ValueError:
+            pass
+    return str(response).strip()
+
+
+def _strip_json_fences(text: str) -> str:
+    """Remove markdown code fences from a JSON string."""
+    cleaned = text.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    return cleaned.strip()
+
+
+def _parse_json_from_text(text: str) -> Any:
+    """Parse JSON from text, stripping markdown fences first."""
+    return json.loads(_strip_json_fences(text))
+
+
+def _parse_structured_response(raw_text: str, text_parts: List[str]) -> Any:
+    """
+    Parse structured JSON from model output.
+
+    Tries the primary extracted text first, then each text part individually
+    (last valid JSON wins) to handle duplicate multi-part grading responses.
+    """
+    candidates: List[str] = []
+    if raw_text:
+        candidates.append(raw_text)
+    candidates.extend(text_parts)
+
+    last_error: Optional[json.JSONDecodeError] = None
+    seen: set[str] = set()
+    for candidate in reversed(candidates):
+        candidate = candidate.strip()
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            return _parse_json_from_text(candidate)
+        except json.JSONDecodeError as e:
+            last_error = e
+
+    if last_error is not None:
+        raise last_error
+    raise ValueError("Empty response from AI")
 
 
 def resolve_model_name(override: Optional[str] = None) -> str:
@@ -256,74 +343,99 @@ class GeminiService:
         try:
             # Get model with system instruction and optional model_name
             model = self._get_model(system_instruction=system_instruction, model_name=model_name)
-            
-            # Build generation config
-            generation_config = {
-                'temperature': temperature,
-            }
-            
-            if max_tokens:
-                generation_config['max_output_tokens'] = max_tokens
-            
-            # Add any additional kwargs
-            generation_config.update(kwargs)
-            
-            # For structured output, include schema in prompt and request JSON format
+
             final_prompt = prompt
+            generation_config: Union[Dict[str, Any], GenerationConfig]
+
             if response_schema:
-                # Add schema to prompt and request JSON output
-                schema_json = json.dumps(response_schema, indent=2)
-                final_prompt = f"""{prompt}
+                # Native Vertex structured output (preferred over prompt-only schema)
+                config_kwargs: Dict[str, Any] = {
+                    "temperature": temperature,
+                    "response_mime_type": "application/json",
+                    "response_schema": response_schema,
+                }
+                if max_tokens:
+                    config_kwargs["max_output_tokens"] = max_tokens
+                extra_config = {
+                    k: v
+                    for k, v in kwargs.items()
+                    if k not in ("response_mime_type", "response_schema")
+                }
+                config_kwargs.update(extra_config)
+                generation_config = GenerationConfig(**config_kwargs)
+                final_prompt = (
+                    f"{prompt}\n\n"
+                    "Respond with valid JSON only, matching the required schema."
+                )
+            else:
+                generation_config = {"temperature": temperature}
+                if max_tokens:
+                    generation_config["max_output_tokens"] = max_tokens
+                generation_config.update(kwargs)
 
-IMPORTANT: Please respond with valid JSON matching this schema:
-{schema_json}
-
-Return ONLY valid JSON, no additional text before or after."""
-            
             # Build content list: prompt + file parts (if any)
             content_list = [final_prompt]
             if file_parts:
                 content_list.extend(file_parts)
                 logger.debug(f"Including {len(file_parts)} file part(s) in request")
-            
+
             # Generate content
             logger.debug(f"Generating content with model: {resolve_model_name(model_name)}")
             logger.debug(f"System instruction: {system_instruction[:100]}...")
             logger.debug(f"Prompt: {final_prompt[:100]}...")
-            
-            response = model.generate_content(
-                content_list,
-                generation_config=generation_config
-            )
-            
-            # Extract text
-            raw_text = response.text if hasattr(response, 'text') else str(response)
-            
+
+            try:
+                response = model.generate_content(
+                    content_list,
+                    generation_config=generation_config,
+                )
+            except google_exceptions.GoogleAPIError as native_schema_err:
+                if not response_schema:
+                    raise
+                # Fallback: prompt-based schema if native JSON mode is unsupported
+                logger.warning(
+                    "Native structured output failed, falling back to prompt schema: %s",
+                    native_schema_err,
+                )
+                schema_json = json.dumps(response_schema, indent=2)
+                fallback_prompt = f"""{prompt}
+
+IMPORTANT: Please respond with valid JSON matching this schema:
+{schema_json}
+
+Return ONLY valid JSON, no additional text before or after."""
+                fallback_config: Dict[str, Any] = {"temperature": temperature}
+                if max_tokens:
+                    fallback_config["max_output_tokens"] = max_tokens
+                fallback_config.update(
+                    {
+                        k: v
+                        for k, v in kwargs.items()
+                        if k not in ("response_mime_type", "response_schema")
+                    }
+                )
+                response = model.generate_content(
+                    [fallback_prompt] + (file_parts or []),
+                    generation_config=fallback_config,
+                )
+                final_prompt = fallback_prompt
+
+            text_parts = _extract_text_parts(response)
+            raw_text = _extract_response_text(response)
+
             # Parse JSON if schema was provided
             parsed_data = None
             if response_schema:
                 try:
-                    # Clean the response - remove markdown code blocks if present
-                    cleaned_text = raw_text.strip()
-                    if cleaned_text.startswith('```json'):
-                        cleaned_text = cleaned_text[7:]  # Remove ```json
-                    elif cleaned_text.startswith('```'):
-                        cleaned_text = cleaned_text[3:]  # Remove ```
-                    
-                    if cleaned_text.endswith('```'):
-                        cleaned_text = cleaned_text[:-3]  # Remove closing ```
-                    
-                    cleaned_text = cleaned_text.strip()
-                    
-                    parsed_data = json.loads(cleaned_text)
+                    parsed_data = _parse_structured_response(raw_text, text_parts)
                     logger.debug(f"Parsed JSON response: {parsed_data}")
-                except json.JSONDecodeError as e:
+                except (json.JSONDecodeError, ValueError) as e:
                     logger.error(f"Failed to parse JSON response: {e}")
                     logger.error(f"Raw response: {raw_text}")
                     _raise_gemini_error(
                         invalid_response_error(
                             f"Invalid JSON response from AI: {e}",
-                            cause=e,
+                            cause=e if isinstance(e, json.JSONDecodeError) else None,
                         ),
                         context="GeminiService.generate",
                     )
