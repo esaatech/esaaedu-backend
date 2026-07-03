@@ -7,7 +7,8 @@ from rest_framework.response import Response
 from rest_framework import status, permissions
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
-from django.db.models import Q, Count, Avg, Sum
+from django.db.models import Q, Count, Avg, Sum, Max
+from django.db import transaction
 from django.utils import timezone
 from users.models import User, TeacherProfile
 
@@ -18,7 +19,7 @@ from .serializers import (
     ProjectSubmissionSerializer, ProjectSubmissionGradingSerializer,
     ProjectSubmissionFeedbackSerializer,
     AssignmentListSerializer, AssignmentDetailSerializer, AssignmentCreateUpdateSerializer,
-    AssignmentQuestionSerializer, AssignmentSubmissionSerializer, AssignmentGradingSerializer,
+    AssignmentQuestionSerializer, AssignmentQuestionReorderSerializer, AssignmentSubmissionSerializer, AssignmentGradingSerializer,
     AssignmentFeedbackSerializer,
     TeacherTimetableResponseSerializer,
 )
@@ -1712,6 +1713,23 @@ class AssignmentManagementView(APIView):
             )
 
 
+def renumber_assignment_questions(assignment):
+    """
+    Set question.order to contiguous 1..n by current sort order.
+    Two-phase update avoids unique_together (assignment, order) violations mid-update.
+    """
+    qs = list(AssignmentQuestion.objects.filter(assignment=assignment).order_by('order'))
+    if not qs:
+        return
+    with transaction.atomic():
+        for i, cq in enumerate(qs):
+            cq.order = -(i + 1)
+        AssignmentQuestion.objects.bulk_update(qs, ['order'])
+        for i, cq in enumerate(qs, start=1):
+            cq.order = i
+        AssignmentQuestion.objects.bulk_update(qs, ['order'])
+
+
 class AssignmentQuestionManagementView(APIView):
     """
     CRUD operations for assignment questions
@@ -1794,10 +1812,14 @@ class AssignmentQuestionManagementView(APIView):
                 )
             
             # Add assignment to request data
-            request.data['assignment'] = assignment.id
-            
+            data = request.data.copy()
+            data['assignment'] = assignment.id
+            if 'order' not in data:
+                max_order = assignment.questions.aggregate(max_order=Max('order'))['max_order'] or 0
+                data['order'] = max_order + 1
+
             # Use serializer for validation and creation
-            serializer = AssignmentQuestionSerializer(data=request.data)
+            serializer = AssignmentQuestionSerializer(data=data)
             
             if serializer.is_valid():
                 question = serializer.save(assignment=assignment)
@@ -1925,8 +1947,10 @@ class AssignmentQuestionManagementView(APIView):
                 'order': question.order
             }
             
-            # Delete the question
-            question.delete()
+            # Delete the question and compact remaining orders
+            with transaction.atomic():
+                question.delete()
+                renumber_assignment_questions(assignment)
             
             return Response({
                 'message': 'Question deleted successfully',
@@ -1937,6 +1961,84 @@ class AssignmentQuestionManagementView(APIView):
             return Response(
                 {'error': f'Error deleting assignment question: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class AssignmentQuestionReorderView(APIView):
+    """
+    PUT: Reorder all questions for an assignment (same two-phase pattern as quizzes/assessments).
+    Body: { "questions": [ {"id": "<uuid>", "order": 1}, ... ] } — must include every question once.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def put(self, request, assignment_id):
+        try:
+            if request.user.role != 'teacher':
+                return Response(
+                    {'error': 'Only teachers can reorder assignment questions'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').filter(
+                id=assignment_id
+            ).first()
+            if not assignment or not assignment.lessons.filter(course__teacher=request.user).exists():
+                return Response(
+                    {'error': 'Assignment not found or you do not have permission to modify it'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            serializer = AssignmentQuestionReorderSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+            questions_data = serializer.validated_data['questions']
+            db_count = assignment.questions.count()
+            if db_count == 0:
+                return Response([], status=status.HTTP_200_OK)
+            if len(questions_data) != db_count:
+                return Response(
+                    {
+                        'error': 'Invalid reorder payload',
+                        'details': f'Expected {db_count} questions, got {len(questions_data)}',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            incoming_ids = {str(qd['id']) for qd in questions_data}
+            db_ids = {str(q.id) for q in assignment.questions.all()}
+            if incoming_ids != db_ids:
+                return Response(
+                    {'error': 'Payload must list each assignment question exactly once'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            with transaction.atomic():
+                to_update = []
+                for qd in questions_data:
+                    q = get_object_or_404(
+                        AssignmentQuestion,
+                        id=qd['id'],
+                        assignment=assignment,
+                    )
+                    to_update.append((q, int(qd['order'])))
+
+                for i, (q, _) in enumerate(to_update):
+                    q.order = -(i + 1)
+                    q.save(update_fields=['order'])
+                for q, new_order in to_update:
+                    q.order = new_order
+                    q.save(update_fields=['order'])
+
+            questions = assignment.questions.all().order_by('order')
+            out = AssignmentQuestionSerializer(questions, many=True)
+            return Response(out.data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f'Error reordering assignment questions: {e}', exc_info=True)
+            return Response(
+                {'error': 'Failed to reorder questions', 'details': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 

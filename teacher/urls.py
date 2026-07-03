@@ -44,6 +44,7 @@ urlpatterns = [
     path('assignments/', views.AssignmentManagementView.as_view(), name='assignment_management'),
     path('assignments/<uuid:assignment_id>/', views.AssignmentManagementView.as_view(), name='assignment_detail'),
     path('assignments/<uuid:assignment_id>/questions/', views.AssignmentQuestionManagementView.as_view(), name='assignment_questions'),
+    path('assignments/<uuid:assignment_id>/questions/reorder/', views.AssignmentQuestionReorderView.as_view(), name='assignment_question_reorder'),
     path('assignments/<uuid:assignment_id>/questions/<uuid:question_id>/', views.AssignmentQuestionManagementView.as_view(), name='assignment_question_detail'),
     path('assignments/<uuid:assignment_id>/grading/', views.AssignmentGradingView.as_view(), name='assignment_grading'),
     path('assignments/<uuid:assignment_id>/grading/<uuid:submission_id>/return/', views.AssignmentReturnSubmissionView.as_view(), name='assignment_submission_return'),

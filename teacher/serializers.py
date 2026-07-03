@@ -432,6 +432,34 @@ class AssignmentQuestionSerializer(serializers.ModelSerializer):
         return value
 
 
+class AssignmentQuestionReorderSerializer(serializers.Serializer):
+    """Reorder assignment questions; same contract as quiz/assessment question reorder."""
+
+    questions = serializers.ListField(
+        child=serializers.DictField(child=serializers.CharField()),
+        help_text="List of {id, order} for questions in this assignment",
+    )
+
+    def validate_questions(self, value):
+        if not value:
+            return value
+        seen_ids = set()
+        for item in value:
+            if 'id' not in item or 'order' not in item:
+                raise serializers.ValidationError("Each item must have 'id' and 'order'")
+            qid = str(item['id'])
+            if qid in seen_ids:
+                raise serializers.ValidationError("Duplicate question id in payload")
+            seen_ids.add(qid)
+            try:
+                order = int(item['order'])
+                if order < 1:
+                    raise serializers.ValidationError("Order must be positive")
+            except (ValueError, TypeError):
+                raise serializers.ValidationError("Order must be a valid integer")
+        return value
+
+
 class AssignmentListSerializer(serializers.ModelSerializer):
     """
     Lightweight serializer for assignment lists
