@@ -279,3 +279,28 @@ class AssessmentSubmission(models.Model):
     
     def __str__(self):
         return f"{self.parent_name} - {self.student_name} ({self.student_age} years)"
+
+
+class NewsletterSubscriber(models.Model):
+    """
+    Email captured for the Brevo newsletter list.
+    Source helps track where the signup came from (homepage, blog, etc.).
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    email = models.EmailField(unique=True)
+    first_name = models.CharField(max_length=100, blank=True)
+    source = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Where the signup came from, e.g. homepage, blog_post",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Newsletter Subscriber"
+        verbose_name_plural = "Newsletter Subscribers"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.email

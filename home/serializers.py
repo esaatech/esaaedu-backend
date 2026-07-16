@@ -214,3 +214,19 @@ class AssessmentSubmissionCreateSerializer(serializers.ModelSerializer):
         if value not in ['beginner', 'intermediate', 'advanced']:
             raise serializers.ValidationError("Please select a valid computer skills level")
         return value
+
+
+class NewsletterSubscribeSerializer(serializers.Serializer):
+    """Public newsletter signup payload."""
+    email = serializers.EmailField()
+    first_name = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
+    source = serializers.CharField(max_length=100, required=False, allow_blank=True, default='')
+
+    def validate_email(self, value):
+        return value.strip().lower()
+
+    def validate_first_name(self, value):
+        return (value or '').strip()
+
+    def validate_source(self, value):
+        return (value or '').strip()[:100]

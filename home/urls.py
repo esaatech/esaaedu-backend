@@ -31,4 +31,7 @@ urlpatterns = [
     
     # Assessment submissions management (admin only)
     path('assessment/submissions/', views.AssessmentSubmissionListView.as_view(), name='assessment_submissions_list'),
+
+    # Newsletter subscribe (public)
+    path('newsletter/subscribe/', views.NewsletterSubscribeView.as_view(), name='newsletter_subscribe'),
 ]

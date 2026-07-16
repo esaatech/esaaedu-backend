@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import ContactMethod, SupportTeamMember, FAQ, SupportHours, ContactSubmission, AssessmentSubmission
+from .models import ContactMethod, SupportTeamMember, FAQ, SupportHours, ContactSubmission, AssessmentSubmission, NewsletterSubscriber
 
 
 @admin.register(ContactMethod)
@@ -212,3 +212,13 @@ class AssessmentSubmissionAdmin(admin.ModelAdmin):
         updated = queryset.update(status='closed')
         self.message_user(request, f'{updated} submissions marked as closed.')
     mark_as_closed.short_description = "Mark selected as closed"
+
+
+@admin.register(NewsletterSubscriber)
+class NewsletterSubscriberAdmin(admin.ModelAdmin):
+    list_display = ['email', 'first_name', 'source', 'created_at']
+    list_filter = ['source', 'created_at']
+    search_fields = ['email', 'first_name', 'source']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    ordering = ['-created_at']
+

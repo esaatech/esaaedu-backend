@@ -659,6 +659,7 @@ def _int_or_none(v):
 
 
 BREVO_LIST_ID = config('BREVO_LIST_ID', default=None, cast=_int_or_none)
+BREVO_NEWSLETTER_LIST_ID = config('BREVO_NEWSLETTER_LIST_ID', default=None, cast=_int_or_none)
 BREVO_WELCOME_TEMPLATE_ID = config('BREVO_WELCOME_TEMPLATE_ID', default=None, cast=_int_or_none)
 BREVO_SENDER_EMAIL = config('BREVO_SENDER_EMAIL', default='')
 BREVO_SENDER_NAME = config('BREVO_SENDER_NAME', default='Little Learners Tech')

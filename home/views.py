@@ -5,11 +5,12 @@ from rest_framework.decorators import api_view, permission_classes
 from django.db.models import Q, Avg
 from django.db import models
 from django.conf import settings
-from .models import ContactMethod, SupportTeamMember, FAQ, SupportHours, ContactSubmission, AssessmentSubmission
+from .models import ContactMethod, SupportTeamMember, FAQ, SupportHours, ContactSubmission, AssessmentSubmission, NewsletterSubscriber
 from .serializers import (
     ContactMethodSerializer, SupportTeamMemberSerializer, FAQSerializer,
     SupportHoursSerializer, ContactSubmissionSerializer, ContactSubmissionCreateSerializer,
-    ContactOverviewSerializer, AssessmentSubmissionSerializer, AssessmentSubmissionCreateSerializer
+    ContactOverviewSerializer, AssessmentSubmissionSerializer, AssessmentSubmissionCreateSerializer,
+    NewsletterSubscribeSerializer,
 )
 from courses.models import CourseReview, Course
 from courses.serializers import FrontendCourseSerializer
@@ -756,3 +757,57 @@ class CourseRecommendationsView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class NewsletterSubscribeView(APIView):
+    """
+    POST /api/home/newsletter/subscribe/
+    Public: capture email, store locally, add to Brevo newsletter list.
+    Welcome/campaign emails are handled in Brevo (list automation / campaigns).
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = NewsletterSubscribeSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        email = serializer.validated_data['email']
+        first_name = serializer.validated_data.get('first_name') or ''
+        source = serializer.validated_data.get('source') or ''
+
+        subscriber, created = NewsletterSubscriber.objects.get_or_create(
+            email=email,
+            defaults={'first_name': first_name, 'source': source},
+        )
+        if not created:
+            updated_fields = []
+            if first_name and subscriber.first_name != first_name:
+                subscriber.first_name = first_name
+                updated_fields.append('first_name')
+            if source and not subscriber.source:
+                subscriber.source = source
+                updated_fields.append('source')
+            if updated_fields:
+                subscriber.save(update_fields=updated_fields + ['updated_at'])
+
+        list_id = getattr(settings, 'BREVO_NEWSLETTER_LIST_ID', None)
+        brevo_ok = False
+        if list_id:
+            try:
+                from lead_magnet.brevo_client import add_contact_to_list
+                brevo_ok = add_contact_to_list(email, first_name or email.split('@')[0], int(list_id))
+            except Exception as e:
+                print(f"[Newsletter] Brevo add_contact_to_list failed: {e}")
+        else:
+            print("[Newsletter] BREVO_NEWSLETTER_LIST_ID not set; saved locally only")
+
+        return Response(
+            {
+                'message': "You're subscribed! Check your inbox for a welcome email soon.",
+                'subscribed': True,
+                'already_subscribed': not created,
+                'brevo_synced': brevo_ok,
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
