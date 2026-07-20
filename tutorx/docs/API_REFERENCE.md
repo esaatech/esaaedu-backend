@@ -118,16 +118,16 @@ Student Ask AI: send a question about selected text in a TutorX lesson. The fron
 }
 ```
 
-**Permission**: Course teacher or enrolled student. Lesson must exist and have `type == 'tutorx'`.
+**Permission**: Course teacher or enrolled student. Lesson must exist and have `type == 'tutorx'`. Enrolled students also require `Lesson.show_ask_ai == True` (default `False`; teachers enable via lesson metadata).
 
 **Status Codes**:
 - `200 OK`: Success
 - `400 Bad Request`: Invalid request body
-- `403 Forbidden`: User is not teacher or enrolled student
+- `403 Forbidden`: User is not teacher or enrolled student, or Ask AI is disabled for this lesson (`show_ask_ai` is False for a student)
 - `404 Not Found`: Lesson not found
 - `500 Internal Server Error`: AI/service error
 
-**Implementation**: `tutorx/views.py` → `TutorXLessonAskView`, `tutorx/serializers.py` → `StudentAskRequestSerializer` / `StudentAskResponseSerializer`, `tutorx/services/ai.py` → `TutorXAIService.ask_student()`. See `tutorx/STUDENT_ASK_AI.md`.
+**Implementation**: `tutorx/views.py` → `TutorXLessonAskView`, `tutorx/serializers.py` → `StudentAskRequestSerializer` / `StudentAskResponseSerializer`, `tutorx/services/ai.py` → `TutorXAIService.ask_student()`. See `tutorx/docs/STUDENT_ASK_AI.md`.
 
 ---
 
@@ -163,9 +163,9 @@ Lesson chat: send a message and get an AI reply. The backend infers intent (expl
 - `image_description`: string (short description for accessibility).
 - `image_prompt`: string (prompt for an image generation API).
 
-**Permission**: Course teacher or enrolled student. Lesson must exist and have `type == 'tutorx'`.
+**Permission**: Course teacher or enrolled student. Lesson must exist and have `type == 'tutorx'`. Enrolled students also require `Lesson.show_ask_ai == True`.
 
-**Status Codes**: `200 OK`, `400 Bad Request`, `403 Forbidden`, `404 Not Found`, `500 Internal Server Error`.
+**Status Codes**: `200 OK`, `400 Bad Request`, `403 Forbidden` (including Ask AI disabled for students), `404 Not Found`, `500 Internal Server Error`.
 
 **Implementation**: `tutorx/views.py` → `LessonChatView`, `tutorx/services/lesson_chat.py` (intent + dispatch), `tutorx/services/handlers.py` (handlers). See `tutorx/docs/LESSON_CHAT_TUTORIAL.md` and `tutorx/docs/LESSON_CHAT_FRONTEND.md`.
 

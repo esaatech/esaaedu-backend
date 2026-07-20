@@ -4,12 +4,24 @@
 
 Students viewing a TutorX lesson can select text and ask the AI a question (e.g. "Explain more", "Simplify", or a custom question). The frontend sends **sentence-level context** (lesson title, optional context before, current sentence, selected text, question) to limit token usage. This backend endpoint answers each request independently; the frontend manages the conversation UI and follow-ups by reusing the same context with a new question.
 
+Ask AI is **disabled by default**. Teachers enable it per lesson via `Lesson.show_ask_ai` (checkbox **Show Ask AI** in Course Management). Existing lessons remain off until a teacher checks the box and saves.
+
+## Lesson flag: `show_ask_ai`
+
+| Field | Model | Default | Meaning |
+|-------|--------|---------|---------|
+| `show_ask_ai` | `courses.Lesson` | `False` | When `True`, students may use Ask AI UI and call ask/chat APIs for this TutorX lesson. |
+
+- Exposed on teacher create/update and list serializers, and on student lesson list/detail (so `CourseViewer` can gate the UI).
+- Migration: `courses/migrations/0069_lesson_show_ask_ai.py`.
+- **API enforcement**: In `TutorXLessonAskView` and `LessonChatView`, if the requester is a **student** and `lesson.show_ask_ai` is `False`, the request is rejected (so the UI flag cannot be bypassed). Course teachers are not blocked by this flag.
+
 ## Endpoint
 
 **POST** `/api/tutorx/lessons/<lesson_id>/ask/`
 
 - **Path**: `lesson_id` (UUID).
-- **Permission**: Authenticated user must be the **course teacher** or an **enrolled student** (e.g. via `EnrolledCourse`). Lesson must exist and have `type == 'tutorx'`.
+- **Permission**: Authenticated user must be the **course teacher** or an **enrolled student** (e.g. via `EnrolledCourse`). Lesson must exist and have `type == 'tutorx'`. Enrolled students additionally require `show_ask_ai == True`.
 
 ## Request
 
@@ -35,21 +47,24 @@ Students viewing a TutorX lesson can select text and ask the AI a question (e.g.
 }
 ```
 
-**Errors**: 400 (validation), 403 (forbidden), 404 (lesson not found), 500 (AI error).
+**Errors**: 400 (validation), 403 (forbidden / Ask AI disabled for students), 404 (lesson not found), 500 (AI error).
 
 ## Implementation
 
 | Layer | File | Description |
 |-------|------|-------------|
-| **View** | `tutorx/views.py` | `TutorXLessonAskView` — POST only; resolves lesson by `lesson_id`; checks `lesson.type == 'tutorx'`; enforces teacher or enrolled student; validates body with `StudentAskRequestSerializer`; calls `TutorXAIService.ask_student()`; returns 200 with `StudentAskResponseSerializer` or 400/403/404/500. |
-| **Serializers** | `tutorx/serializers.py` | `StudentAskRequestSerializer` — validates `lesson_title`, `context_before`, `current_sentence`, `selected_text`, `question`, `action_type`. `StudentAskResponseSerializer` — `answer`, `model`. |
-| **Service** | `tutorx/services/ai.py` | `TutorXAIService.ask_student(lesson_title, current_sentence, selected_text, question, context_before=None, action_type=None, ...)` — builds a single prompt from the fields (no `block_content`); uses `_get_system_instruction(action_type)` for known action types or a generic tutor instruction for `custom`; calls `gemini_service.generate()`; returns `{'answer': raw, 'model': ...}`. |
-| **URL** | `tutorx/urls.py` | `path('lessons/<uuid:lesson_id>/ask/', views.TutorXLessonAskView.as_view(), name='tutorx-lesson-ask')`. |
+| **Model** | `courses/models.py` | `Lesson.show_ask_ai` BooleanField, default `False`. |
+| **View** | `tutorx/views.py` | `TutorXLessonAskView` — POST only; resolves lesson; checks `type == 'tutorx'`; enforces teacher or enrolled student; **rejects students when `not lesson.show_ask_ai`**; validates body; calls `TutorXAIService.ask_student()`. |
+| **Serializers** | `tutorx/serializers.py` / `courses/serializers.py` | Ask request/response serializers; lesson list/detail/create-update include `show_ask_ai`. |
+| **Service** | `tutorx/services/ai.py` | `TutorXAIService.ask_student(...)`. |
+| **URL** | `tutorx/urls.py` | `path('lessons/<uuid:lesson_id>/ask/', ...)`. |
+
+The same `show_ask_ai` student gate applies to **POST** `/api/tutorx/lessons/<lesson_id>/chat/` (`LessonChatView`).
 
 ## Frontend
 
-The React app (little-learners-tech repo) builds the payload in `src/utils/tutorxSentenceContext.ts` and calls `askTutorXAI(lessonId, payload)` from `src/services/api.ts`. See the frontend docs: `docs/tutorx-student-ask-ai.md`.
+The React app (little-learners-tech repo) gates UI on `show_ask_ai === true`, builds the ask payload in `src/apps/tutorx/utils/tutorxSentenceContext.ts`, and calls `askTutorXAI(lessonId, payload)`. See the frontend docs: `docs/tutorx-student-ask-ai.md`.
 
 ## API reference
 
-See `tutorx/API_REFERENCE.md` for the full request/response and status codes.
+See `tutorx/docs/API_REFERENCE.md` for the full request/response and status codes.

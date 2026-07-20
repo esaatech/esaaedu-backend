@@ -426,6 +426,10 @@ class Lesson(models.Model):
         default='',
         help_text="For TutorX lessons: BlockNote blocks as JSON string. Same format as book page content."
     )
+    show_ask_ai = models.BooleanField(
+        default=False,
+        help_text="When True, show Ask AI UI for students on this TutorX lesson.",
+    )
     
     # Materials & Resources
     materials = models.JSONField(

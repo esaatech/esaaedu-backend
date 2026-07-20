@@ -1405,6 +1405,11 @@ class TutorXLessonAskView(APIView):
                 {'error': 'Only the course teacher or enrolled students can access this lesson'},
                 status=status.HTTP_403_FORBIDDEN
             )
+        if is_student and not lesson.show_ask_ai:
+            return Response(
+                {'error': 'Ask AI is not enabled for this lesson'},
+                status=status.HTTP_403_FORBIDDEN
+            )
         serializer = StudentAskRequestSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -1464,6 +1469,11 @@ class LessonChatView(APIView):
         if not is_teacher and not is_student:
             return Response(
                 {'error': 'Only the course teacher or enrolled students can access this lesson'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        if is_student and not lesson.show_ask_ai:
+            return Response(
+                {'error': 'Ask AI is not enabled for this lesson'},
                 status=status.HTTP_403_FORBIDDEN
             )
 

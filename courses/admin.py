@@ -319,7 +319,7 @@ class LessonAdmin(admin.ModelAdmin):
             'fields': ('course', 'module', 'title', 'description', 'order', 'duration')
         }),
         ('Lesson Content', {
-            'fields': ('type', 'text_content', 'video_url', 'audio_url', 'live_class_date', 'live_class_status', 'content', 'tutorx_content')
+            'fields': ('type', 'text_content', 'video_url', 'audio_url', 'live_class_date', 'live_class_status', 'content', 'tutorx_content', 'show_ask_ai')
         }),
         ('Materials', {
             'fields': ('materials',),

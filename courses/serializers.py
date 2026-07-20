@@ -186,7 +186,7 @@ class LessonListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'description', 'type', 'duration', 'order',
             'module_id', 'module_title',
-            'status', 'created_at'
+            'status', 'show_ask_ai', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']
     
@@ -268,7 +268,7 @@ class LessonDetailSerializer(serializers.ModelSerializer):
             'text_content', 'video_url', 'audio_url', 'live_class_date', 
             'live_class_status', 'content', 'materials', 'prerequisites',
             'quiz', 'quizzes', 'assignment', 'assignments', 'has_assignment', 'class_event', 'teacher_name', 'course_title',
-            'is_material_available', 'created_at', 'updated_at'
+            'is_material_available', 'show_ask_ai', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
@@ -1147,7 +1147,7 @@ class LessonListSerializer(serializers.ModelSerializer):
             'id', 'title', 'description', 'type', 'duration', 'order',
             'module_id', 'module_title', 'module',
             'text_content', 'video_url', 'audio_url', 'live_class_date',
-            'live_class_status', 'content',
+            'live_class_status', 'content', 'show_ask_ai',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -1179,7 +1179,7 @@ class LessonCreateUpdateSerializer(serializers.ModelSerializer):
         fields = [
             'title', 'description', 'type', 'duration', 'order', 'content',
             'text_content', 'video_url', 'audio_url', 'live_class_date', 
-            'live_class_status', 'module_id'
+            'live_class_status', 'module_id', 'show_ask_ai'
         ]
 
     def validate_module_id(self, value):
