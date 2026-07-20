@@ -570,6 +570,8 @@ class DashboardStatisticsSerializer(serializers.Serializer):
 class AudioVideoLessonSerializer(serializers.Serializer):
     """Serializer for audio/video lessons"""
     id = serializers.UUIDField()  # Changed from IntegerField to UUIDField
+    lesson_id = serializers.UUIDField(required=False, allow_null=True)
+    event_id = serializers.UUIDField(required=False, allow_null=True)
     title = serializers.CharField()
     type = serializers.CharField()
     course_title = serializers.CharField()
@@ -581,6 +583,8 @@ class AudioVideoLessonSerializer(serializers.Serializer):
     progress_percentage = serializers.FloatField()  # Added for real progress display
     total_lessons = serializers.IntegerField()  # Added for progress bar
     completed_lessons_count = serializers.IntegerField()  # Added for progress bar
+    is_completed = serializers.BooleanField(default=False)
+    status = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
 
 class LiveLessonSerializer(serializers.Serializer):
@@ -601,6 +605,8 @@ class LiveLessonSerializer(serializers.Serializer):
 class TextLessonSerializer(serializers.Serializer):
     """Serializer for text lessons"""
     id = serializers.UUIDField()  # Changed from IntegerField to UUIDField
+    lesson_id = serializers.UUIDField(required=False, allow_null=True)
+    event_id = serializers.UUIDField(required=False, allow_null=True)
     title = serializers.CharField()
     course_title = serializers.CharField()
     course_id = serializers.UUIDField()
@@ -610,11 +616,15 @@ class TextLessonSerializer(serializers.Serializer):
     progress_percentage = serializers.FloatField()  # Added for real progress display
     total_lessons = serializers.IntegerField()  # Added for progress bar
     completed_lessons_count = serializers.IntegerField()  # Added for progress bar
+    is_completed = serializers.BooleanField(default=False)
+    status = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
 
 class InteractiveLessonSerializer(serializers.Serializer):
     """Serializer for interactive lessons"""
     id = serializers.UUIDField()  # Changed from IntegerField to UUIDField
+    lesson_id = serializers.UUIDField(required=False, allow_null=True)
+    event_id = serializers.UUIDField(required=False, allow_null=True)
     title = serializers.CharField()
     course_title = serializers.CharField()
     course_id = serializers.UUIDField()
@@ -625,6 +635,8 @@ class InteractiveLessonSerializer(serializers.Serializer):
     progress_percentage = serializers.FloatField()  # Added for real progress display
     total_lessons = serializers.IntegerField()  # Added for progress bar
     completed_lessons_count = serializers.IntegerField()  # Added for progress bar
+    is_completed = serializers.BooleanField(default=False)
+    status = serializers.CharField(required=False, allow_null=True, allow_blank=True)
 
 
 class AchievementSerializer(serializers.Serializer):

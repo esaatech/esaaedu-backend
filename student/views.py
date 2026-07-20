@@ -9,14 +9,14 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
 from django.utils import timezone
 from django.db import models
-from django.db.models import Q, Count, Avg
+from django.db.models import Q, Count, Avg, Prefetch
 from django.contrib.auth import get_user_model
 from datetime import datetime, timedelta
 import uuid
 import logging
 import re
 
-from .models import EnrolledCourse, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback, Conversation, Message, CodeSnippet
+from .models import EnrolledCourse, StudentLessonProgress, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback, Conversation, Message, CodeSnippet
 from teacher.utils import FileUploadService
 from ai.api_errors import ai_error_response
 
@@ -1656,7 +1656,11 @@ class DashboardOverview(APIView):
                 student_profile=student_profile,
                 status='active'
             ).select_related('course').prefetch_related(
-                'course__lessons'
+                'course__lessons',
+                Prefetch(
+                    'lesson_progress',
+                    queryset=StudentLessonProgress.objects.select_related('lesson'),
+                ),
             )
             
             # Get all class events for enrolled courses in one query
@@ -1782,27 +1786,45 @@ class DashboardOverview(APIView):
             
             print(f"🔍 DEBUG: Found {course_events.count()} non-live class events for course {enrollment.course.title}")
             
+            completed_lesson_ids = {
+                p.lesson_id
+                for p in enrollment.lesson_progress.all()
+                if p.status == 'completed'
+            }
+
             for event in course_events:
                 print(f"🔍 DEBUG: Processing class event: {event.title} (Type: {event.lesson_type}, Start: {event.start_time})")
+
+                if not event.lesson_id:
+                    print(f"🔍 DEBUG: Skipping event without linked lesson: {event.title}")
+                    continue
+
+                if event.lesson_id in completed_lesson_ids:
+                    print(f"🔍 DEBUG: Skipping completed lesson event: {event.title}")
+                    continue
                 
                 # Get actual course lesson count (more reliable than enrollment.total_lessons_count)
                 actual_course_lessons = enrollment.course.lessons.count()
                 
                 # Create lesson data based on event type
                 lesson_data = {
-                    'id': event.id,
+                    'id': event.lesson.id,
+                    'lesson_id': event.lesson.id,
+                    'event_id': event.id,
                     'title': event.title,
                     'type': event.lesson_type,
                     'course_title': enrollment.course.title,
                     'course_id': enrollment.course.id,
                     'duration': event.duration_minutes,
-                    'media_url': f"/lessons/{event.id}",
+                    'media_url': f"/lessons/{event.lesson.id}",
                     'description': event.description[:100] + '...' if event.description and len(event.description) > 100 else event.description,
                     'start_time': event.start_time,  # Use actual event start time
                     'progress_percentage': float(enrollment.progress_percentage),  # Get real progress from enrollment
                     # Add course-level enrollment information for progress bar
                     'total_lessons': actual_course_lessons,  # Use actual course lesson count
-                    'completed_lessons_count': enrollment.completed_lessons_count
+                    'completed_lessons_count': enrollment.completed_lessons_count,
+                    'is_completed': False,
+                    'status': 'current' if enrollment.current_lesson_id == event.lesson_id else 'upcoming',
                 }
                 
                 print(f"🔍 DEBUG: Continue Learning Lesson Data: {lesson_data}")
