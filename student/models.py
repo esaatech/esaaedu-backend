@@ -778,6 +778,127 @@ class EnrolledCourse(models.Model):
             self.completion_date = None
 
 
+class EnrollmentSchedule(models.Model):
+    """
+    Per-enrollment cadence for self-paced courses (daily/weekly, optional clock time).
+    Used to generate ClassEvents so Continue Learning / student schedule keep working.
+    """
+    FREQUENCY_CHOICES = [
+        ('daily', 'Daily'),
+        ('weekly', 'Weekly'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    enrollment = models.OneToOneField(
+        EnrolledCourse,
+        on_delete=models.CASCADE,
+        related_name='schedule',
+        help_text="Enrollment this cadence belongs to",
+    )
+    class_instance = models.ForeignKey(
+        'courses.Class',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='enrollment_schedules',
+        help_text="Private class used to hold generated ClassEvents for this enrollment",
+    )
+    frequency = models.CharField(
+        max_length=20,
+        choices=FREQUENCY_CHOICES,
+        default='daily',
+        help_text="How often learning slots occur",
+    )
+    weekdays = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="For weekly: list of weekdays 0=Monday .. 6=Sunday. Empty for daily.",
+    )
+    repeat_weekly = models.BooleanField(
+        default=True,
+        help_text=(
+            "When True (default), the selected weekdays/times repeat until the course ends. "
+            "When False, use custom_slots for specific date/time picks."
+        ),
+    )
+    custom_slots = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "When repeat_weekly is False: list of "
+            "{date: YYYY-MM-DD, start_time: HH:MM:SS, end_time: HH:MM:SS}."
+        ),
+    )
+    all_day = models.BooleanField(
+        default=True,
+        help_text="When True, slots have no clock time (date-only ClassEvents)",
+    )
+    start_time = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="Optional start time when all_day is False",
+    )
+    end_time = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="Optional end time when all_day is False",
+    )
+    timezone = models.CharField(
+        max_length=63,
+        blank=True,
+        default='',
+        help_text="IANA timezone for generating dated events",
+    )
+    horizon_days = models.PositiveIntegerField(
+        default=21,
+        help_text="How many days ahead to materialize ClassEvents",
+    )
+    updated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='updated_enrollment_schedules',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'enrollment_schedules'
+        verbose_name = 'Enrollment Schedule'
+        verbose_name_plural = 'Enrollment Schedules'
+
+    def __str__(self):
+        return f"Schedule {self.frequency} for enrollment {self.enrollment_id}"
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+
+        if self.frequency == 'weekly':
+            if self.repeat_weekly:
+                if not self.weekdays:
+                    raise ValidationError({'weekdays': 'Weekly schedules require at least one weekday'})
+                for day in self.weekdays:
+                    if day not in range(7):
+                        raise ValidationError({'weekdays': 'Weekdays must be integers 0 (Mon) through 6 (Sun)'})
+                if not self.all_day:
+                    if not self.start_time or not self.end_time:
+                        raise ValidationError('start_time and end_time are required when all_day is False')
+                    if self.start_time >= self.end_time:
+                        raise ValidationError('end_time must be after start_time')
+            else:
+                if not self.custom_slots:
+                    raise ValidationError({'custom_slots': 'Add at least one date/time on the calendar'})
+                for slot in self.custom_slots:
+                    if not slot.get('date') or not slot.get('start_time') or not slot.get('end_time'):
+                        raise ValidationError({'custom_slots': 'Each slot needs date, start_time, and end_time'})
+        elif self.frequency == 'daily' and not self.all_day:
+            if not self.start_time or not self.end_time:
+                raise ValidationError('start_time and end_time are required when all_day is False')
+            if self.start_time >= self.end_time:
+                raise ValidationError('end_time must be after start_time')
+
+
 class StudentAttendance(models.Model):
     """
     Track student attendance for classes

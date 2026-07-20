@@ -1476,8 +1476,11 @@ class StudentScheduleView(APIView):
                                             schedule_event = {
                                                 'id': str(event.id),
                                                 'title': event.title,
-                                                'start': event.start_time.isoformat(),
-                                                'end': event.end_time.isoformat(),
+                                                'start': event.start_time.isoformat() if event.start_time else None,
+                                                'end': event.end_time.isoformat() if event.end_time else (
+                                                    event.start_time.isoformat() if event.start_time else None
+                                                ),
+                                                'all_day': bool(getattr(event, 'all_day', False)),
                                                 'description': event.description or '',
                                                 'event_type': event.event_type,
                                                 'lesson_id': lesson_id,

@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from . import enrollment_schedule_views
 
 urlpatterns = [
     # Enrolled Courses
@@ -20,6 +21,10 @@ urlpatterns = [
     
     # Schedule
     path('schedule/', views.StudentScheduleView.as_view(), name='student_schedule'),
+
+    # Self-paced enrollment cadence (Phase 1)
+    path('self-paced-schedules/', enrollment_schedule_views.SelfPacedEnrollmentScheduleListView.as_view(), name='self_paced_schedules'),
+    path('enrolled-courses/<uuid:enrollment_id>/schedule/', enrollment_schedule_views.EnrollmentScheduleDetailView.as_view(), name='enrollment_schedule'),
 
     # Course overview (intro, enrollment, reviews) – student must be enrolled
     path('courses/<uuid:course_id>/overview/', views.StudentCourseOverviewView.as_view(), name='student_course_overview'),

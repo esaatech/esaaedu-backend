@@ -7,7 +7,7 @@ from .models import (
     EnrolledCourse, StudentAttendance, StudentGrade, StudentBehavior, 
     StudentNote, StudentCommunication, StudentLessonProgress,
     LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback,
-    Conversation, Message, CodeSnippet
+    Conversation, Message, CodeSnippet, EnrollmentSchedule
 )
 from courses.models import Class, Lesson
 from .utils import complete_enrollment_without_stripe, sync_manual_payment_from_enrollment
@@ -922,3 +922,17 @@ class CodeSnippetAdmin(admin.ModelAdmin):
         count = queryset.update(is_shared=False)
         self.message_user(request, f'{count} code snippets are now private.')
     make_private.short_description = "Make selected snippets private"
+
+@admin.register(EnrollmentSchedule)
+class EnrollmentScheduleAdmin(admin.ModelAdmin):
+    list_display = [
+        'id', 'enrollment', 'frequency', 'repeat_weekly', 'all_day',
+        'horizon_days', 'class_instance', 'updated_at',
+    ]
+    list_filter = ['frequency', 'repeat_weekly', 'all_day']
+    search_fields = [
+        'enrollment__student_profile__user__email',
+        'enrollment__course__title',
+    ]
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    raw_id_fields = ['enrollment', 'class_instance', 'updated_by']

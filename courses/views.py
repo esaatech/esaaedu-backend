@@ -663,6 +663,7 @@ class CourseCreationView(APIView):
                 'price': 0.00,  # Default free course
                 'is_free': True,  # Default to free
                 'level': 'beginner',  # Default level
+                'delivery_type': 'live',  # Default delivery
                 'status': 'draft'  # Default status
             }
             

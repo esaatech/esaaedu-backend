@@ -6,7 +6,7 @@ from .models import (
     EnrolledCourse, StudentAttendance, StudentGrade, 
     StudentBehavior, StudentNote, StudentCommunication,
     QuizQuestionFeedback, QuizAttemptFeedback,
-    Conversation, Message, CodeSnippet
+    Conversation, Message, CodeSnippet, EnrollmentSchedule
 )
 from courses.models import AssignmentSubmission
 
@@ -1078,4 +1078,107 @@ class StudentCourseOverviewSerializer(serializers.Serializer):
         if my_review is None:
             return None
         return CourseReviewSerializer(my_review).data
+
+
+# ===== ENROLLMENT SCHEDULE (SELF-PACED) =====
+
+class EnrollmentScheduleSerializer(serializers.ModelSerializer):
+    """Cadence for a self-paced enrollment (daily/weekly, optional clock time)."""
+    enrollment_id = serializers.UUIDField(source='enrollment.id', read_only=True)
+    course_id = serializers.UUIDField(source='enrollment.course_id', read_only=True)
+    course_title = serializers.CharField(source='enrollment.course.title', read_only=True)
+    delivery_type = serializers.CharField(source='enrollment.course.delivery_type', read_only=True)
+    class_instance_id = serializers.UUIDField(read_only=True, allow_null=True)
+    events_generated = serializers.IntegerField(read_only=True, required=False)
+
+    class Meta:
+        model = EnrollmentSchedule
+        fields = [
+            'id', 'enrollment_id', 'course_id', 'course_title', 'delivery_type',
+            'class_instance_id', 'frequency', 'weekdays', 'repeat_weekly',
+            'custom_slots', 'all_day', 'start_time', 'end_time', 'timezone',
+            'horizon_days', 'events_generated', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def validate(self, data):
+        frequency = data.get('frequency', getattr(self.instance, 'frequency', 'daily') if self.instance else 'daily')
+        weekdays = data.get('weekdays', getattr(self.instance, 'weekdays', []) if self.instance else [])
+        repeat_weekly = data.get(
+            'repeat_weekly',
+            getattr(self.instance, 'repeat_weekly', True) if self.instance else True,
+        )
+        custom_slots = data.get(
+            'custom_slots',
+            getattr(self.instance, 'custom_slots', []) if self.instance else [],
+        )
+        all_day = data.get('all_day', getattr(self.instance, 'all_day', True) if self.instance else True)
+        start_time = data.get('start_time', getattr(self.instance, 'start_time', None) if self.instance else None)
+        end_time = data.get('end_time', getattr(self.instance, 'end_time', None) if self.instance else None)
+
+        if frequency == 'weekly':
+            if repeat_weekly:
+                if not weekdays:
+                    raise serializers.ValidationError({
+                        'weekdays': 'Select at least one day/time on the calendar',
+                    })
+                for day in weekdays:
+                    if day not in range(7):
+                        raise serializers.ValidationError({
+                            'weekdays': 'Weekdays must be integers 0 (Mon) through 6 (Sun)',
+                        })
+                if not all_day:
+                    if not start_time or not end_time:
+                        raise serializers.ValidationError(
+                            'start_time and end_time are required when all_day is False'
+                        )
+                    if start_time >= end_time:
+                        raise serializers.ValidationError('end_time must be after start_time')
+            else:
+                if not custom_slots:
+                    raise serializers.ValidationError({
+                        'custom_slots': 'Add at least one date/time on the calendar',
+                    })
+                for slot in custom_slots:
+                    if not slot.get('date') or not slot.get('start_time') or not slot.get('end_time'):
+                        raise serializers.ValidationError({
+                            'custom_slots': 'Each slot needs date, start_time, and end_time',
+                        })
+        elif frequency == 'daily' and not all_day:
+            if not start_time or not end_time:
+                raise serializers.ValidationError(
+                    'start_time and end_time are required when all_day is False'
+                )
+            if start_time >= end_time:
+                raise serializers.ValidationError('end_time must be after start_time')
+        return data
+
+
+class EnrollmentScheduleListItemSerializer(serializers.ModelSerializer):
+    """Lightweight list of self-paced enrollments that can have a schedule."""
+    enrollment_id = serializers.UUIDField(source='id', read_only=True)
+    course_id = serializers.UUIDField(read_only=True)
+    course_title = serializers.CharField(source='course.title', read_only=True)
+    delivery_type = serializers.CharField(source='course.delivery_type', read_only=True)
+    has_schedule = serializers.SerializerMethodField()
+    schedule = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EnrolledCourse
+        fields = [
+            'enrollment_id', 'course_id', 'course_title', 'delivery_type',
+            'status', 'has_schedule', 'schedule',
+        ]
+
+    def get_has_schedule(self, obj):
+        try:
+            return obj.schedule is not None
+        except EnrollmentSchedule.DoesNotExist:
+            return False
+
+    def get_schedule(self, obj):
+        try:
+            return EnrollmentScheduleSerializer(obj.schedule).data
+        except EnrollmentSchedule.DoesNotExist:
+            return None
 

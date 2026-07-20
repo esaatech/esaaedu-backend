@@ -463,8 +463,8 @@ class ClassAdmin(admin.ModelAdmin):
 
 @admin.register(ClassSession)
 class ClassSessionAdmin(admin.ModelAdmin):
-    list_display = ['name', 'class_instance', 'day_of_week', 'start_time', 'end_time', 'session_number', 'is_active']
-    list_filter = ['day_of_week', 'is_active', 'class_instance__course__category']
+    list_display = ['name', 'class_instance', 'day_of_week', 'all_day', 'start_time', 'end_time', 'session_number', 'is_active']
+    list_filter = ['day_of_week', 'all_day', 'is_active', 'class_instance__course__category']
     search_fields = ['name', 'class_instance__name', 'class_instance__course__title']
     readonly_fields = ['id', 'created_at', 'updated_at']
     
@@ -473,7 +473,7 @@ class ClassSessionAdmin(admin.ModelAdmin):
             'fields': ('name', 'class_instance', 'session_number')
         }),
         ('Schedule', {
-            'fields': ('day_of_week', 'start_time', 'end_time')
+            'fields': ('day_of_week', 'all_day', 'start_time', 'end_time')
         }),
         ('Status', {
             'fields': ('is_active',)
@@ -487,8 +487,8 @@ class ClassSessionAdmin(admin.ModelAdmin):
 
 @admin.register(ClassEvent)
 class ClassEventAdmin(admin.ModelAdmin):
-    list_display = ['title', 'class_instance', 'event_type', 'lesson_type', 'project', 'project_platform', 'assessment', 'due_date', 'start_time', 'end_time', 'duration_minutes', 'created_at']
-    list_filter = ['event_type', 'lesson_type', 'project_platform', 'submission_type', 'start_time', 'class_instance__course__category', 'created_at']
+    list_display = ['title', 'class_instance', 'event_type', 'lesson_type', 'all_day', 'project', 'project_platform', 'assessment', 'due_date', 'start_time', 'end_time', 'duration_minutes', 'created_at']
+    list_filter = ['event_type', 'lesson_type', 'all_day', 'is_schedule_generated', 'project_platform', 'submission_type', 'start_time', 'class_instance__course__category', 'created_at']
     search_fields = ['title', 'description', 'class_instance__name', 'class_instance__course__title', 'project__title', 'project_title', 'assessment__title']
     readonly_fields = ['id', 'duration_minutes', 'created_at', 'updated_at']
     date_hierarchy = 'start_time'
@@ -498,8 +498,8 @@ class ClassEventAdmin(admin.ModelAdmin):
             'fields': ('title', 'description', 'class_instance', 'event_type', 'lesson_type')
         }),
         ('Schedule', {
-            'fields': ('start_time', 'end_time', 'duration_minutes'),
-            'description': 'Required for lesson/meeting/break/test/exam events. Leave empty for project events.'
+            'fields': ('all_day', 'is_schedule_generated', 'start_time', 'end_time', 'duration_minutes'),
+            'description': 'Required for lesson/meeting/break/test/exam events. all_day = date-only. Leave empty for project events.'
         }),
         ('Project Details', {
             'fields': ('due_date', 'project_title', 'submission_type'),

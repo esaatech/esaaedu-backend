@@ -2204,8 +2204,20 @@ class ClassSession(models.Model):
         choices=DAY_CHOICES,
         help_text="Day of the week (0=Monday, 6=Sunday)"
     )
-    start_time = models.TimeField(help_text="Session start time")
-    end_time = models.TimeField(help_text="Session end time")
+    start_time = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="Session start time (null when all_day)",
+    )
+    end_time = models.TimeField(
+        null=True,
+        blank=True,
+        help_text="Session end time (null when all_day)",
+    )
+    all_day = models.BooleanField(
+        default=False,
+        help_text="When True, session is date/day-based with no clock time",
+    )
     session_number = models.PositiveIntegerField(
         help_text="Order of this session (1, 2, 3...)"
     )
@@ -2226,11 +2238,15 @@ class ClassSession(models.Model):
     
     def __str__(self):
         day_name = dict(self.DAY_CHOICES)[self.day_of_week]
+        if self.all_day or not self.start_time:
+            return f"{self.class_instance.name} - {day_name} (all day)"
         return f"{self.class_instance.name} - {day_name} {self.start_time.strftime('%I:%M %p')}"
     
     @property
     def duration_minutes(self):
         """Calculate session duration in minutes"""
+        if self.all_day or not self.start_time or not self.end_time:
+            return 0
         start = self.start_time
         end = self.end_time
         
@@ -2248,9 +2264,20 @@ class ClassSession(models.Model):
     def formatted_schedule(self):
         """Get formatted schedule string"""
         day_name = dict(self.DAY_CHOICES)[self.day_of_week]
+        if self.all_day or not self.start_time or not self.end_time:
+            return f"{day_name} (all day)"
         start_str = self.start_time.strftime('%I:%M %p')
         end_str = self.end_time.strftime('%I:%M %p')
         return f"{day_name} {start_str} - {end_str}"
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.all_day:
+            return
+        if not self.start_time or not self.end_time:
+            raise ValidationError("Start and end time are required when session is not all-day")
+        if self.start_time >= self.end_time:
+            raise ValidationError("End time must be after start time")
 
 
 
@@ -2530,6 +2557,14 @@ class ClassEvent(models.Model):
     )
     start_time = models.DateTimeField(null=True, blank=True, help_text="Event start time")
     end_time = models.DateTimeField(null=True, blank=True, help_text="Event end time")
+    all_day = models.BooleanField(
+        default=False,
+        help_text="When True, event is date-based with no specific clock time",
+    )
+    is_schedule_generated = models.BooleanField(
+        default=False,
+        help_text="True when this event was generated from an EnrollmentSchedule cadence",
+    )
     
     # Lesson Type (for lesson events)
     lesson_type = models.CharField(
@@ -2584,11 +2619,19 @@ class ClassEvent(models.Model):
         ]
     
     def __str__(self):
-        return f"{self.title} - {self.class_instance.name} ({self.start_time.strftime('%Y-%m-%d %H:%M')})"
+        if self.start_time:
+            when = self.start_time.strftime('%Y-%m-%d %H:%M')
+            if self.all_day:
+                when = self.start_time.strftime('%Y-%m-%d') + ' (all day)'
+        else:
+            when = 'unscheduled'
+        return f"{self.title} - {self.class_instance.name} ({when})"
     
     @property
     def duration_minutes(self):
         """Calculate event duration in minutes"""
+        if self.all_day:
+            return 0
         if self.start_time and self.end_time:
             delta = self.end_time - self.start_time
             return int(delta.total_seconds() / 60)
@@ -2600,7 +2643,10 @@ class ClassEvent(models.Model):
         
         # For non-project events (lesson, meeting, break, test, exam), validate start_time and end_time
         if self.event_type != 'project':
-            if self.start_time and self.end_time:
+            if self.all_day:
+                if not self.start_time:
+                    raise ValidationError("All-day events require a start_time (date)")
+            elif self.start_time and self.end_time:
                 if self.end_time <= self.start_time:
                     raise ValidationError("End time must be after start time")
         

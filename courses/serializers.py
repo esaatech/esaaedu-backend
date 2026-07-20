@@ -747,6 +747,7 @@ class CourseListSerializer(serializers.ModelSerializer):
             'level', 'required_computer_skills_level', 'price', 'is_free', 'trial_enabled', 'trial_period_days',
             'featured', 'popular', 'color', 'icon',
             'max_students', 'schedule', 'certificate', 'status',
+            'delivery_type',
             'teacher_name', 'total_lessons', 'enrolled_students_count', 'active_students_count',
             'modules', 'created_at', 'updated_at'
         ]
@@ -795,7 +796,7 @@ class CourseDetailSerializer(serializers.ModelSerializer):
             'age_range', 'level', 'required_computer_skills_level', 'price', 'is_free',
             'trial_enabled', 'trial_period_days', 'features',
             'featured', 'popular', 'color', 'icon', 'image', 'max_students',
-            'schedule', 'certificate', 'status', 'teacher_name', 'teacher_id',
+            'schedule', 'certificate', 'status', 'delivery_type', 'teacher_name', 'teacher_id',
             
             # Introduction/detailed info (now part of Course model)
             'overview', 'learning_objectives', 'prerequisites_text',
@@ -866,7 +867,7 @@ class CourseCreateUpdateSerializer(serializers.ModelSerializer):
             'age_range', 'level', 'required_computer_skills_level', 'price', 'is_free',
             'trial_enabled', 'trial_period_days', 'features',
             'featured', 'popular', 'color', 'icon', 'image', 'thumbnail', 'max_students',
-            'schedule', 'certificate', 'status',
+            'schedule', 'certificate', 'status', 'delivery_type',
             
             # Introduction/detailed info
             'overview', 'learning_objectives', 'prerequisites_text',
@@ -1862,9 +1863,13 @@ class ClassSessionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ClassSession
         fields = [
-            'id', 'name', 'day_of_week', 'day_name', 'start_time', 'end_time', 
-            'session_number', 'is_active'
+            'id', 'name', 'day_of_week', 'day_name', 'start_time', 'end_time',
+            'all_day', 'session_number', 'is_active'
         ]
+        extra_kwargs = {
+            'start_time': {'required': False, 'allow_null': True},
+            'end_time': {'required': False, 'allow_null': True},
+        }
     
     def get_day_name(self, obj):
         """Get human-readable day name"""
@@ -1872,8 +1877,15 @@ class ClassSessionSerializer(serializers.ModelSerializer):
         return day_choices.get(obj.day_of_week, 'Unknown')
     
     def validate(self, data):
-        """Validate session times"""
-        if data['start_time'] >= data['end_time']:
+        """Validate session times / all_day"""
+        all_day = data.get('all_day', getattr(self.instance, 'all_day', False) if self.instance else False)
+        start_time = data.get('start_time', getattr(self.instance, 'start_time', None) if self.instance else None)
+        end_time = data.get('end_time', getattr(self.instance, 'end_time', None) if self.instance else None)
+        if all_day:
+            return data
+        if not start_time or not end_time:
+            raise serializers.ValidationError("Start and end time are required when session is not all-day")
+        if start_time >= end_time:
             raise serializers.ValidationError("End time must be after start time")
         return data
 
@@ -2444,6 +2456,7 @@ class ClassEventListSerializer(serializers.ModelSerializer):
         model = ClassEvent
         fields = [
             'id', 'title', 'description', 'event_type', 'start_time', 'end_time',
+            'all_day', 'is_schedule_generated',
             'lesson_title', 'project_title', 'project_platform_name', 
             'assessment_title', 'assessment_type', 'lesson_type', 
             'duration_minutes', 'meeting_platform', 'meeting_link',
@@ -2469,6 +2482,7 @@ class ClassEventDetailSerializer(serializers.ModelSerializer):
         model = ClassEvent
         fields = [
             'id', 'title', 'description', 'event_type', 'start_time', 'end_time',
+            'all_day', 'is_schedule_generated',
             'lesson', 'lesson_id', 'lesson_title', 'project', 'project_id', 'project_title',
             'project_platform', 'project_platform_id', 'project_platform_name',
             'assessment', 'assessment_id', 'assessment_title', 'assessment_type',
@@ -2484,13 +2498,15 @@ class ClassEventCreateUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = ClassEvent
         fields = [
-            'title', 'description', 'event_type', 'start_time', 'end_time', 
+            'title', 'description', 'event_type', 'start_time', 'end_time',
+            'all_day',
             'lesson', 'project', 'project_platform', 'project_title', 'due_date', 'submission_type',
             'lesson_type', 'meeting_platform', 'meeting_link', 'meeting_id', 'meeting_password',
             'assessment'
         ]
         extra_kwargs = {
-            'submission_type': {'required': False, 'allow_null': True}
+            'submission_type': {'required': False, 'allow_null': True},
+            'all_day': {'required': False},
         }
     
     def to_internal_value(self, data):
@@ -2555,11 +2571,17 @@ class ClassEventCreateUpdateSerializer(serializers.ModelSerializer):
     def validate(self, data):
         """Validate event data"""
         event_type = data.get('event_type')
+        all_day = data.get('all_day', getattr(self.instance, 'all_day', False) if self.instance else False)
         
         # For non-project events (lesson, meeting, break, test, exam), validate start_time and end_time
         if event_type != 'project':
-            if data.get('start_time') and data.get('end_time'):
-                if data['end_time'] <= data['start_time']:
+            start_time = data.get('start_time', getattr(self.instance, 'start_time', None) if self.instance else None)
+            end_time = data.get('end_time', getattr(self.instance, 'end_time', None) if self.instance else None)
+            if all_day:
+                if not start_time:
+                    raise serializers.ValidationError("All-day events require a start_time (date)")
+            elif start_time and end_time:
+                if end_time <= start_time:
                     raise serializers.ValidationError("End time must be after start time")
         
         # Validate lesson events
