@@ -14,6 +14,44 @@ from student.serializers import (
 from student.services.enrollment_schedule import regenerate_schedule_events
 
 
+def resolve_schedule_student_user(user, student_profile_id=None):
+    """
+    Return the User whose enrollments and class events should appear on the schedule.
+    Students and parents using student credentials use their own user.
+    Dedicated parent accounts resolve linked children via parent_email.
+    """
+    if not user or not user.is_authenticated:
+        return None
+    if user.role == 'student':
+        return user
+    student_profile = getattr(user, 'student_profile', None)
+    if student_profile:
+        return user
+    if getattr(user, 'is_parent', False):
+        from users.models import StudentProfile
+
+        parent_email = (user.email or '').strip()
+        if not parent_email:
+            return None
+        if student_profile_id:
+            linked = (
+                StudentProfile.objects.filter(
+                    id=student_profile_id,
+                    parent_email__iexact=parent_email,
+                )
+                .select_related('user')
+                .first()
+            )
+            return linked.user if linked else None
+        children = StudentProfile.objects.filter(parent_email__iexact=parent_email).select_related(
+            'user'
+        )
+        if children.count() == 1:
+            return children.first().user
+        return None
+    return None
+
+
 def _user_can_manage_enrollment(user, enrollment: EnrolledCourse) -> bool:
     """Teacher of the course, enrolled student, or parent using student credentials."""
     if not user or not user.is_authenticated:
@@ -68,12 +106,24 @@ class SelfPacedEnrollmentScheduleListView(APIView):
             )
         else:
             student_profile = getattr(request.user, 'student_profile', None)
-            if not student_profile:
+            if student_profile:
+                qs = qs.filter(student_profile=student_profile)
+            elif getattr(request.user, 'is_parent', False):
+                parent_email = (request.user.email or '').strip()
+                if not parent_email:
+                    return Response(
+                        {'error': 'Parent email not found'},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+                qs = qs.filter(student_profile__parent_email__iexact=parent_email)
+                student_profile_id = request.query_params.get('student_profile_id')
+                if student_profile_id:
+                    qs = qs.filter(student_profile_id=student_profile_id)
+            else:
                 return Response(
                     {'error': 'Student profile not found'},
                     status=status.HTTP_404_NOT_FOUND,
                 )
-            qs = qs.filter(student_profile=student_profile)
 
         data = EnrollmentScheduleListItemSerializer(qs, many=True).data
         return Response({'results': data}, status=status.HTTP_200_OK)

@@ -69,7 +69,8 @@ OneToOne on `EnrolledCourse`:
 
 `GET /api/student/self-paced-schedules/`
 
-- Student/parent: own active self-paced enrollments
+- Student / parent using student credentials: active self-paced enrollments for `request.user.student_profile`
+- Dedicated parent account: enrollments where `student_profile.parent_email` matches the parent's email (optional `?student_profile_id=<uuid>` to filter one child)
 - Teacher: `?student_id=<StudentProfile.id>`
 
 ### Get / set schedule
@@ -112,6 +113,9 @@ OneToOne on `EnrolledCourse`:
 Response includes `events_generated`.
 
 Student schedule API (`GET /api/student/schedule/`) includes `all_day` on events.
+
+- Student / parent using student credentials: schedule for `request.user`
+- Dedicated parent account: schedule for linked child via `parent_email` match (optional `?student_profile_id=<uuid>` when multiple children)
 
 ---
 

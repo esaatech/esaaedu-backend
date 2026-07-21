@@ -1393,17 +1393,25 @@ class StudentScheduleView(APIView):
         GET: Retrieve student's complete schedule
         """
         try:
-            # Step 1: Validate user is a student
-            if request.user.role != 'student':
+            student_profile_id = request.query_params.get('student_profile_id')
+            from student.enrollment_schedule_views import resolve_schedule_student_user
+
+            student_user = resolve_schedule_student_user(request.user, student_profile_id)
+            if not student_user:
                 return Response(
-                    {'error': 'Only students can access their schedule'},
-                    status=status.HTTP_403_FORBIDDEN
+                    {
+                        'error': 'Student profile not found',
+                        'details': (
+                            'Pass student_profile_id when managing schedule for a linked child.'
+                        ),
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
                 )
-            
+
             # Step 2: Get student's enrolled courses
             try:
                 enrollments = EnrolledCourse.objects.filter(
-                    student_profile__user=request.user,
+                    student_profile__user=student_user,
                     status='active'
                 ).select_related('course', 'student_profile')
                 
@@ -1445,7 +1453,7 @@ class StudentScheduleView(APIView):
                         # Get classes for this course - only classes the student is enrolled in
                         classes = Class.objects.filter(
                             course=enrollment.course,
-                            students=request.user,  # Only classes where this student is enrolled
+                            students=student_user,  # Only classes where this student is enrolled
                             is_active=True
                         ).select_related('course')
                         
