@@ -118,3 +118,7 @@ Response includes `events_generated` (count created).
 
 - `courses.0070_classsession_all_day_classevent_all_day`
 - `student.0021_enrollment_schedule`
+
+## Timezone
+
+Cadence `start_time` / `end_time` / `custom_slots` are **wall-clock** values in `EnrollmentSchedule.timezone` (IANA, e.g. `America/Denver`). The frontend sends `Intl.DateTimeFormat().resolvedOptions().timeZone` on save. Event generation uses that zone so Class Schedule shows the same local time as when the parent picked the slot (same idea as class scheduling via ISO datetimes).

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, time as dtime, date
 from typing import List, Tuple
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.db import transaction
 from django.utils import timezone
@@ -26,6 +27,21 @@ MAX_LOOKAHEAD_DAYS = 366 * 2
 
 def _lesson_event_type(lesson: Lesson) -> str:
     return LESSON_TYPE_TO_EVENT.get(lesson.type, 'text')
+
+
+def _resolve_schedule_tz(schedule: EnrollmentSchedule):
+    """
+    Interpret cadence wall-clock times in the scheduler's IANA timezone
+    (same idea as class scheduling: pick local time, store absolute UTC).
+    Falls back to Django TIME_ZONE when unset/invalid.
+    """
+    name = (getattr(schedule, 'timezone', None) or '').strip()
+    if name:
+        try:
+            return ZoneInfo(name)
+        except ZoneInfoNotFoundError:
+            pass
+    return timezone.get_current_timezone()
 
 
 def _iter_repeating_slot_dates(
@@ -108,27 +124,28 @@ def _incomplete_lessons(enrollment) -> List[Lesson]:
 
 
 def _aware_range(day: date, start: dtime, end: dtime, tz, all_day: bool):
+    """Combine local calendar date + wall clock in `tz` into aware datetimes."""
     if all_day:
-        start_dt = timezone.make_aware(datetime.combine(day, dtime.min), tz)
-        end_dt = timezone.make_aware(datetime.combine(day, dtime(23, 59, 59)), tz)
-        return start_dt, end_dt
-    start_dt = timezone.make_aware(datetime.combine(day, start), tz)
-    end_dt = timezone.make_aware(datetime.combine(day, end), tz)
-    return start_dt, end_dt
+        naive_start = datetime.combine(day, dtime.min)
+        naive_end = datetime.combine(day, dtime(23, 59, 59))
+    else:
+        naive_start = datetime.combine(day, start)
+        naive_end = datetime.combine(day, end)
+    return timezone.make_aware(naive_start, tz), timezone.make_aware(naive_end, tz)
 
 
 @transaction.atomic
 def regenerate_schedule_events(schedule: EnrollmentSchedule) -> int:
     """
     Rebuild upcoming schedule-generated ClassEvents.
-    - daily / weekly+repeat_weekly: place lessons on matching days until course ends
-    - weekly+not repeat: place lessons on custom_slots in order
+    Wall-clock times on the cadence are interpreted in schedule.timezone
+    (browser IANA zone), matching class scheduling local-time behavior.
     """
     schedule.full_clean()
     class_instance = get_or_create_personal_class(schedule)
-    tz = timezone.get_current_timezone()
+    tz = _resolve_schedule_tz(schedule)
     now = timezone.now()
-    today = timezone.localdate()
+    today = timezone.localtime(now, tz).date()
 
     ClassEvent.objects.filter(
         class_instance=class_instance,
@@ -148,7 +165,7 @@ def regenerate_schedule_events(schedule: EnrollmentSchedule) -> int:
 
     if use_custom:
         slots = _parse_custom_slots(schedule)
-        # only future/today slots
+        # only future/today slots (in scheduler's local calendar)
         slots = [(d, st, et) for (d, st, et) in slots if d >= today]
         for lesson, (day, st, et) in zip(incomplete, slots):
             start_dt, end_dt = _aware_range(day, st, et, tz, all_day=False)
