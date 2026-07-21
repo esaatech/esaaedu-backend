@@ -366,11 +366,16 @@ def complete_enrollment_process(subscription_id, user, course, class_id, pricing
                 subscription.save()
                 return existing_enrollment
         
-        # Get the selected class
-        try:
-            selected_class = Class.objects.get(id=class_id)
-        except Class.DoesNotExist:
-            print(f"❌ Class {class_id} not found")
+        # Get the selected class (optional for self-paced)
+        selected_class = None
+        if class_id:
+            try:
+                selected_class = Class.objects.get(id=class_id)
+            except Class.DoesNotExist:
+                print(f"❌ Class {class_id} not found")
+                return None
+        elif getattr(course, 'delivery_type', 'live') != 'self_paced':
+            print(f"❌ Class ID required for non-self-paced course {course.id}")
             return None
         
         # If enrollment exists but is inactive, reactivate it
@@ -380,7 +385,7 @@ def complete_enrollment_process(subscription_id, user, course, class_id, pricing
                 print(f"✅ Reactivated existing enrollment: {existing_enrollment.id}")
                 # Re-add the student to the selected class (they were removed on drop)
                 try:
-                    if user not in selected_class.students.all() and selected_class.student_count < selected_class.max_capacity:
+                    if selected_class and user not in selected_class.students.all() and selected_class.student_count < selected_class.max_capacity:
                         selected_class.students.add(user)
                         print(f"✅ Re-added student to class: {selected_class.name}")
                 except Exception as e:
@@ -450,9 +455,9 @@ def complete_enrollment_process(subscription_id, user, course, class_id, pricing
             reminder_emails_enabled=True,
         )
         
-        # Add student to the selected class
+        # Add student to the selected class (skip for self-paced without a class)
         try:
-            if selected_class.student_count < selected_class.max_capacity:
+            if selected_class and selected_class.student_count < selected_class.max_capacity:
                 selected_class.students.add(user)
         except Exception as e:
             print(f"⚠️ Failed to add student to class: {e}")
@@ -847,7 +852,7 @@ class StripeWebhookView(APIView):
                             
                             print(f"🔍 Webhook: Processing trial subscription {subscription_id} - Course: {course_id}, Class: {class_id}")
                             
-                            if course_id and class_id:
+                            if course_id:
                                 from courses.models import Course
                                 course = Course.objects.get(id=course_id)
                                 user = subscriber.user
@@ -892,7 +897,7 @@ class StripeWebhookView(APIView):
                             
                             print(f"🔍 Webhook: Processing non-trial subscription {subscription_id} - Course: {course_id}, Class: {class_id}")
                             
-                            if course_id and class_id:
+                            if course_id:
                                 from courses.models import Course
                                 course = Course.objects.get(id=course_id)
                                 user = subscriber.user
@@ -1094,7 +1099,7 @@ class StripeWebhookView(APIView):
                     print(f"   - class_id: {class_id}")
                     print(f"   - pricing_type: {pricing_type}")
                     
-                    if course_id and class_id:
+                    if course_id:
                         from courses.models import Course
                         course = Course.objects.get(id=course_id)
                         user = subscriber.user
@@ -1286,7 +1291,7 @@ class StripeWebhookView(APIView):
                 course_id = metadata.get('course_id')
                 class_id = metadata.get('class_id')
                 
-                if course_id and class_id:
+                if course_id:
                     from courses.models import Course
                     course = Course.objects.get(id=course_id)
                     user = subscriber.user
@@ -2348,13 +2353,14 @@ class ConfirmEnrollmentView(APIView):
         try:
             # Get course and class
             course = get_object_or_404(Course, id=course_id, status='published')
-            class_id = request.data.get('class_id')
+            class_id = request.data.get('class_id') or None
             subscription_id = request.data.get('subscription_id')
             payment_intent_id = request.data.get('payment_intent_id')
             is_trial = request.data.get('trial_period', False)
             pricing_type = request.data.get('pricing_type', 'one_time')
             
-            if not class_id:
+            is_self_paced = getattr(course, 'delivery_type', 'live') == 'self_paced'
+            if not class_id and not is_self_paced:
                 return Response(
                     {'error': 'Class ID is required'}, 
                     status=status.HTTP_400_BAD_REQUEST
@@ -2374,9 +2380,11 @@ class ConfirmEnrollmentView(APIView):
                     request, course, class_id, payment_intent_id, pricing_type
                 )
             
-            # Get the class
+            # Get the class (optional for self-paced)
             from courses.models import Class
-            selected_class = get_object_or_404(Class, id=class_id)
+            selected_class = None
+            if class_id:
+                selected_class = get_object_or_404(Class, id=class_id)
             
             # Poll for webhook completion (max 15 seconds)
             import time
@@ -2702,7 +2710,14 @@ class ConfirmEnrollmentView(APIView):
             from student.models import EnrolledCourse
             import time
             
-            selected_class = get_object_or_404(Class, id=class_id)
+            # Class is optional for self-paced courses
+            if class_id:
+                get_object_or_404(Class, id=class_id)
+            elif getattr(course, 'delivery_type', 'live') != 'self_paced':
+                return Response(
+                    {'error': 'Class ID is required'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             
             # Poll for payment intent status (max 15 seconds)
             max_wait_time = 15
@@ -2839,11 +2854,16 @@ class ConfirmEnrollmentView(APIView):
                     print(f"✅ Enrollment already exists: {existing_enrollment.id}")
                     return existing_enrollment
                 
-                # Get the selected class
-                try:
-                    selected_class = Class.objects.get(id=class_id)
-                except Class.DoesNotExist:
-                    print(f"❌ Class {class_id} not found")
+                # Get the selected class (optional for self-paced)
+                selected_class = None
+                if class_id:
+                    try:
+                        selected_class = Class.objects.get(id=class_id)
+                    except Class.DoesNotExist:
+                        print(f"❌ Class {class_id} not found")
+                        return None
+                elif getattr(course, 'delivery_type', 'live') != 'self_paced':
+                    print(f"❌ Class ID required for non-self-paced course {course.id}")
                     return None
                 
                 # Get payment amount from Stripe
@@ -2896,9 +2916,9 @@ class ConfirmEnrollmentView(APIView):
                         reminder_emails_enabled=True,
                     )
                 
-                # Add student to the selected class
+                # Add student to the selected class (skip for self-paced without a class)
                 try:
-                    if selected_class.student_count < selected_class.max_capacity:
+                    if selected_class and selected_class.student_count < selected_class.max_capacity:
                         selected_class.students.add(user)
                 except Exception as e:
                     print(f"⚠️ Failed to add student to class: {e}")

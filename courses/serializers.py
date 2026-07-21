@@ -1084,7 +1084,7 @@ class FrontendCourseSerializer(serializers.ModelSerializer):
             'age', 'duration_weeks', 'duration', 'level', 'required_computer_skills_level', 'color', 'projects', 'price',
             'is_free', 'trial_enabled', 'trial_period_days',
             'popular', 'featured', 'features', 'schedule', 'classSize', 'certificate', 'status', 'category', 'age_range',
-            'image', 'thumbnail', 'billing'  # Added image, thumbnail, and billing fields
+            'image', 'thumbnail', 'billing', 'delivery_type'  # delivery_type for self-paced enroll
         ]
     
     def get_projects(self, obj):

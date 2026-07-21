@@ -6257,6 +6257,7 @@ class StudentCourseDashboardView(APIView):
                         'rating': get_course_average_rating(course),
                         'price': float(course.price) if course.price else 0,
                         'is_free': course.is_free,
+                        'delivery_type': getattr(course, 'delivery_type', 'live') or 'live',
                         'trial_enabled': getattr(course, 'trial_enabled', False),
                         'trial_period_days': getattr(course, 'trial_period_days', 0),
                         'enrolled_students': 0,  # Can be calculated from enrollments
@@ -6482,6 +6483,7 @@ class StudentCourseDashboardView(APIView):
                         'rating': get_course_average_rating(course),
                         'price': float(course.price) if course.price else 0,
                         'is_free': course.is_free,
+                        'delivery_type': getattr(course, 'delivery_type', 'live') or 'live',
                         'trial_enabled': getattr(course, 'trial_enabled', False),
                         'trial_period_days': getattr(course, 'trial_period_days', 0),
                         'enrolled_students': 0,

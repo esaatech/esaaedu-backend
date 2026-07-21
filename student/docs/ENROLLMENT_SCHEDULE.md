@@ -1,16 +1,39 @@
-# Enrollment schedules for self-paced courses (Phase 1)
+# Enrollment schedules for self-paced courses
 
 ## Overview
 
-Self-paced courses (`Course.delivery_type = self_paced`) do not require picking a shared live Class at enroll time. Instead each enrollment can store a **cadence** (`EnrollmentSchedule`) — daily or weekly, with optional clock time — and the backend generates upcoming `ClassEvent`s so Continue Learning and the student calendar still work.
+Self-paced courses (`Course.delivery_type = self_paced`) do not require picking a shared live Class at enroll time. Each enrollment can store a **cadence** (`EnrollmentSchedule`) — daily or weekly, with optional clock time — and the backend generates upcoming `ClassEvent`s so Continue Learning and the student calendar still work.
 
-Live courses keep the existing class-picker flow.
+Live and hybrid courses keep the existing class-picker flow at enroll.
+
+**Frontend doc:** `little-learners-tech/docs/self-paced-course-schedule.md`
+
+---
+
+## Enrollment (no shared class)
+
+When `course.delivery_type == 'self_paced'`:
+
+- **Free / trial:** `POST /api/courses/student/enroll-free/<course_id>/` — `class_id` optional (omit).
+- **Paid:** Stripe payment intent + `POST /api/billing/courses/<course_id>/confirm-enrollment/` — `class_id` optional for self-paced only; still required for live/hybrid.
+
+Implementation:
+
+- `courses/views.py` — `student_enroll_course` / enroll-free (optional `class_id`)
+- `student/utils.py` — `complete_enrollment_without_stripe(..., class_id=None)` OK
+- `billings/views.py` — `ConfirmEnrollmentView`, `complete_enrollment_process`, webhooks: skip class join when `class_id` absent and course is self-paced
+
+`delivery_type` is exposed on student dashboard recommended/dropped course payloads and `FrontendCourseSerializer` for the enroll modal.
+
+Personal `Class` for generated events is created when the user **saves** a schedule (not at enroll).
+
+---
 
 ## Models
 
 ### `Course.delivery_type` (existing)
 
-Exposed on teacher course list/detail/create-update serializers: `live` | `self_paced` | `hybrid` (default `live`).
+`live` | `self_paced` | `hybrid` (default `live`). On teacher course serializers and create/update.
 
 ### `ClassSession`
 
@@ -33,10 +56,12 @@ OneToOne on `EnrolledCourse`:
 | `repeat_weekly` | default True — one week pattern repeats until lessons end |
 | `custom_slots` | when not repeating: `[{date, start_time, end_time}, …]` |
 | `all_day` | default True (daily); weekly calendar picks use clock times |
-| `start_time` / `end_time` | required when repeating and not all_day |
+| `start_time` / `end_time` | required when repeating weekly/daily and not all_day |
 | `horizon_days` | legacy; generation is lesson-driven |
-| `class_instance` | private Class created for this child's generated events |
-| `timezone` | optional IANA string |
+| `class_instance` | private Class for this enrollment's generated events |
+| `timezone` | IANA string (e.g. `America/Denver`); sent by frontend on save |
+
+---
 
 ## APIs
 
@@ -44,23 +69,12 @@ OneToOne on `EnrolledCourse`:
 
 `GET /api/student/self-paced-schedules/`
 
-- Student/parent (student credentials): own active self-paced enrollments
-- Teacher: pass `?student_id=<StudentProfile.id>` for students in their courses
+- Student/parent: own active self-paced enrollments
+- Teacher: `?student_id=<StudentProfile.id>`
 
 ### Get / set schedule
 
 `GET|PUT|PATCH /api/student/enrolled-courses/<enrollment_id>/schedule/`
-
-**PUT body example (daily, no time):**
-
-```json
-{
-  "frequency": "daily",
-  "weekdays": [],
-  "all_day": true,
-  "horizon_days": 21
-}
-```
 
 **Weekly pattern (repeat until course ends — default):**
 
@@ -71,11 +85,12 @@ OneToOne on `EnrolledCourse`:
   "weekdays": [0, 2, 4],
   "all_day": false,
   "start_time": "09:00:00",
-  "end_time": "10:00:00"
+  "end_time": "10:00:00",
+  "timezone": "America/Denver"
 }
 ```
 
-**Per-week custom slots (checkbox off):**
+**Per-week custom slots (`repeat_weekly: false`):**
 
 ```json
 {
@@ -83,42 +98,52 @@ OneToOne on `EnrolledCourse`:
   "repeat_weekly": false,
   "weekdays": [],
   "custom_slots": [
-    {"date": "2026-07-21", "start_time": "09:00:00", "end_time": "10:00:00"},
-    {"date": "2026-07-23", "start_time": "14:00:00", "end_time": "15:00:00"}
+    {"date": "2026-07-21", "start_time": "09:00:00", "end_time": "10:00:00"}
   ],
-  "all_day": false
+  "all_day": false,
+  "timezone": "America/Denver"
 }
 ```
 
-- Allowed: course teacher, enrolled student, parent linked by student credentials / parent_email
+- Allowed: course teacher, enrolled student, parent (student credentials / parent_email)
 - Rejects if `delivery_type != self_paced`
-- On save: creates/updates cadence, ensures a personal Class, deletes **future** `is_schedule_generated` events, creates new lesson ClassEvents for incomplete lessons
+- On save: validates cadence, ensures personal Class, deletes **future** `is_schedule_generated` events, creates lesson `ClassEvent`s for incomplete lessons
 
-Response includes `events_generated` (count created).
+Response includes `events_generated`.
 
-## Frontend (Phase 2)
+Student schedule API (`GET /api/student/schedule/`) includes `all_day` on events.
 
-- Shared editor: `src/components/dashboard/schedule/SelfPacedScheduleEditor.tsx`
-- **Schedule page tabs:** **Class Schedule** (calendar) | **Course Schedule** (master–detail)
-- Course Schedule master list + detail editor: `CourseScheduleMasterDetail.tsx`
-- **Daily:** one lesson per day until remaining lessons are done
-- **Weekly / pick days:** month calendar — click a day to toggle that weekday; optional time; pattern continues until the course ends (no per-week setup, no plan-ahead field)
-- Saving regenerates ClassEvents and refreshes the Class Schedule calendar
-- Student schedule API events include `all_day`; FullCalendar renders them in the all-day slot
+---
 
 ## Generation rules
 
-- Slots continue until **all incomplete lessons** are placed (lesson-driven; not a fixed horizon)
-- Daily = every day; weekly = matching `weekdays` only
-- One incomplete lesson per slot (course order); completed lessons skipped
-- Past generated events are not deleted
-- `horizon_days` on the model is unused for generation (kept for compatibility)
+Service: `student/services/enrollment_schedule.py` → `regenerate_schedule_events()`
+
+- **Lesson-driven:** slots until incomplete lessons are placed (not fixed `horizon_days`)
+- **Daily:** every day from today (in scheduler timezone)
+- **Weekly + repeat:** matching `weekdays` from today onward
+- **Weekly + custom_slots:** one lesson per slot in date order (today+ only)
+- Completed lessons skipped; course lesson order preserved
+- Past generated events not deleted
+
+---
+
+## Timezone
+
+Wall-clock values on the cadence are interpreted in `EnrollmentSchedule.timezone`. The frontend sends `Intl.DateTimeFormat().resolvedOptions().timeZone` on save. Event generation uses `_resolve_schedule_tz()` so Class Schedule displays the same local time as when the user picked the slot (same idea as live class scheduling via ISO datetimes).
+
+---
+
+## Frontend (reference)
+
+- Schedule tabs: Class Schedule | Course Schedule
+- Editor: week/day time grid (1h slots), repeat-weekly checkbox, mobile drill-in list → editor
+- See `little-learners-tech/docs/self-paced-course-schedule.md`
+
+---
 
 ## Migrations
 
 - `courses.0070_classsession_all_day_classevent_all_day`
-- `student.0021_enrollment_schedule`
-
-## Timezone
-
-Cadence `start_time` / `end_time` / `custom_slots` are **wall-clock** values in `EnrollmentSchedule.timezone` (IANA, e.g. `America/Denver`). The frontend sends `Intl.DateTimeFormat().resolvedOptions().timeZone` on save. Event generation uses that zone so Class Schedule shows the same local time as when the parent picked the slot (same idea as class scheduling via ISO datetimes).
+- `student.0021_classsession_all_day_enrollment_schedule`
+- `student.0022_enrollment_schedule_repeat_weekly_custom_slots`
