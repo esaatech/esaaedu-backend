@@ -4,7 +4,7 @@ Generate ClassEvents from an EnrollmentSchedule cadence for self-paced courses.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, time as dtime, date
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.db import transaction
@@ -44,6 +44,31 @@ def _resolve_schedule_tz(schedule: EnrollmentSchedule):
     return timezone.get_current_timezone()
 
 
+def _repeating_weekdays(schedule: EnrollmentSchedule) -> List[int]:
+    """Weekdays for repeating weekly: prefer weekday_slots, else weekdays list."""
+    slots = schedule.weekday_slots or []
+    if slots:
+        days = []
+        for slot in slots:
+            wd = slot.get('weekday')
+            if wd in range(7) and wd not in days:
+                days.append(int(wd))
+        return sorted(days)
+    return list(schedule.weekdays or [])
+
+
+def _weekday_time_map(schedule: EnrollmentSchedule) -> Dict[int, Tuple[dtime, dtime]]:
+    """Map weekday → (start, end) from weekday_slots when present."""
+    result: Dict[int, Tuple[dtime, dtime]] = {}
+    for slot in schedule.weekday_slots or []:
+        wd = slot.get('weekday')
+        st = parse_time(str(slot.get('start_time', '')))
+        et = parse_time(str(slot.get('end_time', '')))
+        if wd in range(7) and st and et:
+            result[int(wd)] = (st, et)
+    return result
+
+
 def _iter_repeating_slot_dates(
     schedule: EnrollmentSchedule,
     start_date: date,
@@ -51,7 +76,7 @@ def _iter_repeating_slot_dates(
 ) -> List[date]:
     if lesson_count <= 0:
         return []
-    weekdays = schedule.weekdays or []
+    weekdays = _repeating_weekdays(schedule)
     if schedule.frequency == 'weekly' and not weekdays:
         return []
 
@@ -186,11 +211,18 @@ def regenerate_schedule_events(schedule: EnrollmentSchedule) -> int:
 
     # Repeating cadence (daily or weekly pattern)
     slot_dates = _iter_repeating_slot_dates(schedule, today, len(incomplete))
-    all_day = bool(schedule.all_day or not schedule.start_time)
-    start_t = schedule.start_time or dtime.min
-    end_t = schedule.end_time or dtime(23, 59, 59)
+    time_by_weekday = _weekday_time_map(schedule)
+    shared_all_day = bool(schedule.all_day or not schedule.start_time)
+    shared_start = schedule.start_time or dtime.min
+    shared_end = schedule.end_time or dtime(23, 59, 59)
 
     for day, lesson in zip(slot_dates, incomplete):
+        if time_by_weekday and day.weekday() in time_by_weekday:
+            start_t, end_t = time_by_weekday[day.weekday()]
+            all_day = False
+        else:
+            start_t, end_t = shared_start, shared_end
+            all_day = shared_all_day
         start_dt, end_dt = _aware_range(day, start_t, end_t, tz, all_day)
         ClassEvent.objects.create(
             title=lesson.title,

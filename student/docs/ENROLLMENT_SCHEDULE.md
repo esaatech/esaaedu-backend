@@ -54,9 +54,10 @@ OneToOne on `EnrolledCourse`:
 | `frequency` | `daily` \| `weekly` |
 | `weekdays` | JSON list `0=Mon .. 6=Sun` (when `repeat_weekly`) |
 | `repeat_weekly` | default True — one week pattern repeats until lessons end |
+| `weekday_slots` | when repeating: optional `[{weekday, start_time, end_time}, …]` for different times per day |
 | `custom_slots` | when not repeating: `[{date, start_time, end_time}, …]` |
 | `all_day` | default True (daily); weekly calendar picks use clock times |
-| `start_time` / `end_time` | required when repeating weekly/daily and not all_day |
+| `start_time` / `end_time` | shared fallback when repeating and `weekday_slots` empty; required for daily when not all_day |
 | `horizon_days` | legacy; generation is lesson-driven |
 | `class_instance` | private Class for this enrollment's generated events |
 | `timezone` | IANA string (e.g. `America/Denver`); sent by frontend on save |
@@ -84,12 +85,19 @@ OneToOne on `EnrolledCourse`:
   "frequency": "weekly",
   "repeat_weekly": true,
   "weekdays": [0, 2, 4],
+  "weekday_slots": [
+    {"weekday": 0, "start_time": "16:00:00", "end_time": "17:00:00"},
+    {"weekday": 2, "start_time": "16:00:00", "end_time": "17:00:00"},
+    {"weekday": 4, "start_time": "10:00:00", "end_time": "11:00:00"}
+  ],
   "all_day": false,
-  "start_time": "09:00:00",
-  "end_time": "10:00:00",
+  "start_time": "16:00:00",
+  "end_time": "17:00:00",
   "timezone": "America/Denver"
 }
 ```
+
+Each weekday can have its own time. When `weekday_slots` is empty, shared `start_time`/`end_time` apply to every day in `weekdays` (legacy).
 
 **Per-week custom slots (`repeat_weekly: false`):**
 
@@ -125,7 +133,7 @@ Service: `student/services/enrollment_schedule.py` → `regenerate_schedule_even
 
 - **Lesson-driven:** slots until incomplete lessons are placed (not fixed `horizon_days`)
 - **Daily:** every day from today (in scheduler timezone)
-- **Weekly + repeat:** matching `weekdays` from today onward
+- **Weekly + repeat:** matching `weekdays` (or `weekday_slots`) from today onward; per-day times from `weekday_slots` when set, else shared `start_time`/`end_time`
 - **Weekly + custom_slots:** one lesson per slot in date order (today+ only)
 - Completed lessons skipped; course lesson order preserved
 - Past generated events not deleted
@@ -151,3 +159,4 @@ Wall-clock values on the cadence are interpreted in `EnrollmentSchedule.timezone
 - `courses.0070_classsession_all_day_classevent_all_day`
 - `student.0021_classsession_all_day_enrollment_schedule`
 - `student.0022_enrollment_schedule_repeat_weekly_custom_slots`
+- `student.0023_enrollment_schedule_weekday_slots`

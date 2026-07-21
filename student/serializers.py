@@ -1096,12 +1096,14 @@ class EnrollmentScheduleSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'enrollment_id', 'course_id', 'course_title', 'delivery_type',
             'class_instance_id', 'frequency', 'weekdays', 'repeat_weekly',
-            'custom_slots', 'all_day', 'start_time', 'end_time', 'timezone',
-            'horizon_days', 'events_generated', 'created_at', 'updated_at',
+            'custom_slots', 'weekday_slots', 'all_day', 'start_time', 'end_time',
+            'timezone', 'horizon_days', 'events_generated', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def validate(self, data):
+        from django.utils.dateparse import parse_time
+
         frequency = data.get('frequency', getattr(self.instance, 'frequency', 'daily') if self.instance else 'daily')
         weekdays = data.get('weekdays', getattr(self.instance, 'weekdays', []) if self.instance else [])
         repeat_weekly = data.get(
@@ -1112,28 +1114,63 @@ class EnrollmentScheduleSerializer(serializers.ModelSerializer):
             'custom_slots',
             getattr(self.instance, 'custom_slots', []) if self.instance else [],
         )
+        weekday_slots = data.get(
+            'weekday_slots',
+            getattr(self.instance, 'weekday_slots', []) if self.instance else [],
+        )
         all_day = data.get('all_day', getattr(self.instance, 'all_day', True) if self.instance else True)
         start_time = data.get('start_time', getattr(self.instance, 'start_time', None) if self.instance else None)
         end_time = data.get('end_time', getattr(self.instance, 'end_time', None) if self.instance else None)
 
         if frequency == 'weekly':
             if repeat_weekly:
-                if not weekdays:
-                    raise serializers.ValidationError({
-                        'weekdays': 'Select at least one day/time on the calendar',
-                    })
-                for day in weekdays:
-                    if day not in range(7):
+                if weekday_slots:
+                    seen = set()
+                    for slot in weekday_slots:
+                        wd = slot.get('weekday')
+                        if wd not in range(7):
+                            raise serializers.ValidationError({
+                                'weekday_slots': 'Each slot needs weekday 0 (Mon) through 6 (Sun)',
+                            })
+                        if wd in seen:
+                            raise serializers.ValidationError({
+                                'weekday_slots': 'Duplicate weekday in weekday_slots',
+                            })
+                        seen.add(wd)
+                        st = parse_time(str(slot.get('start_time', '')))
+                        et = parse_time(str(slot.get('end_time', '')))
+                        if not st or not et:
+                            raise serializers.ValidationError({
+                                'weekday_slots': 'Each slot needs start_time and end_time',
+                            })
+                        if st >= et:
+                            raise serializers.ValidationError({
+                                'weekday_slots': 'end_time must be after start_time for each weekday',
+                            })
+                    data['weekdays'] = sorted(seen)
+                    data['all_day'] = False
+                    # Keep shared times as first slot for older clients / display fallback
+                    first = sorted(weekday_slots, key=lambda s: s.get('weekday', 0))[0]
+                    data['start_time'] = parse_time(str(first.get('start_time', '')))
+                    data['end_time'] = parse_time(str(first.get('end_time', '')))
+                else:
+                    if not weekdays:
                         raise serializers.ValidationError({
-                            'weekdays': 'Weekdays must be integers 0 (Mon) through 6 (Sun)',
+                            'weekdays': 'Select at least one day/time on the calendar',
                         })
-                if not all_day:
-                    if not start_time or not end_time:
-                        raise serializers.ValidationError(
-                            'start_time and end_time are required when all_day is False'
-                        )
-                    if start_time >= end_time:
-                        raise serializers.ValidationError('end_time must be after start_time')
+                    for day in weekdays:
+                        if day not in range(7):
+                            raise serializers.ValidationError({
+                                'weekdays': 'Weekdays must be integers 0 (Mon) through 6 (Sun)',
+                            })
+                    if not all_day:
+                        if not start_time or not end_time:
+                            raise serializers.ValidationError(
+                                'start_time and end_time are required when all_day is False '
+                                'and weekday_slots is empty'
+                            )
+                        if start_time >= end_time:
+                            raise serializers.ValidationError('end_time must be after start_time')
             else:
                 if not custom_slots:
                     raise serializers.ValidationError({

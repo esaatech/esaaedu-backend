@@ -829,6 +829,15 @@ class EnrollmentSchedule(models.Model):
             "{date: YYYY-MM-DD, start_time: HH:MM:SS, end_time: HH:MM:SS}."
         ),
     )
+    weekday_slots = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "When repeat_weekly is True: optional per-weekday times "
+            "[{weekday: 0-6, start_time: HH:MM:SS, end_time: HH:MM:SS}, …]. "
+            "When empty, shared start_time/end_time apply to all weekdays."
+        ),
+    )
     all_day = models.BooleanField(
         default=True,
         help_text="When True, slots have no clock time (date-only ClassEvents)",
@@ -836,12 +845,12 @@ class EnrollmentSchedule(models.Model):
     start_time = models.TimeField(
         null=True,
         blank=True,
-        help_text="Optional start time when all_day is False",
+        help_text="Optional start time when all_day is False (shared fallback when weekday_slots empty)",
     )
     end_time = models.TimeField(
         null=True,
         blank=True,
-        help_text="Optional end time when all_day is False",
+        help_text="Optional end time when all_day is False (shared fallback when weekday_slots empty)",
     )
     timezone = models.CharField(
         max_length=63,
@@ -876,16 +885,49 @@ class EnrollmentSchedule(models.Model):
 
         if self.frequency == 'weekly':
             if self.repeat_weekly:
-                if not self.weekdays:
+                slots = self.weekday_slots or []
+                if slots:
+                    from django.utils.dateparse import parse_time
+
+                    seen = set()
+                    for slot in slots:
+                        wd = slot.get('weekday')
+                        if wd not in range(7):
+                            raise ValidationError({
+                                'weekday_slots': 'Each slot needs weekday 0 (Mon) through 6 (Sun)',
+                            })
+                        if wd in seen:
+                            raise ValidationError({
+                                'weekday_slots': 'Duplicate weekday in weekday_slots',
+                            })
+                        seen.add(wd)
+                        st = parse_time(str(slot.get('start_time', '')))
+                        et = parse_time(str(slot.get('end_time', '')))
+                        if not st or not et:
+                            raise ValidationError({
+                                'weekday_slots': 'Each slot needs start_time and end_time',
+                            })
+                        if st >= et:
+                            raise ValidationError({
+                                'weekday_slots': 'end_time must be after start_time for each weekday',
+                            })
+                    self.weekdays = sorted(seen)
+                elif not self.weekdays:
                     raise ValidationError({'weekdays': 'Weekly schedules require at least one weekday'})
-                for day in self.weekdays:
-                    if day not in range(7):
-                        raise ValidationError({'weekdays': 'Weekdays must be integers 0 (Mon) through 6 (Sun)'})
-                if not self.all_day:
-                    if not self.start_time or not self.end_time:
-                        raise ValidationError('start_time and end_time are required when all_day is False')
-                    if self.start_time >= self.end_time:
-                        raise ValidationError('end_time must be after start_time')
+                else:
+                    for day in self.weekdays:
+                        if day not in range(7):
+                            raise ValidationError({
+                                'weekdays': 'Weekdays must be integers 0 (Mon) through 6 (Sun)',
+                            })
+                    if not self.all_day:
+                        if not self.start_time or not self.end_time:
+                            raise ValidationError(
+                                'start_time and end_time are required when all_day is False '
+                                'and weekday_slots is empty'
+                            )
+                        if self.start_time >= self.end_time:
+                            raise ValidationError('end_time must be after start_time')
             else:
                 if not self.custom_slots:
                     raise ValidationError({'custom_slots': 'Add at least one date/time on the calendar'})
