@@ -2264,7 +2264,8 @@ def course_introduction(request, course_id):
 @permission_classes([permissions.IsAuthenticated])
 def teacher_classes(request):
     """
-    GET: List all classes for the authenticated teacher
+    GET: List live/hybrid classes for the authenticated teacher.
+    Self-paced personal classes (one per student schedule) are omitted.
     POST: Create a new class
     """
     if request.user.role != 'teacher':
@@ -2275,7 +2276,13 @@ def teacher_classes(request):
     
     if request.method == 'GET':
         try:
-            classes = Class.objects.filter(teacher=request.user).select_related('course', 'teacher').prefetch_related('students', 'sessions').order_by('-created_at')
+            classes = (
+                Class.objects.filter(teacher=request.user)
+                .exclude(course__delivery_type='self_paced')
+                .select_related('course', 'teacher')
+                .prefetch_related('students', 'sessions')
+                .order_by('-created_at')
+            )
             serializer = ClassDetailSerializer(classes, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
