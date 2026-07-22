@@ -1314,17 +1314,44 @@ class ModuleDetailView(APIView):
 
 # ===== LESSON MANAGEMENT ENDPOINTS =====
 
+LESSON_STRUCTURE_LOCKED_STATUSES = ('active', 'completed', 'paused')
+LESSON_STRUCTURE_LOCKED_MESSAGE = (
+    'Lesson order and deletion are locked after students enroll. '
+    'You can still add new lessons at the end. '
+    'To use a different syllabus, clone the course.'
+)
+
+
+def course_has_structure_locking_enrollments(course) -> bool:
+    """True when syllabus reorder/delete must be frozen (any progressed enrollment)."""
+    return EnrolledCourse.objects.filter(
+        course=course,
+        status__in=LESSON_STRUCTURE_LOCKED_STATUSES,
+    ).exists()
+
+
+def _lesson_structure_locked_response():
+    return Response(
+        {
+            'error': LESSON_STRUCTURE_LOCKED_MESSAGE,
+            'code': 'lesson_structure_locked',
+        },
+        status=status.HTTP_400_BAD_REQUEST,
+    )
+
+
 def _resync_course_enrollments_after_lesson_change(course):
     """
     Keep enrollment progression stable after lesson structure changes.
     """
     enrollments = EnrolledCourse.objects.filter(
         course=course,
-        status__in=['active', 'completed', 'paused']
+        status__in=list(LESSON_STRUCTURE_LOCKED_STATUSES),
     ).select_related('current_lesson')
 
     for enrollment in enrollments:
         enrollment.resync_after_lesson_structure_change()
+
 
 @api_view(['GET', 'POST'])
 @permission_classes([permissions.IsAuthenticated])
@@ -1367,8 +1394,12 @@ def course_lessons(request, course_id):
                 context={'request': request, 'course': course}
             )
             if serializer.is_valid():
-                # Auto-assign order if not provided
-                if 'order' not in serializer.validated_data:
+                # After enrollments exist, always append — ignore client-provided order
+                # so lessons cannot be placed behind any student's current pointer.
+                if (
+                    course_has_structure_locking_enrollments(course)
+                    or 'order' not in serializer.validated_data
+                ):
                     max_order = course.lessons.aggregate(
                         max_order=models.Max('order')
                     )['max_order'] or 0
@@ -1428,6 +1459,13 @@ def lesson_detail(request, lesson_id):
                 context={'request': request, 'course': lesson.course}
             )
             if serializer.is_valid():
+                new_order = serializer.validated_data.get('order')
+                if (
+                    new_order is not None
+                    and new_order != lesson.order
+                    and course_has_structure_locking_enrollments(lesson.course)
+                ):
+                    return _lesson_structure_locked_response()
                 lesson = serializer.save()
                 _resync_course_enrollments_after_lesson_change(lesson.course)
                 response_serializer = LessonDetailSerializer(lesson)
@@ -1442,6 +1480,8 @@ def lesson_detail(request, lesson_id):
     elif request.method == 'DELETE':
         try:
             course = lesson.course
+            if course_has_structure_locking_enrollments(course):
+                return _lesson_structure_locked_response()
             lesson.delete()
             _resync_course_enrollments_after_lesson_change(course)
             return Response(
@@ -1475,6 +1515,9 @@ def reorder_lessons(request, course_id):
             {'error': 'Only the course teacher can reorder lessons'},
             status=status.HTTP_403_FORBIDDEN
         )
+
+    if course_has_structure_locking_enrollments(course):
+        return _lesson_structure_locked_response()
     
     try:
         serializer = LessonReorderSerializer(data=request.data)

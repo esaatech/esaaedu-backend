@@ -279,6 +279,23 @@ When a course is deleted via `DELETE /api/courses/teacher/{course_id}/`:
 4. Local billing records are deactivated
 5. Course is deleted from database
 
+## Syllabus structure lock after enrollment
+
+Once a course has any `active`, `completed`, or `paused` enrollment, lesson **structure** is locked via the teacher API:
+
+| Action | Behavior when enrolled |
+|--------|------------------------|
+| Create lesson | Allowed; `order` is forced to `max(order)+1` (append only) |
+| Reorder lessons | Blocked — `400` with `code: lesson_structure_locked` |
+| Delete lesson | Blocked — same code |
+| Update lesson `order` via PUT | Blocked — same code |
+
+Course list/detail serializers expose `has_enrollments` so the teacher UI can disable drag/delete.
+
+**Rationale:** Mid-sequence insert/reorder can auto-complete lessons behind a student’s pointer (`resync_after_lesson_structure_change`). Freezing order/delete after enrollment keeps progress stable; teachers who need a different syllabus should **clone** the course.
+
+**Bypass:** Django admin can still delete or change lesson `order`. Use only for intentional cleanup.
+
 ## Course Cloning Flow
 
 Teachers can create a brand-new course by cloning an existing one of their own.

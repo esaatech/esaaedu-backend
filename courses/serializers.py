@@ -738,6 +738,7 @@ class CourseListSerializer(serializers.ModelSerializer):
     total_lessons = serializers.ReadOnlyField()
     enrolled_students_count = serializers.SerializerMethodField()
     active_students_count = serializers.SerializerMethodField()
+    has_enrollments = serializers.SerializerMethodField()
     modules = ModuleSerializer(many=True, read_only=True)
     
     class Meta:
@@ -749,16 +750,36 @@ class CourseListSerializer(serializers.ModelSerializer):
             'max_students', 'schedule', 'certificate', 'status',
             'delivery_type',
             'teacher_name', 'total_lessons', 'enrolled_students_count', 'active_students_count',
+            'has_enrollments',
             'modules', 'created_at', 'updated_at'
         ]
     
     def get_enrolled_students_count(self, obj):
         """Get total enrolled students count from EnrolledCourse model"""
-        return getattr(obj, 'enrolled_count', 0)
+        annotated = getattr(obj, 'enrolled_count', None)
+        if annotated is not None:
+            return annotated
+        from student.models import EnrolledCourse
+        return EnrolledCourse.objects.filter(
+            course=obj,
+            status__in=['active', 'completed', 'paused'],
+        ).count()
     
     def get_active_students_count(self, obj):
         """Get active enrolled students count"""
-        return getattr(obj, 'active_count', 0)
+        annotated = getattr(obj, 'active_count', None)
+        if annotated is not None:
+            return annotated
+        from student.models import EnrolledCourse
+        return EnrolledCourse.objects.filter(course=obj, status='active').count()
+
+    def get_has_enrollments(self, obj):
+        """True when lesson reorder/delete must be locked (active/completed/paused)."""
+        from student.models import EnrolledCourse
+        return EnrolledCourse.objects.filter(
+            course=obj,
+            status__in=['active', 'completed', 'paused'],
+        ).exists()
 
 
 class CourseDetailSerializer(serializers.ModelSerializer):
@@ -771,6 +792,7 @@ class CourseDetailSerializer(serializers.ModelSerializer):
     total_duration_minutes = serializers.ReadOnlyField()
     enrolled_students_count = serializers.SerializerMethodField()
     active_students_count = serializers.SerializerMethodField()
+    has_enrollments = serializers.SerializerMethodField()
     is_featured_eligible = serializers.ReadOnlyField()
     
     # Reviews and ratings
@@ -814,17 +836,36 @@ class CourseDetailSerializer(serializers.ModelSerializer):
             
             # Computed fields
             'total_lessons', 'total_duration_minutes', 'enrolled_students_count',
-            'active_students_count', 'is_featured_eligible', 'enrolled_students', 
+            'active_students_count', 'has_enrollments', 'is_featured_eligible', 'enrolled_students', 
             'enrollment_stats', 'created_at', 'updated_at'
         ]
     
     def get_enrolled_students_count(self, obj):
         """Get total enrolled students count"""
-        return getattr(obj, 'enrolled_count', 0)
+        annotated = getattr(obj, 'enrolled_count', None)
+        if annotated is not None:
+            return annotated
+        from student.models import EnrolledCourse
+        return EnrolledCourse.objects.filter(
+            course=obj,
+            status__in=['active', 'completed', 'paused'],
+        ).count()
     
     def get_active_students_count(self, obj):
         """Get active enrolled students count"""
-        return getattr(obj, 'active_count', 0)
+        annotated = getattr(obj, 'active_count', None)
+        if annotated is not None:
+            return annotated
+        from student.models import EnrolledCourse
+        return EnrolledCourse.objects.filter(course=obj, status='active').count()
+
+    def get_has_enrollments(self, obj):
+        """True when lesson reorder/delete must be locked (active/completed/paused)."""
+        from student.models import EnrolledCourse
+        return EnrolledCourse.objects.filter(
+            course=obj,
+            status__in=['active', 'completed', 'paused'],
+        ).exists()
     
     def get_average_rating(self, obj):
         """Calculate average rating from reviews"""
