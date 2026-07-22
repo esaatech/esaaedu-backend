@@ -1789,11 +1789,11 @@ class DashboardOverview(APIView):
                 }
                 print(f"🔍 DEBUG: Continue learning - Filtering for ALL UPCOMING lessons (date>={today_date}, current_time={current_time}, excludes past dates)")
             
-            # Get ALL non-live lessons from ClassEvents (scheduled lessons)
+            # Soonest incomplete scheduled lesson for this course (one card per enrollment).
             course_events = class_events.filter(
                 **base_filter,
                 **time_filter
-            ).order_by('start_time')[:10]
+            ).order_by('start_time')[:20]
             
             print(f"🔍 DEBUG: Found {course_events.count()} non-live class events for course {enrollment.course.title}")
             
@@ -1857,8 +1857,9 @@ class DashboardOverview(APIView):
                     continue
                 
                 if serializer.is_valid():
-                    print(f"🔍 DEBUG: {event.lesson_type} lesson added: {event.title}")
+                    print(f"🔍 DEBUG: {event.lesson_type} lesson added (one per course): {event.title}")
                     continue_learning_lessons.append(serializer.data)
+                    break  # One Continue Learning card per enrollment/course
                 else:
                     print(f"🔍 DEBUG: {event.lesson_type} lesson serializer invalid: {serializer.errors}")
         
@@ -1883,14 +1884,21 @@ class DashboardOverview(APIView):
         
         for enrollment in enrollments:
             print(f"🔍 DEBUG: Processing course for live lessons: {enrollment.course.title}")
+
+            # Self-paced study blocks belong on Calendar / Course Schedule, not Enter Class.
+            if getattr(enrollment.course, 'delivery_type', 'live') == 'self_paced':
+                continue
             
             # Filter to only show upcoming/ongoing events (not past events)
             # Use end_time__gt to include events that haven't ended yet
             # This matches the parent dashboard filtering approach (line 3286)
+            # Require current Lesson.type to still be live_class (ignore stale ClassEvent.lesson_type).
             base_filter = {
                 'class_instance__course': enrollment.course,
                 'event_type': 'lesson',
-                'lesson_type': 'live'
+                'lesson_type': 'live',
+                'lesson__isnull': False,
+                'lesson__type': 'live_class',
             }
             
             # Always filter by end_time > current_time to exclude past events
@@ -2198,11 +2206,15 @@ class DashboardOverview(APIView):
             current_time = timezone.now()
             
             for enrollment in enrollments:
+                if getattr(enrollment.course, 'delivery_type', 'live') == 'self_paced':
+                    continue
                 # Get live lessons from class events (only future events)
                 live_events = ClassEvent.objects.filter(
                     class_instance__course=enrollment.course,
                     event_type='lesson',
                     lesson_type='live',
+                    lesson__isnull=False,
+                    lesson__type='live_class',
                     start_time__gte=current_time
                 ).select_related('class_instance', 'lesson').order_by('start_time')[:3]  # Next 3 upcoming events
                 

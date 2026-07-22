@@ -172,10 +172,14 @@ def regenerate_schedule_events(schedule: EnrollmentSchedule) -> int:
     now = timezone.now()
     today = timezone.localtime(now, tz).date()
 
+    # Replace all generated sessions from today onward (schedule local date).
+    # Using end_time__gt=now left same-day slots that already ended, so Daily→Weekly
+    # recreates duplicates for today. Historical days before today are kept.
+    today_start = timezone.make_aware(datetime.combine(today, dtime.min), tz)
     ClassEvent.objects.filter(
         class_instance=class_instance,
         is_schedule_generated=True,
-        start_time__gte=now,
+        start_time__gte=today_start,
     ).delete()
 
     incomplete = _incomplete_lessons(schedule.enrollment)

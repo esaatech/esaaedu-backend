@@ -1252,6 +1252,24 @@ class LessonCreateUpdateSerializer(serializers.ModelSerializer):
         if value < 1:
             raise serializers.ValidationError("Lesson order must be positive")
         return value
+
+    def _resolve_course(self):
+        course = self.context.get('course')
+        if course is None and self.instance is not None:
+            course = getattr(self.instance, 'course', None)
+        return course
+
+    def validate_type(self, value):
+        course = self._resolve_course()
+        if (
+            course is not None
+            and getattr(course, 'delivery_type', 'live') == 'self_paced'
+            and value == 'live_class'
+        ):
+            raise serializers.ValidationError(
+                "Self-paced courses cannot use Live Class lessons. Use TutorX, text, or video/audio."
+            )
+        return value
     
     def save(self, **kwargs):
         """
@@ -1259,6 +1277,8 @@ class LessonCreateUpdateSerializer(serializers.ModelSerializer):
         """
         import logging
         logger = logging.getLogger(__name__)
+
+        previous_type = getattr(self.instance, 'type', None) if self.instance else None
         
         # Check if content with blocks is being provided before saving
         content_data = None
@@ -1471,6 +1491,32 @@ class LessonCreateUpdateSerializer(serializers.ModelSerializer):
             logger.info(f"✅ LessonCreateUpdateSerializer - TutorX blocks processed. Total blocks: {TutorXBlock.objects.filter(lesson=lesson).count()}")
         else:
             logger.warning(f"⚠️ LessonCreateUpdateSerializer - Skipping TutorX blocks. Type: {lesson.type}, Has blocks: {blocks_data is not None}")
+
+        # Self-paced only: when leaving live_class, remove/update linked ClassEvents so
+        # Upcoming Live Sessions / Enter Class no longer show the demoted lesson.
+        if (
+            previous_type == 'live_class'
+            and lesson.type != 'live_class'
+            and getattr(lesson.course, 'delivery_type', 'live') == 'self_paced'
+        ):
+            from django.utils import timezone
+            from courses.models import ClassEvent
+
+            LESSON_TYPE_TO_EVENT = {
+                'live_class': 'live',
+                'text_lesson': 'text',
+                'video_audio': 'video',
+                'tutorx': 'interactive',
+            }
+            new_event_lesson_type = LESSON_TYPE_TO_EVENT.get(lesson.type, 'text')
+            now = timezone.now()
+            qs = ClassEvent.objects.filter(lesson=lesson, event_type='lesson')
+            deleted, _ = qs.filter(end_time__gt=now).delete()
+            updated = qs.filter(end_time__lte=now).update(lesson_type=new_event_lesson_type)
+            logger.info(
+                "LessonCreateUpdateSerializer - self-paced demotion from live_class: "
+                f"deleted_not_ended={deleted} updated_past={updated} new_lesson_type={new_event_lesson_type}"
+            )
         
         return lesson
 
