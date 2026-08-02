@@ -18,6 +18,14 @@ from .services.storage import (
     collect_image_urls_from_blocknote_string,
     collect_image_urls_from_event_payload,
 )
+from courses.permissions import (
+    user_is_course_member,
+    user_is_course_owner,
+    courses_for_teacher,
+    owned_or_member_q,
+    user_can_access_class,
+    classes_for_teacher,
+)
 from .serializers import (
     BlockActionRequestSerializer,
     ExplainMoreResponseSerializer,
@@ -400,7 +408,7 @@ class __REMOVED_TutorXBlockListView_START(APIView):
         lesson = get_object_or_404(Lesson, id=lesson_id)
         
         # Check permission
-        if lesson.course.teacher != request.user:
+        if not user_is_course_member(request.user, lesson.course):
             return Response(
                 {'error': 'Only the course teacher can update blocks'},
                 status=status.HTTP_403_FORBIDDEN
@@ -655,7 +663,7 @@ class TutorXLessonContentView(APIView):
                 {'error': 'This lesson is not a TutorX lesson'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        is_teacher = lesson.course.teacher == request.user
+        is_teacher = user_is_course_member(request.user, lesson.course)
         is_student = False
         if not is_teacher and hasattr(request.user, 'student_profile'):
             from student.models import EnrolledCourse
@@ -682,7 +690,7 @@ class TutorXLessonContentView(APIView):
     @transaction.atomic
     def put(self, request, lesson_id):
         lesson = get_object_or_404(Lesson, id=lesson_id)
-        if lesson.course.teacher != request.user:
+        if not user_is_course_member(request.user, lesson.course):
             return Response(
                 {'error': 'Only the course teacher can update content'},
                 status=status.HTTP_403_FORBIDDEN
@@ -1002,7 +1010,7 @@ class TutorXLessonVideoView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        is_teacher = lesson.course.teacher == request.user
+        is_teacher = user_is_course_member(request.user, lesson.course)
         if write:
             if not is_teacher:
                 return None, Response(
@@ -1134,7 +1142,7 @@ class TutorXLessonEventsView(APIView):
                 {'error': 'This lesson is not a TutorX lesson'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        is_teacher = lesson.course.teacher == request.user
+        is_teacher = user_is_course_member(request.user, lesson.course)
         if write:
             if not is_teacher:
                 return None, Response(
@@ -1391,7 +1399,7 @@ class TutorXLessonAskView(APIView):
                 {'error': 'This lesson is not a TutorX lesson'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        is_teacher = lesson.course.teacher == request.user
+        is_teacher = user_is_course_member(request.user, lesson.course)
         is_student = False
         if not is_teacher and hasattr(request.user, 'student_profile'):
             from student.models import EnrolledCourse
@@ -1457,7 +1465,7 @@ class LessonChatView(APIView):
                 {'error': 'This lesson is not a TutorX lesson'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        is_teacher = lesson.course.teacher == request.user
+        is_teacher = user_is_course_member(request.user, lesson.course)
         is_student = False
         if not is_teacher and hasattr(request.user, 'student_profile'):
             from student.models import EnrolledCourse
@@ -1566,7 +1574,7 @@ class TutorXBlockCreateView(APIView):
             )
         
         # Check permission
-        if lesson.course.teacher != request.user:
+        if not user_is_course_member(request.user, lesson.course):
             return Response(
                 {'error': 'Only the course teacher can create blocks'},
                 status=status.HTTP_403_FORBIDDEN
@@ -1637,7 +1645,7 @@ class TutorXBlockDetailView(APIView):
         block = get_object_or_404(TutorXBlock, id=block_id)
         
         # Check permission
-        if block.lesson.course.teacher != request.user:
+        if not user_is_course_member(request.user, block.lesson.course):
             return Response(
                 {'error': 'Only the course teacher can access this block'},
                 status=status.HTTP_403_FORBIDDEN
@@ -1660,7 +1668,7 @@ class TutorXBlockDetailView(APIView):
         block = get_object_or_404(TutorXBlock, id=block_id)
         
         # Check permission
-        if block.lesson.course.teacher != request.user:
+        if not user_is_course_member(request.user, block.lesson.course):
             return Response(
                 {'error': 'Only the course teacher can update blocks'},
                 status=status.HTTP_403_FORBIDDEN
@@ -1734,7 +1742,7 @@ class TutorXBlockDetailView(APIView):
         block = get_object_or_404(TutorXBlock, id=block_id)
         
         # Check permission
-        if block.lesson.course.teacher != request.user:
+        if not user_is_course_member(request.user, block.lesson.course):
             return Response(
                 {'error': 'Only the course teacher can delete blocks'},
                 status=status.HTTP_403_FORBIDDEN

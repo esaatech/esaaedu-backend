@@ -6,6 +6,7 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from courses.permissions import courses_for_teacher, owned_or_member_q, user_is_course_member
 from student.models import EnrolledCourse, EnrollmentSchedule
 from student.serializers import (
     EnrollmentScheduleListItemSerializer,
@@ -56,7 +57,7 @@ def _user_can_manage_enrollment(user, enrollment: EnrolledCourse) -> bool:
     """Teacher of the course, enrolled student, or parent using student credentials."""
     if not user or not user.is_authenticated:
         return False
-    if getattr(user, 'is_teacher', False) and enrollment.course.teacher_id == user.id:
+    if getattr(user, 'is_teacher', False) and user_is_course_member(user, enrollment.course):
         return True
     student_user = enrollment.student_profile.user
     if user.id == student_user.id:
@@ -102,7 +103,7 @@ class SelfPacedEnrollmentScheduleListView(APIView):
         if student_id and getattr(request.user, 'is_teacher', False):
             qs = qs.filter(
                 student_profile_id=student_id,
-                course__teacher=request.user,
+                course__in=courses_for_teacher(request.user),
             )
         else:
             student_profile = getattr(request.user, 'student_profile', None)

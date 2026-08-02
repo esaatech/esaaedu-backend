@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from . import membership_views
 
 app_name = 'courses'
 
@@ -12,6 +13,13 @@ urlpatterns = [
     # Teacher endpoints
     path('teacher/', views.teacher_courses, name='teacher_courses'),
     path('teacher/dashboard/', views.TeacherDashboardAPIView.as_view(), name='teacher_dashboard'),
+    path('teacher/search/', membership_views.search_teachers, name='search_teachers'),
+    path('teacher/<uuid:course_id>/teachers/', membership_views.course_teachers, name='course_teachers'),
+    path(
+        'teacher/<uuid:course_id>/teachers/<int:user_id>/',
+        membership_views.course_teacher_detail,
+        name='course_teacher_detail',
+    ),
     path('teacher/<uuid:course_id>/', views.teacher_course_detail, name='teacher_course_detail'),
     
     # Course management endpoints (complete CRUD CBV)

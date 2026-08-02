@@ -13,6 +13,14 @@ from django.contrib.auth import get_user_model
 from firebase_admin import auth
 import firebase_admin
 from .models import Classroom, Board, BoardPage
+from courses.permissions import (
+    user_is_course_member,
+    user_is_course_owner,
+    courses_for_teacher,
+    owned_or_member_q,
+    user_can_access_class,
+    classes_for_teacher,
+)
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -98,8 +106,8 @@ def get_classroom_and_validate_access(classroom_id, user):
     
     # Check access permissions
     if user.role == 'teacher':
-        # Teacher must own the class
-        if classroom.class_instance.teacher != user:
+        # Teacher must own the class or be a course member
+        if not user_can_access_class(user, classroom.class_instance):
             raise PermissionError(f"User {user.email} does not own classroom {classroom_id}")
     elif user.role == 'student':
         # Student must be enrolled in the class

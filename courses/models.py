@@ -319,6 +319,57 @@ class Course(models.Model):
 # No need for custom save method - single table approach
 
 
+class CourseMembership(models.Model):
+    """
+    Course teaching membership. Course.teacher remains the primary owner FK;
+    this table tracks the owner plus any co-teachers with teaching access.
+    """
+    ROLE_OWNER = 'owner'
+    ROLE_TEACHER = 'teacher'
+    ROLE_CHOICES = [
+        (ROLE_OWNER, 'Owner'),
+        (ROLE_TEACHER, 'Teacher'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    course = models.ForeignKey(
+        Course,
+        on_delete=models.CASCADE,
+        related_name='memberships',
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='course_memberships',
+        limit_choices_to={'role': 'teacher'},
+    )
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_TEACHER)
+    invited_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='course_memberships_invited',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['course', 'user'],
+                name='unique_course_membership_user',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['user', 'role']),
+            models.Index(fields=['course', 'role']),
+        ]
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"{self.user.get_full_name()} ({self.role}) on {self.course.title}"
+
+
 class Module(models.Model):
     """
     Module groups lessons within a course. Optional: lessons can have module=None.

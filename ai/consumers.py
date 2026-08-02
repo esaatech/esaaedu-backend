@@ -15,6 +15,14 @@ from .gemini_agent import GeminiAgent
 from .prompts import get_prompt_for_type
 from google.api_core import exceptions as google_exceptions
 from courses.models import Course
+from courses.permissions import (
+    user_is_course_member,
+    user_is_course_owner,
+    courses_for_teacher,
+    owned_or_member_q,
+    user_can_access_class,
+    classes_for_teacher,
+)
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -182,7 +190,7 @@ def get_course_and_validate_ownership(course_id, user):
         raise Course.DoesNotExist(f"Course {course_id} not found")
     
     # Check ownership
-    if course.teacher != user:
+    if not user_is_course_member(user, course):
         raise PermissionError(f"User {user.email} does not own course {course_id}")
     
     return course

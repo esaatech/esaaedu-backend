@@ -3,8 +3,22 @@ from django.contrib import admin
 from django.contrib import messages
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from .models import Course, Lesson, LessonMaterial, Module, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, SubmissionType, Note, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
+from .models import Course, CourseMembership, Lesson, LessonMaterial, Module, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, SubmissionType, Note, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
 from .views import delete_course_with_cleanup
+
+
+@admin.register(CourseMembership)
+class CourseMembershipAdmin(admin.ModelAdmin):
+    list_display = ['course', 'user', 'role', 'invited_by', 'created_at']
+    list_filter = ['role', 'created_at']
+    search_fields = [
+        'course__title',
+        'user__email',
+        'user__first_name',
+        'user__last_name',
+    ]
+    raw_id_fields = ['course', 'user', 'invited_by']
+    readonly_fields = ['id', 'created_at']
 
 
 class CourseAdminForm(forms.ModelForm):

@@ -11,6 +11,14 @@ from django.db.models import Q, Count, Avg, Sum, Max
 from django.db import transaction
 from django.utils import timezone
 from users.models import User, TeacherProfile
+from courses.permissions import (
+    user_is_course_member,
+    user_is_course_owner,
+    courses_for_teacher,
+    owned_or_member_q,
+    user_can_access_class,
+    classes_for_teacher,
+)
 
 logger = logging.getLogger(__name__)
 from .serializers import (
@@ -211,20 +219,20 @@ class TeacherProfileAPIView(APIView):
             
             # Calculate statistics
             total_students = EnrolledCourse.objects.filter(
-                course__teacher=teacher_profile.user
+                course__in=courses_for_teacher(teacher_profile.user)
             ).values('student_profile__user').distinct().count()
             
             active_courses = teacher_courses.filter(status='published').count()
             
             # Get completed lessons (assuming this is tracked in LessonProgress)
             completed_lessons = LessonProgress.objects.filter(
-                lesson__course__teacher=teacher_profile.user,
+                lesson__course__in=courses_for_teacher(teacher_profile.user),
                 status='completed'
             ).count()
             
             # Get average rating from course reviews
             avg_rating = CourseReview.objects.filter(
-                course__teacher=teacher_profile.user
+                course__in=courses_for_teacher(teacher_profile.user)
             ).aggregate(avg_rating=Avg('rating'))['avg_rating'] or 0
             
             return {
@@ -334,7 +342,7 @@ class TeacherScheduleAPIView(APIView):
         Get all events for teacher's courses
         """
         events = ClassEvent.objects.filter(
-            class_instance__course__teacher=teacher
+            class_instance__course__in=courses_for_teacher(teacher)
         ).select_related(
             'class_instance__course',
             'lesson',
@@ -388,7 +396,7 @@ class TeacherScheduleAPIView(APIView):
         # For non-project events, filter by start_time
         # For project events, filter by due_date
         events = ClassEvent.objects.filter(
-            class_instance__course__teacher=teacher
+            class_instance__course__in=courses_for_teacher(teacher)
         ).filter(
             Q(start_time__gte=now, start_time__lte=future_date) |  # Non-project events
             Q(due_date__gte=now, due_date__lte=future_date)       # Project events
@@ -428,7 +436,7 @@ class TeacherScheduleAPIView(APIView):
         Get events grouped by type
         """
         events = ClassEvent.objects.filter(
-            class_instance__course__teacher=teacher
+            class_instance__course__in=courses_for_teacher(teacher)
         ).select_related(
             'class_instance__course',
             'lesson',
@@ -476,7 +484,7 @@ class TeacherScheduleAPIView(APIView):
         Get events grouped by course
         """
         events = ClassEvent.objects.filter(
-            class_instance__course__teacher=teacher
+            class_instance__course__in=courses_for_teacher(teacher)
         ).select_related(
             'class_instance__course',
             'lesson',
@@ -533,12 +541,12 @@ class TeacherScheduleAPIView(APIView):
         
         # Total events
         total_events = ClassEvent.objects.filter(
-            class_instance__course__teacher=teacher
+            class_instance__course__in=courses_for_teacher(teacher)
         ).count()
         
         # This week's events (non-project events by start_time, project events by due_date)
         this_week_events = ClassEvent.objects.filter(
-            class_instance__course__teacher=teacher
+            class_instance__course__in=courses_for_teacher(teacher)
         ).filter(
             Q(start_time__date__gte=week_start, start_time__date__lte=week_end) |  # Non-project events
             Q(due_date__date__gte=week_start, due_date__date__lte=week_end)       # Project events
@@ -546,7 +554,7 @@ class TeacherScheduleAPIView(APIView):
         
         # Today's events (non-project events by start_time, project events by due_date)
         today_events = ClassEvent.objects.filter(
-            class_instance__course__teacher=teacher
+            class_instance__course__in=courses_for_teacher(teacher)
         ).filter(
             Q(start_time__date=today) |  # Non-project events
             Q(due_date__date=today)     # Project events
@@ -554,7 +562,7 @@ class TeacherScheduleAPIView(APIView):
         
         # Upcoming live classes
         upcoming_live_classes = ClassEvent.objects.filter(
-            class_instance__course__teacher=teacher,
+            class_instance__course__in=courses_for_teacher(teacher),
             event_type='lesson',
             lesson_type='live',
             start_time__gte=now
@@ -562,7 +570,7 @@ class TeacherScheduleAPIView(APIView):
         
         # Upcoming project deadlines
         upcoming_project_deadlines = ClassEvent.objects.filter(
-            class_instance__course__teacher=teacher,
+            class_instance__course__in=courses_for_teacher(teacher),
             event_type='project',
             due_date__gte=now
         ).count()
@@ -667,7 +675,7 @@ class ProjectManagementView(APIView):
             search = request.query_params.get('search')
             
             # Base queryset - projects from teacher's courses
-            projects = Project.objects.filter(course__teacher=teacher).select_related('course')
+            projects = Project.objects.filter(owned_or_member_q(teacher, 'course__')).select_related('course')
             
             # Apply filters
             if course_id:
@@ -749,7 +757,7 @@ class ProjectManagementView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            project = get_object_or_404(Project, id=project_id, course__teacher=teacher)
+            project = get_object_or_404(Project.objects.filter(owned_or_member_q(teacher, "course__")), id=project_id)
             
             serializer = ProjectCreateUpdateSerializer(
                 project, 
@@ -787,7 +795,7 @@ class ProjectManagementView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            project = get_object_or_404(Project, id=project_id, course__teacher=teacher)
+            project = get_object_or_404(Project.objects.filter(owned_or_member_q(teacher, "course__")), id=project_id)
             
             # Check if there are any submissions
             submission_count = project.submissions.count()
@@ -812,16 +820,16 @@ class ProjectManagementView(APIView):
     
     def _get_projects_summary(self, teacher):
         """Get summary statistics for teacher's projects"""
-        projects = Project.objects.filter(course__teacher=teacher)
+        projects = Project.objects.filter(owned_or_member_q(teacher, 'course__'))
         
         total_projects = projects.count()
-        total_submissions = ProjectSubmission.objects.filter(project__course__teacher=teacher).count()
+        total_submissions = ProjectSubmission.objects.filter(project__course__in=courses_for_teacher(teacher)).count()
         graded_submissions = ProjectSubmission.objects.filter(
-            project__course__teacher=teacher, 
+            project__course__in=courses_for_teacher(teacher), 
             status='GRADED'
         ).count()
         pending_submissions = ProjectSubmission.objects.filter(
-            project__course__teacher=teacher,
+            project__course__in=courses_for_teacher(teacher),
             status__in=['ASSIGNED', 'SUBMITTED', 'RETURNED']
         ).count()
         
@@ -879,7 +887,7 @@ class ProjectGradingView(APIView):
                 )
             
             # Verify project belongs to teacher
-            project = get_object_or_404(Project, id=project_id, course__teacher=teacher)
+            project = get_object_or_404(Project.objects.filter(owned_or_member_q(teacher, "course__")), id=project_id)
             
             # Get query parameters for filtering
             status_filter = request.query_params.get('status')
@@ -939,7 +947,7 @@ class ProjectGradingView(APIView):
             submission = get_object_or_404(
                 ProjectSubmission, 
                 id=submission_id,
-                project__course__teacher=teacher
+                project__course__in=courses_for_teacher(teacher)
             )
             
             serializer = ProjectSubmissionGradingSerializer(data=request.data)
@@ -1017,7 +1025,7 @@ class ProjectSubmissionDetailView(APIView):
             submission = get_object_or_404(
                 ProjectSubmission, 
                 id=submission_id,
-                project__course__teacher=teacher
+                project__course__in=courses_for_teacher(teacher)
             )
             
             serializer = ProjectSubmissionSerializer(submission)
@@ -1052,7 +1060,7 @@ class ProjectSubmissionDetailView(APIView):
             submission = get_object_or_404(
                 ProjectSubmission, 
                 id=submission_id,
-                project__course__teacher=teacher
+                project__course__in=courses_for_teacher(teacher)
             )
             
             serializer = ProjectSubmissionFeedbackSerializer(data=request.data)
@@ -1100,7 +1108,7 @@ class ProjectSubmissionDetailView(APIView):
             submission = get_object_or_404(
                 ProjectSubmission, 
                 id=submission_id,
-                project__course__teacher=teacher
+                project__course__in=courses_for_teacher(teacher)
             )
             
             serializer = ProjectSubmissionGradingSerializer(data=request.data)
@@ -1171,8 +1179,8 @@ class ProjectDashboardView(APIView):
     
     def _get_overview_stats(self, teacher):
         """Get overview statistics"""
-        projects = Project.objects.filter(course__teacher=teacher)
-        submissions = ProjectSubmission.objects.filter(project__course__teacher=teacher)
+        projects = Project.objects.filter(owned_or_member_q(teacher, 'course__'))
+        submissions = ProjectSubmission.objects.filter(project__course__in=courses_for_teacher(teacher))
         
         return {
             'total_projects': projects.count(),
@@ -1187,16 +1195,14 @@ class ProjectDashboardView(APIView):
     
     def _get_recent_projects(self, teacher):
         """Get recent projects"""
-        projects = Project.objects.filter(
-            course__teacher=teacher
-        ).select_related('course').order_by('-created_at')[:5]
+        projects = Project.objects.filter(owned_or_member_q(teacher, 'course__')).select_related('course').order_by('-created_at')[:5]
         
         return ProjectSerializer(projects, many=True, context={'request': self.request}).data
     
     def _get_pending_grading(self, teacher):
         """Get submissions pending grading"""
         submissions = ProjectSubmission.objects.filter(
-            project__course__teacher=teacher,
+            project__course__in=courses_for_teacher(teacher),
             status__in=['SUBMITTED', 'RETURNED']
         ).select_related('project', 'student').order_by('-submitted_at')[:10]
         
@@ -1205,14 +1211,14 @@ class ProjectDashboardView(APIView):
     def _get_recent_submissions(self, teacher):
         """Get recent submissions"""
         submissions = ProjectSubmission.objects.filter(
-            project__course__teacher=teacher
+            project__course__in=courses_for_teacher(teacher)
         ).select_related('project', 'student').order_by('-submitted_at')[:10]
         
         return ProjectSubmissionSerializer(submissions, many=True).data
     
     def _get_course_projects_summary(self, teacher):
         """Get projects summary by course"""
-        courses = Course.objects.filter(teacher=teacher)
+        courses = courses_for_teacher(teacher)
         course_summaries = []
         
         for course in courses:
@@ -1254,7 +1260,7 @@ class ProjectManagementView(APIView):
                 )
             
             # Get teacher's courses
-            teacher_courses = Course.objects.filter(teacher=request.user)
+            teacher_courses = courses_for_teacher(request.user)
             
             # Get projects for teacher's courses
             projects = Project.objects.filter(course__in=teacher_courses).select_related('course')
@@ -1354,7 +1360,7 @@ class ProjectManagementView(APIView):
                 )
             
             # Get project and check ownership
-            project = get_object_or_404(Project, id=project_id, course__teacher=request.user)
+            project = get_object_or_404(Project, id=project_id, course__in=courses_for_teacher(request.user))
             
             serializer = ProjectCreateUpdateSerializer(
                 project, 
@@ -1392,7 +1398,7 @@ class ProjectManagementView(APIView):
                 )
             
             # Get project and check ownership
-            project = get_object_or_404(Project, id=project_id, course__teacher=request.user)
+            project = get_object_or_404(Project, id=project_id, course__in=courses_for_teacher(request.user))
             
             # Check if project has submissions and warn about deletion
             submission_count = project.submissions.count()
@@ -1491,7 +1497,7 @@ class AssignmentManagementView(APIView):
                     ).get(id=assignment_id)
                     
                     # Check if user teaches any lesson associated with this assignment
-                    if not assignment.lessons.filter(course__teacher=request.user).exists():
+                    if not assignment.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                         return Response(
                             {'error': 'Assignment not found or you do not have permission'},
                             status=status.HTTP_403_FORBIDDEN
@@ -1510,7 +1516,7 @@ class AssignmentManagementView(APIView):
             
             # Get assignments for teacher's courses
             assignments = Assignment.objects.filter(
-                lessons__course__teacher=request.user
+                lessons__course__in=courses_for_teacher(request.user)
             ).prefetch_related('lessons', 'lessons__course', 'questions', 'submissions')
             
             # Apply filters
@@ -1607,7 +1613,7 @@ class AssignmentManagementView(APIView):
             try:
                 assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
                 # Check if user teaches any lesson associated with this assignment
-                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                if not assignment.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                     return Response(
                         {'error': 'Assignment not found or you do not have permission to update it'},
                         status=status.HTTP_403_FORBIDDEN
@@ -1670,7 +1676,7 @@ class AssignmentManagementView(APIView):
             try:
                 assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
                 # Check if user teaches any lesson associated with this assignment
-                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                if not assignment.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                     return Response(
                         {'error': 'Assignment not found or you do not have permission to delete it'},
                         status=status.HTTP_403_FORBIDDEN
@@ -1756,7 +1762,7 @@ class AssignmentQuestionManagementView(APIView):
             try:
                 assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
                 # Check if user teaches any lesson associated with this assignment
-                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                if not assignment.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                     return Response(
                         {'error': 'Assignment not found or you do not have permission to access it'},
                         status=status.HTTP_403_FORBIDDEN
@@ -1800,7 +1806,7 @@ class AssignmentQuestionManagementView(APIView):
             try:
                 assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
                 # Check if user teaches any lesson associated with this assignment
-                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                if not assignment.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                     return Response(
                         {'error': 'Assignment not found or you do not have permission to modify it'},
                         status=status.HTTP_403_FORBIDDEN
@@ -1854,7 +1860,7 @@ class AssignmentQuestionManagementView(APIView):
             try:
                 assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
                 # Check if user teaches any lesson associated with this assignment
-                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                if not assignment.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                     return Response(
                         {'error': 'Assignment not found or you do not have permission to modify it'},
                         status=status.HTTP_403_FORBIDDEN
@@ -1917,7 +1923,7 @@ class AssignmentQuestionManagementView(APIView):
             try:
                 assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
                 # Check if user teaches any lesson associated with this assignment
-                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                if not assignment.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                     return Response(
                         {'error': 'Assignment not found or you do not have permission to modify it'},
                         status=status.HTTP_403_FORBIDDEN
@@ -1982,7 +1988,7 @@ class AssignmentQuestionReorderView(APIView):
             assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').filter(
                 id=assignment_id
             ).first()
-            if not assignment or not assignment.lessons.filter(course__teacher=request.user).exists():
+            if not assignment or not assignment.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                 return Response(
                     {'error': 'Assignment not found or you do not have permission to modify it'},
                     status=status.HTTP_404_NOT_FOUND,
@@ -2072,7 +2078,7 @@ class AssignmentGradingView(APIView):
                 try:
                     assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
                     # Check if user teaches any lesson associated with this assignment
-                    if not assignment.lessons.filter(course__teacher=request.user).exists():
+                    if not assignment.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                         return Response(
                             {'error': 'Assignment not found or you do not have permission to access it'},
                             status=status.HTTP_403_FORBIDDEN
@@ -2105,7 +2111,7 @@ class AssignmentGradingView(APIView):
             try:
                 assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
                 # Check if user teaches any lesson associated with this assignment
-                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                if not assignment.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                     return Response(
                         {'error': 'Assignment not found or you do not have permission to access it'},
                         status=status.HTTP_403_FORBIDDEN
@@ -2178,7 +2184,7 @@ class AssignmentGradingView(APIView):
             try:
                 assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
                 # Check if user teaches any lesson associated with this assignment
-                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                if not assignment.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                     return Response(
                         {'error': 'Assignment not found or you do not have permission to grade it'},
                         status=status.HTTP_403_FORBIDDEN
@@ -2276,7 +2282,7 @@ class AssignmentGradingView(APIView):
             try:
                 assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
                 # Check if user teaches any lesson associated with this assignment
-                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                if not assignment.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                     return Response(
                         {'error': 'Assignment not found or you do not have permission to provide feedback'},
                         status=status.HTTP_403_FORBIDDEN
@@ -2344,7 +2350,7 @@ class AssignmentReturnSubmissionView(APIView):
 
             try:
                 assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(id=assignment_id)
-                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                if not assignment.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                     return Response(
                         {'error': 'Assignment not found or you do not have permission to access it'},
                         status=status.HTTP_403_FORBIDDEN
@@ -2497,7 +2503,7 @@ class AssignmentAIGradingView(APIView):
                     id=assignment_id
                 )
                 # Check if user teaches any lesson associated with this assignment
-                if not assignment.lessons.filter(course__teacher=request.user).exists():
+                if not assignment.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                     return Response(
                         {'error': 'Assignment not found or you do not have permission to grade it'},
                         status=status.HTTP_403_FORBIDDEN
@@ -2598,7 +2604,7 @@ class CourseAssessmentAIGradingView(APIView):
 
             try:
                 assessment = CourseAssessment.objects.select_related('course').get(id=assessment_id)
-                if assessment.course.teacher != request.user:
+                if not user_is_course_member(request.user, assessment.course):
                     return Response(
                         {'error': 'Assessment not found or you do not have permission to grade it'},
                         status=status.HTTP_403_FORBIDDEN
@@ -2688,7 +2694,7 @@ class CourseAssessmentGradingView(APIView):
             try:
                 assessment = CourseAssessment.objects.select_related('course').get(id=assessment_id)
                 # Check if user is the course teacher
-                if assessment.course.teacher != request.user:
+                if not user_is_course_member(request.user, assessment.course):
                     return Response(
                         {'error': 'Assessment not found or you do not have permission to access it'},
                         status=status.HTTP_403_FORBIDDEN
@@ -2813,7 +2819,7 @@ class CourseAssessmentGradingView(APIView):
             try:
                 assessment = CourseAssessment.objects.select_related('course').get(id=assessment_id)
                 # Check if user is the course teacher
-                if assessment.course.teacher != request.user:
+                if not user_is_course_member(request.user, assessment.course):
                     return Response(
                         {'error': 'Assessment not found or you do not have permission to grade it'},
                         status=status.HTTP_403_FORBIDDEN
@@ -2925,7 +2931,7 @@ class CourseAssessmentReturnSubmissionView(APIView):
 
             try:
                 assessment = CourseAssessment.objects.prefetch_related('questions').select_related('course').get(id=assessment_id)
-                if assessment.course.teacher != request.user:
+                if not user_is_course_member(request.user, assessment.course):
                     return Response(
                         {'error': 'Assessment not found or you do not have permission to access it'},
                         status=status.HTTP_403_FORBIDDEN
@@ -3052,7 +3058,7 @@ class StudentAssessmentSubmissionsView(APIView):
                 )
             
             # Get all courses taught by this teacher
-            teacher_courses = Course.objects.filter(teacher=request.user)
+            teacher_courses = courses_for_teacher(request.user)
             
             # Get all assessments for these courses
             assessments = CourseAssessment.objects.filter(course__in=teacher_courses)
@@ -3154,7 +3160,7 @@ class StudentProjectSubmissionsView(APIView):
                 )
             
             # Get all courses taught by this teacher
-            teacher_courses = Course.objects.filter(teacher=request.user)
+            teacher_courses = courses_for_teacher(request.user)
             
             # Filter by course if provided
             if course_id:
@@ -3674,7 +3680,7 @@ class VideoMaterialView(APIView):
             # Check if user owns the lesson this material belongs to
             if video_material.lesson_material:
                 lesson = video_material.lesson_material.lessons.first()
-                if lesson and lesson.course.teacher != request.user:
+                if lesson and not user_is_course_member(request.user, lesson.course):
                     return Response(
                         {'error': 'You do not have permission to update this video material'},
                         status=status.HTTP_403_FORBIDDEN
@@ -3688,7 +3694,7 @@ class VideoMaterialView(APIView):
                     lesson_material = LessonMaterial.objects.get(id=lesson_material_id, material_type='video')
                     # Verify teacher owns the lesson
                     lesson = lesson_material.lessons.first()
-                    if lesson and lesson.course.teacher != request.user:
+                    if lesson and not user_is_course_member(request.user, lesson.course):
                         return Response(
                             {'error': 'You do not have permission to link this video material to this lesson'},
                             status=status.HTTP_403_FORBIDDEN
@@ -4619,7 +4625,7 @@ class AIGenerateQuizView(APIView):
             try:
                 lesson = Lesson.objects.select_related('course__teacher').get(
                     id=lesson_id,
-                    course__teacher=request.user
+                    course__in=courses_for_teacher(request.user)
                 )
             except Lesson.DoesNotExist:
                 return Response(
@@ -4924,7 +4930,7 @@ class AIGenerateAssignmentView(APIView):
             try:
                 lesson = Lesson.objects.select_related('course__teacher').get(
                     id=lesson_id,
-                    course__teacher=request.user
+                    course__in=courses_for_teacher(request.user)
                 )
             except Lesson.DoesNotExist:
                 return Response(
@@ -5221,7 +5227,7 @@ class TeacherStudentMessagingContextView(APIView):
 
             enrollments = EnrolledCourse.objects.filter(
                 student_profile__user_id=student_id,
-                course__teacher=teacher,
+                course__in=courses_for_teacher(teacher),
             ).select_related("course")
 
             if course_id:
@@ -5287,7 +5293,7 @@ class StudentConversationsListView(APIView):
         """Verify teacher teaches this student"""
         return EnrolledCourse.objects.filter(
             student_profile=student_profile,
-            course__teacher=teacher,
+            course__in=courses_for_teacher(teacher),
             status='active'
         ).exists()
     
@@ -5713,7 +5719,7 @@ class StudentUnreadCountView(APIView):
         """Verify teacher teaches this student"""
         return EnrolledCourse.objects.filter(
             student_profile=student_profile,
-            course__teacher=teacher,
+            course__in=courses_for_teacher(teacher),
             status='active'
         ).exists()
     

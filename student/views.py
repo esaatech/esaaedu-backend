@@ -19,6 +19,14 @@ import re
 from .models import EnrolledCourse, StudentLessonProgress, LessonAssessment, TeacherAssessment, QuizQuestionFeedback, QuizAttemptFeedback, Conversation, Message, CodeSnippet
 from teacher.utils import FileUploadService
 from ai.api_errors import ai_error_response
+from courses.permissions import (
+    user_is_course_member,
+    user_is_course_owner,
+    courses_for_teacher,
+    owned_or_member_q,
+    user_can_access_class,
+    classes_for_teacher,
+)
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -88,9 +96,7 @@ def enrolled_courses(request):
                     student_profile__user=request.user
                 ).order_by('-enrollment_date')
             elif request.user.role == 'teacher':
-                enrollments = EnrolledCourse.objects.filter(
-                    course__teacher=request.user
-                ).order_by('-enrollment_date')
+                enrollments = EnrolledCourse.objects.filter(owned_or_member_q(request.user, 'course__')).order_by('-enrollment_date')
             else:
                 enrollments = EnrolledCourse.objects.all().order_by('-enrollment_date')
             
@@ -153,7 +159,7 @@ def enrolled_course_detail(request, enrollment_id):
             enrollment = get_object_or_404(
                 EnrolledCourse, 
                 id=enrollment_id, 
-                course__teacher=request.user
+                course__in=courses_for_teacher(request.user)
             )
         else:
             enrollment = get_object_or_404(EnrolledCourse, id=enrollment_id)
@@ -237,7 +243,7 @@ def lesson_assessments(request, enrollment_id):
             enrollment = get_object_or_404(
                 EnrolledCourse, 
                 id=enrollment_id, 
-                course__teacher=request.user
+                course__in=courses_for_teacher(request.user)
             )
         else:
             enrollment = get_object_or_404(EnrolledCourse, id=enrollment_id)
@@ -321,7 +327,7 @@ def teacher_assessments(request, enrollment_id):
             enrollment = get_object_or_404(
                 EnrolledCourse, 
                 id=enrollment_id, 
-                course__teacher=request.user
+                course__in=courses_for_teacher(request.user)
             )
         else:
             enrollment = get_object_or_404(EnrolledCourse, id=enrollment_id)
@@ -410,7 +416,7 @@ def student_assessments_overview(request, student_id):
         elif request.user.role == 'teacher':
             enrollments = EnrolledCourse.objects.filter(
                 student_profile__user_id=student_id,
-                course__teacher=request.user
+                course__in=courses_for_teacher(request.user)
             )
         else:
             enrollments = EnrolledCourse.objects.filter(student_profile__user_id=student_id)
@@ -522,7 +528,7 @@ def create_lesson_assessment_direct(request):
             )
         
         # Verify the teacher has access to this course
-        if enrollment.course.teacher != request.user:
+        if not user_is_course_member(request.user, enrollment.course):
             return Response(
                 {'error': 'You do not have access to this course'},
                 status=status.HTTP_403_FORBIDDEN
@@ -599,7 +605,7 @@ def create_teacher_assessment_direct(request):
             )
         
         # Verify the teacher has access to this course
-        if enrollment.course.teacher != request.user:
+        if not user_is_course_member(request.user, enrollment.course):
             return Response(
                 {'error': 'You do not have access to this course'},
                 status=status.HTTP_403_FORBIDDEN
@@ -749,7 +755,7 @@ def quiz_question_feedback(request, quiz_attempt_id, question_id):
             id=quiz_attempt_id
         )
         # Check if user teaches any lesson associated with this quiz
-        if not quiz_attempt.quiz.lessons.filter(course__teacher=request.user).exists():
+        if not quiz_attempt.quiz.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
             return Response(
                 {'error': 'Quiz attempt not found or you do not have permission'},
                 status=status.HTTP_403_FORBIDDEN
@@ -835,7 +841,7 @@ def quiz_attempt_feedback(request, quiz_attempt_id):
             id=quiz_attempt_id
         )
         # Check if user teaches any lesson associated with this quiz
-        if not quiz_attempt.quiz.lessons.filter(course__teacher=request.user).exists():
+        if not quiz_attempt.quiz.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
             return Response(
                 {'error': 'Quiz attempt not found or you do not have permission'},
                 status=status.HTTP_403_FORBIDDEN
@@ -916,7 +922,7 @@ def student_feedback_overview(request, student_id):
         # Get enrollments for courses taught by this teacher
         enrollments = EnrolledCourse.objects.filter(
             student_profile=student_profile,
-            course__teacher=request.user
+            course__in=courses_for_teacher(request.user)
         )
         
         if not enrollments.exists():
@@ -980,13 +986,13 @@ class TeacherStudentRecord(APIView):
             if course_id:
                 enrollments = EnrolledCourse.objects.filter(
                     student_profile__user_id=student_id,
-                    course__teacher=request.user,
+                    course__in=courses_for_teacher(request.user),
                     course_id=course_id
                 )
             else:
                 enrollments = EnrolledCourse.objects.filter(
                     student_profile__user_id=student_id,
-                    course__teacher=request.user
+                    course__in=courses_for_teacher(request.user)
                 )
             
             if not enrollments.exists():
@@ -2628,7 +2634,7 @@ class AssessmentView(APIView):
             else:
                 # Teacher/Admin can see all quiz attempts they have access to
                 quiz_attempts = QuizAttempt.objects.filter(
-                    quiz__lessons__course__teacher=request.user
+                    quiz__lessons__course__in=courses_for_teacher(request.user)
                 ).select_related('quiz', 'student').prefetch_related('quiz__lessons').order_by('-started_at')
             
             # Pagination

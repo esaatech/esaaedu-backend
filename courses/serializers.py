@@ -2,10 +2,49 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
-from .models import Course, Lesson, LessonMaterial, Module, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, ProjectSubmission, BookPage, VideoMaterial, DocumentMaterial, AudioVideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
+from .models import Course, Lesson, LessonMaterial, Module, Quiz, Question, QuizAttempt, Note, CourseReview, Class, ClassSession, ClassEvent, Project, ProjectPlatform, ProjectSubmission, BookPage, VideoMaterial, DocumentMaterial, AudioVideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission, CourseMembership
 from .assessment_timing import build_timing_payload
+from .permissions import get_course_role
 
 User = get_user_model()
+
+
+class CourseTeacherMemberSerializer(serializers.Serializer):
+    """Teacher membership entry for a course."""
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    email = serializers.EmailField()
+    role = serializers.ChoiceField(choices=['owner', 'teacher'])
+
+
+def _serialize_course_teachers(course):
+    members = []
+    # Prefetch-friendly: use related manager when available
+    memberships = list(
+        course.memberships.select_related('user').all()
+        if hasattr(course, '_prefetched_objects_cache') and 'memberships' in getattr(course, '_prefetched_objects_cache', {})
+        else course.memberships.select_related('user').all()
+    )
+    seen_ids = set()
+    for m in memberships:
+        seen_ids.add(m.user_id)
+        members.append({
+            'id': m.user_id,
+            'name': m.user.get_full_name() or m.user.email,
+            'email': m.user.email,
+            'role': m.role,
+        })
+    # Ensure owner is present even if membership row is missing
+    if course.teacher_id not in seen_ids:
+        members.insert(0, {
+            'id': course.teacher_id,
+            'name': course.teacher.get_full_name() or course.teacher.email,
+            'email': course.teacher.email,
+            'role': CourseMembership.ROLE_OWNER,
+        })
+    # Owner first
+    members.sort(key=lambda x: (0 if x['role'] == 'owner' else 1, x['name'] or ''))
+    return members
 
 
 # ===== COURSE REVIEW SERIALIZER =====
@@ -735,6 +774,9 @@ class CourseListSerializer(serializers.ModelSerializer):
     Includes modules for teacher course management.
     """
     teacher_name = serializers.CharField(source='teacher.get_full_name', read_only=True)
+    teacher_id = serializers.IntegerField(source='teacher.id', read_only=True)
+    my_role = serializers.SerializerMethodField()
+    teachers = serializers.SerializerMethodField()
     total_lessons = serializers.ReadOnlyField()
     enrolled_students_count = serializers.SerializerMethodField()
     active_students_count = serializers.SerializerMethodField()
@@ -749,10 +791,20 @@ class CourseListSerializer(serializers.ModelSerializer):
             'featured', 'popular', 'color', 'icon',
             'max_students', 'schedule', 'certificate', 'status',
             'delivery_type',
-            'teacher_name', 'total_lessons', 'enrolled_students_count', 'active_students_count',
+            'teacher_name', 'teacher_id', 'my_role', 'teachers',
+            'total_lessons', 'enrolled_students_count', 'active_students_count',
             'has_enrollments',
             'modules', 'created_at', 'updated_at'
         ]
+
+    def get_my_role(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return None
+        return get_course_role(request.user, obj)
+
+    def get_teachers(self, obj):
+        return _serialize_course_teachers(obj)
     
     def get_enrolled_students_count(self, obj):
         """Get total enrolled students count from EnrolledCourse model"""
@@ -787,7 +839,9 @@ class CourseDetailSerializer(serializers.ModelSerializer):
     Serializer for detailed course view with all related data
     """
     teacher_name = serializers.CharField(source='teacher.get_full_name', read_only=True)
-    teacher_id = serializers.UUIDField(source='teacher.id', read_only=True)
+    teacher_id = serializers.IntegerField(source='teacher.id', read_only=True)
+    my_role = serializers.SerializerMethodField()
+    teachers = serializers.SerializerMethodField()
     total_lessons = serializers.ReadOnlyField()
     total_duration_minutes = serializers.ReadOnlyField()
     enrolled_students_count = serializers.SerializerMethodField()
@@ -818,7 +872,8 @@ class CourseDetailSerializer(serializers.ModelSerializer):
             'age_range', 'level', 'required_computer_skills_level', 'price', 'is_free',
             'trial_enabled', 'trial_period_days', 'features',
             'featured', 'popular', 'color', 'icon', 'image', 'max_students',
-            'schedule', 'certificate', 'status', 'delivery_type', 'teacher_name', 'teacher_id',
+            'schedule', 'certificate', 'status', 'delivery_type',
+            'teacher_name', 'teacher_id', 'my_role', 'teachers',
             
             # Introduction/detailed info (now part of Course model)
             'overview', 'learning_objectives', 'prerequisites_text',
@@ -839,6 +894,15 @@ class CourseDetailSerializer(serializers.ModelSerializer):
             'active_students_count', 'has_enrollments', 'is_featured_eligible', 'enrolled_students', 
             'enrollment_stats', 'created_at', 'updated_at'
         ]
+
+    def get_my_role(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return None
+        return get_course_role(request.user, obj)
+
+    def get_teachers(self, obj):
+        return _serialize_course_teachers(obj)
     
     def get_enrolled_students_count(self, obj):
         """Get total enrolled students count"""

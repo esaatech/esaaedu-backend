@@ -14,6 +14,14 @@ import jwt
 from jwt.exceptions import InvalidKeyError
 import logging
 from .models import Course, Lesson, Module, Quiz, Question, Note, Class, ClassSession, QuizAttempt, CourseReview, LessonMaterial as LessonMaterialModel, BookPage, VideoMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission, DocumentMaterial, Project, ProjectSubmission, SubmissionType
+from .permissions import (
+    user_is_course_member,
+    user_is_course_owner,
+    courses_for_teacher,
+    owned_or_member_q,
+    user_can_access_class,
+    classes_for_teacher,
+)
 
 logger = logging.getLogger(__name__)
 from student.models import EnrolledCourse, StudentAttendance
@@ -556,7 +564,7 @@ def teacher_courses(request):
             from student.models import EnrolledCourse, StudentAttendance
             
             # Get courses with enrollment counts and modules (for teacher course management)
-            courses = Course.objects.filter(teacher=request.user).annotate(
+            courses = courses_for_teacher(request.user).annotate(
                 enrolled_count=Count(
                     'student_enrollments',
                     distinct=True
@@ -566,7 +574,7 @@ def teacher_courses(request):
                     filter=Q(student_enrollments__status='active'),
                     distinct=True
                 )
-            ).prefetch_related('modules').order_by('-created_at')
+            ).select_related('teacher').prefetch_related('modules', 'memberships__user').order_by('-created_at')
             
             serializer = CourseListSerializer(courses, many=True, context={'request': request})
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -783,7 +791,7 @@ class CourseCreationView(APIView):
             
             # Get the course and check ownership
             try:
-                course = Course.objects.get(id=course_id, teacher=request.user)
+                course = courses_for_teacher(request.user).get(id=course_id)
             except Course.DoesNotExist:
                 return Response(
                     {'error': 'Course not found or you do not have permission to update it'},
@@ -870,13 +878,19 @@ class CourseCreationView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Get the course and check ownership
+            # Get the course — delete is owner-only
             try:
-                course = Course.objects.get(id=course_id, teacher=request.user)
+                course = Course.objects.get(id=course_id)
             except Course.DoesNotExist:
                 return Response(
                     {'error': 'Course not found or you do not have permission to delete it'},
                     status=status.HTTP_404_NOT_FOUND
+                )
+
+            if not user_is_course_owner(request.user, course):
+                return Response(
+                    {'error': 'Only the course owner can delete this course'},
+                    status=status.HTTP_403_FORBIDDEN
                 )
             
             # Use shared cleanup function (single source of truth)
@@ -995,7 +1009,7 @@ class CourseCloneView(APIView):
 
             # Load source course and enforce ownership
             try:
-                source = Course.objects.get(id=course_id, teacher=request.user)
+                source = courses_for_teacher(request.user).get(id=course_id)
             except Course.DoesNotExist:
                 return Response(
                     {'error': 'Course not found or you do not have permission to clone it'},
@@ -1114,25 +1128,34 @@ def teacher_course_detail(request, course_id):
             status=status.HTTP_403_FORBIDDEN
         )
     
-    # Get the course (with modules prefetched for GET) and verify teacher ownership
+    # Get the course (with modules prefetched for GET) and verify membership
     try:
-        course = get_object_or_404(Course.objects.prefetch_related('modules'), id=course_id)
+        course = get_object_or_404(
+            Course.objects.prefetch_related('modules', 'memberships__user'),
+            id=course_id,
+        )
     except Course.DoesNotExist:
         return Response(
             {'error': 'Course not found'},
             status=status.HTTP_404_NOT_FOUND
         )
     
-    # Only the course teacher can manage this course
-    if course.teacher != request.user:
+    if not user_is_course_member(request.user, course):
         return Response(
-            {'error': 'Only the course teacher can manage this course'},
+            {'error': 'You do not have permission to access this course'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    # Delete is owner-only
+    if request.method == 'DELETE' and not user_is_course_owner(request.user, course):
+        return Response(
+            {'error': 'Only the course owner can delete this course'},
             status=status.HTTP_403_FORBIDDEN
         )
     
     if request.method == 'GET':
         try:
-            serializer = CourseDetailSerializer(course)
+            serializer = CourseDetailSerializer(course, context={'request': request})
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
@@ -1142,11 +1165,17 @@ def teacher_course_detail(request, course_id):
     
     elif request.method == 'PUT':
         try:
-            serializer = CourseCreateUpdateSerializer(course, data=request.data, partial=True)
+            # Billing fields are owner-only
+            data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+            if not user_is_course_owner(request.user, course):
+                for billing_field in ('price', 'is_free', 'trial_enabled', 'trial_period_days'):
+                    data.pop(billing_field, None)
+
+            serializer = CourseCreateUpdateSerializer(course, data=data, partial=True)
             if serializer.is_valid():
                 course = serializer.save()
                 
-                # Update Stripe product if it exists
+                # Update Stripe product if it exists (owner updates only meaningfully change billing)
                 from .stripe_integration import update_stripe_product_for_course
                 try:
                     stripe_result = update_stripe_product_for_course(course)
@@ -1155,7 +1184,7 @@ def teacher_course_detail(request, course_id):
                 except Exception as e:
                     print(f"Stripe update error for course {course.id}: {str(e)}")
                 
-                response_serializer = CourseDetailSerializer(course)
+                response_serializer = CourseDetailSerializer(course, context={'request': request})
                 return Response(response_serializer.data, status=status.HTTP_200_OK)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
@@ -1207,7 +1236,7 @@ class ModuleListCreateView(APIView):
         course = get_object_or_404(Course, id=course_id)
         if request.user.role != 'teacher':
             raise PermissionError('Only teachers can access this endpoint')
-        if course.teacher != request.user:
+        if not user_is_course_member(request.user, course):
             raise PermissionError('Only the course teacher can manage modules')
         return course
 
@@ -1258,7 +1287,7 @@ class ModuleDetailView(APIView):
         course = get_object_or_404(Course, id=course_id)
         if request.user.role != 'teacher':
             raise PermissionError('Only teachers can access this endpoint')
-        if course.teacher != request.user:
+        if not user_is_course_member(request.user, course):
             raise PermissionError('Only the course teacher can manage modules')
         module = get_object_or_404(Module, id=module_id, course=course)
         return module
@@ -1370,7 +1399,7 @@ def course_lessons(request, course_id):
         )
     
     # Only the course teacher can manage lessons
-    if course.teacher != request.user:
+    if not user_is_course_member(request.user, course):
         return Response(
             {'error': 'Only the course teacher can manage lessons'},
             status=status.HTTP_403_FORBIDDEN
@@ -1434,7 +1463,7 @@ def lesson_detail(request, lesson_id):
         )
     
     # Only the course teacher can manage lessons
-    if lesson.course.teacher != request.user:
+    if not user_is_course_member(request.user, lesson.course):
         return Response(
             {'error': 'Only the course teacher can manage this lesson'},
             status=status.HTTP_403_FORBIDDEN
@@ -1510,7 +1539,7 @@ def reorder_lessons(request, course_id):
         )
     
     # Only the course teacher can reorder lessons
-    if course.teacher != request.user:
+    if not user_is_course_member(request.user, course):
         return Response(
             {'error': 'Only the course teacher can reorder lessons'},
             status=status.HTTP_403_FORBIDDEN
@@ -1575,7 +1604,7 @@ def reorder_projects(request, course_id):
         )
     
     # Only the course teacher can reorder projects
-    if course.teacher != request.user:
+    if not user_is_course_member(request.user, course):
         return Response(
             {'error': 'Only the course teacher can reorder projects'},
             status=status.HTTP_403_FORBIDDEN
@@ -1663,7 +1692,7 @@ def lesson_quiz(request, lesson_id):
         )
     
     # Only the course teacher can manage lesson quizzes
-    if lesson.course.teacher != request.user:
+    if not user_is_course_member(request.user, lesson.course):
         print(f"❌ User {request.user} is not the teacher of course {lesson.course.title}")
         return Response(
             {'error': 'Only the course teacher can manage lesson quizzes'},
@@ -1752,7 +1781,7 @@ def quiz_detail(request, quiz_id):
         )
     
     # Only the course teacher can manage this quiz (check if user teaches any lesson)
-    if not quiz.lessons.filter(course__teacher=request.user).exists():
+    if not quiz.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
         return Response(
             {'error': 'Only the course teacher can manage this quiz'},
             status=status.HTTP_403_FORBIDDEN
@@ -1841,7 +1870,7 @@ def quiz_questions(request, quiz_id):
         )
     
     # Only the course teacher can manage quiz questions (check if user teaches any lesson)
-    if not quiz.lessons.filter(course__teacher=request.user).exists():
+    if not quiz.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
         return Response(
             {'error': 'Only the course teacher can manage quiz questions'},
             status=status.HTTP_403_FORBIDDEN
@@ -1909,7 +1938,7 @@ def question_detail(request, question_id):
         )
     
     # Only the course teacher can manage this question (check if user teaches any lesson)
-    if not question.quiz.lessons.filter(course__teacher=request.user).exists():
+    if not question.quiz.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
         return Response(
             {'error': 'Only the course teacher can manage this question'},
             status=status.HTTP_403_FORBIDDEN
@@ -1966,7 +1995,7 @@ class QuizQuestionReorderView(APIView):
     def put(self, request, quiz_id):
         try:
             quiz = get_object_or_404(Quiz, id=quiz_id)
-            if not quiz.lessons.filter(course__teacher=request.user).exists():
+            if not quiz.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                 return Response(
                     {'error': 'Only the course teacher can manage quiz questions'},
                     status=status.HTTP_403_FORBIDDEN,
@@ -2045,7 +2074,7 @@ def lesson_notes(request, lesson_id):
         )
     
     # Verify teacher owns the course
-    if course.teacher != request.user:
+    if not user_is_course_member(request.user, course):
         return Response(
             {'error': 'Only the course teacher can access lesson notes'},
             status=status.HTTP_403_FORBIDDEN
@@ -2111,7 +2140,7 @@ def lesson_note_detail(request, lesson_id, note_id):
         )
     
     # Verify teacher owns the course and note
-    if course.teacher != request.user or note.teacher != request.user:
+    if not user_is_course_member(request.user, course) or note.teacher != request.user:
         return Response(
             {'error': 'Only the note owner can manage this note'},
             status=status.HTTP_403_FORBIDDEN
@@ -2183,7 +2212,7 @@ def course_introduction(request, course_id):
         )
     
     # Verify teacher owns the course
-    if course.teacher != request.user:
+    if not user_is_course_member(request.user, course):
         return Response(
             {'error': 'Only the course teacher can access course introduction'},
             status=status.HTTP_403_FORBIDDEN
@@ -2277,7 +2306,7 @@ def teacher_classes(request):
     if request.method == 'GET':
         try:
             classes = (
-                Class.objects.filter(teacher=request.user)
+                classes_for_teacher(request.user)
                 .exclude(course__delivery_type='self_paced')
                 .select_related('course', 'teacher')
                 .prefetch_related('students', 'sessions')
@@ -2626,7 +2655,7 @@ def course_enrolled_students(request, course_id):
         from .serializers import EnrolledStudentSerializer
         
         # Verify the course belongs to the teacher
-        course = get_object_or_404(Course, id=course_id, teacher=request.user)
+        course = get_object_or_404(courses_for_teacher(request.user), id=course_id)
         
         # Get all active enrollments for this course using the new EnrolledCourse model
         enrollments = EnrolledCourse.objects.filter(
@@ -2692,9 +2721,7 @@ def teacher_students(request):
         page_size = min(int(request.GET.get('page_size', 20)), 100)
         
         # Base queryset - all enrollments for teacher's courses
-        enrollments = EnrolledCourse.objects.filter(
-            course__teacher=request.user
-        ).select_related(
+        enrollments = EnrolledCourse.objects.filter(owned_or_member_q(request.user, 'course__')).select_related(
             'student_profile__user',
             'course',
             'current_lesson'
@@ -2831,7 +2858,7 @@ def teacher_students_master(request):
         from django.db.models import Q, Prefetch
         
         # Get all courses taught by the teacher
-        courses = Course.objects.filter(teacher=request.user).annotate(
+        courses = courses_for_teacher(request.user).annotate(
             enrolled_count=models.Count('student_enrollments', distinct=True),
             active_count=models.Count(
                 'student_enrollments',
@@ -2841,9 +2868,7 @@ def teacher_students_master(request):
         ).order_by('-created_at')
         
         # Get all enrollments for teacher's courses
-        enrollments = EnrolledCourse.objects.filter(
-            course__teacher=request.user
-        ).select_related(
+        enrollments = EnrolledCourse.objects.filter(owned_or_member_q(request.user, 'course__')).select_related(
             'student_profile',
             'student_profile__user',
             'course',
@@ -3177,7 +3202,7 @@ def teacher_quiz_submissions(request):
             )
         
         # Get teacher's courses
-        teacher_courses = Course.objects.filter(teacher=request.user)
+        teacher_courses = courses_for_teacher(request.user)
         
         # Check if filtering by specific student
         student_id = request.GET.get('student_id')
@@ -3355,7 +3380,7 @@ def quiz_attempt_details(request, attempt_id):
             id=attempt_id
         )
         # Check if user teaches any lesson associated with this quiz
-        if not attempt.quiz.lessons.filter(course__teacher=request.user).exists():
+        if not attempt.quiz.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
             return Response(
                 {'error': 'Quiz attempt not found or you do not have permission'},
                 status=status.HTTP_403_FORBIDDEN
@@ -3493,7 +3518,7 @@ def save_quiz_grade(request, attempt_id):
             id=attempt_id
         )
         # Check if user teaches any lesson associated with this quiz
-        if not attempt.quiz.lessons.filter(course__teacher=request.user).exists():
+        if not attempt.quiz.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
             return Response(
                 {'error': 'Quiz attempt not found or you do not have permission'},
                 status=status.HTTP_403_FORBIDDEN
@@ -5435,7 +5460,7 @@ class MaterialContentView(APIView):
             has_access = False
             
             # Check teacher access - if user is teacher of any course that has lessons using this material
-            if material.lessons.filter(course__teacher=request.user).exists():
+            if material.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
                 has_access = True
             
             # Check student access - if user is enrolled in any course that has lessons using this material
@@ -5806,7 +5831,7 @@ class TeacherDashboardAPIView(APIView):
 
     def get_total_students(self, teacher):
         """Count total students across all teacher's courses"""
-        enrollments = EnrolledCourse.objects.filter(course__teacher=teacher)
+        enrollments = EnrolledCourse.objects.filter(owned_or_member_q(teacher, 'course__'))
         distinct_students = enrollments.values('student_profile__user').distinct()
         return distinct_students.count()
 
@@ -5821,7 +5846,7 @@ class TeacherDashboardAPIView(APIView):
         """Count total enrollments across all teacher's courses"""
         from student.models import EnrolledCourse, StudentAttendance
         
-        enrollments = EnrolledCourse.objects.filter(course__teacher=teacher)
+        enrollments = EnrolledCourse.objects.filter(owned_or_member_q(teacher, 'course__'))
         return enrollments.count()
 
     def get_monthly_revenue(self, teacher):
@@ -5833,7 +5858,7 @@ class TeacherDashboardAPIView(APIView):
         
         # Get all enrollments for this month (assuming all enrollments are paid)
         monthly_enrollments = EnrolledCourse.objects.filter(
-            course__teacher=teacher,
+            course__in=courses_for_teacher(teacher),
             enrollment_date__gte=current_month.date(),
             status='active'  # Only count active enrollments
         )
@@ -5883,7 +5908,7 @@ class TeacherDashboardAPIView(APIView):
         # Get ClassEvents with lesson_type='live' for teacher's courses
         # Include: events that haven't ended yet AND start within the next week (or started before today but are ongoing)
         live_classes = ClassEvent.objects.filter(
-            class_instance__course__teacher=teacher,
+            class_instance__course__in=courses_for_teacher(teacher),
             lesson_type='live',
             end_time__gt=current_time,  # Include ongoing classes that haven't ended
             start_time__date__lte=end_of_week  # Limit to events starting within next week or ongoing
@@ -5942,7 +5967,7 @@ class TeacherDashboardAPIView(APIView):
         
         # Student enrollments
         enrollments = EnrolledCourse.objects.filter(
-            course__teacher=teacher,
+            course__in=courses_for_teacher(teacher),
             enrollment_date__gte=datetime.now().date() - timedelta(days=7)
         ).select_related('student_profile__user', 'course')[:5]
         
@@ -5967,7 +5992,7 @@ class TeacherDashboardAPIView(APIView):
         
         # Course reviews
         reviews = CourseReview.objects.filter(
-            course__teacher=teacher,
+            course__in=courses_for_teacher(teacher),
             created_at__gte=datetime.now() - timedelta(days=7)
         ).select_related('course')[:5]
         
@@ -6028,7 +6053,7 @@ class TeacherDashboardAPIView(APIView):
 
     def get_course_count(self, teacher):
         """Get total course count for teacher"""
-        return Course.objects.filter(teacher=teacher).count()
+        return courses_for_teacher(teacher).count()
 
     def get_teacher_settings(self, teacher):
         """Get teacher settings from UserDashboardSettings"""
@@ -7079,7 +7104,7 @@ class LessonMaterial(APIView):
     def _user_has_access(self, user, lesson):
         """Check if user has access to view this lesson"""
         # Teachers can access lessons they created
-        if user.role == 'teacher' and lesson.course.teacher == user:
+        if user.role == 'teacher' and user_is_course_member(user, lesson.course):
             return True
         
         # Students can access lessons in courses they're enrolled in
@@ -7095,7 +7120,7 @@ class LessonMaterial(APIView):
     
     def _user_can_modify(self, user, lesson):
         """Check if user can modify this lesson"""
-        return user.role == 'teacher' and lesson.course.teacher == user
+        return user.role == 'teacher' and user_is_course_member(user, lesson.course)
 
 
 class BookPageView(APIView):
@@ -7399,7 +7424,7 @@ class BookPageView(APIView):
     
     def _user_has_access(self, user, lesson):
         """Check if user has access to view this lesson"""
-        if user.role == 'teacher' and lesson.course.teacher == user:
+        if user.role == 'teacher' and user_is_course_member(user, lesson.course):
             return True
         
         if user.role == 'student':
@@ -7463,7 +7488,7 @@ class BookPageView(APIView):
     
     def _user_can_modify(self, user, lesson):
         """Check if user can modify this lesson"""
-        return user.role == 'teacher' and lesson.course.teacher == user
+        return user.role == 'teacher' and user_is_course_member(user, lesson.course)
 
 
 # ===== CLASSROOM API VIEWS =====
@@ -7687,7 +7712,7 @@ class ClassroomView(APIView):
             # Check access permissions
             if request.user.role == 'teacher':
                 # Teacher must own the class
-                if class_instance.teacher != request.user:
+                if not user_can_access_class(request.user, class_instance):
                     return Response(
                         {'error': 'You do not have permission to access this classroom'},
                         status=status.HTTP_403_FORBIDDEN
@@ -7742,7 +7767,7 @@ class ClassroomView(APIView):
                 )
             
             # Teacher must own the class
-            if class_instance.teacher != request.user:
+            if not user_can_access_class(request.user, class_instance):
                 return Response(
                     {'error': 'You do not have permission to create a classroom for this class'},
                     status=status.HTTP_403_FORBIDDEN
@@ -7803,7 +7828,7 @@ class ClassroomView(APIView):
                 )
             
             # Teacher must own the class
-            if class_instance.teacher != request.user:
+            if not user_can_access_class(request.user, class_instance):
                 return Response(
                     {'error': 'You do not have permission to update this classroom'},
                     status=status.HTTP_403_FORBIDDEN
@@ -7860,7 +7885,7 @@ class ClassroomActiveSessionView(APIView):
             # Check access permissions
             if request.user.role == 'teacher':
                 # Teacher must own the class
-                if class_instance.teacher != request.user:
+                if not user_can_access_class(request.user, class_instance):
                     return Response(
                         {'error': 'You do not have permission to access this classroom'},
                         status=status.HTTP_403_FORBIDDEN
@@ -7921,7 +7946,7 @@ class BoardView(APIView):
         
         # Check access permissions
         if request.user.role == 'teacher':
-            if class_instance.teacher != request.user:
+            if not user_can_access_class(request.user, class_instance):
                 raise PermissionError('You do not have permission to access this classroom')
         elif request.user.role == 'student':
             if request.user not in class_instance.students.all():
@@ -8025,7 +8050,7 @@ class BoardPageListView(APIView):
             class_instance = get_object_or_404(Class, id=class_id)
             
             if request.user.role == 'teacher':
-                if class_instance.teacher != request.user:
+                if not user_can_access_class(request.user, class_instance):
                     return Response(
                         {'error': 'You do not have permission to access this classroom'},
                         status=status.HTTP_403_FORBIDDEN
@@ -8102,7 +8127,7 @@ class BoardPageDetailView(APIView):
         class_instance = get_object_or_404(Class, id=class_id)
         
         if request.user.role == 'teacher':
-            if class_instance.teacher != request.user:
+            if not user_can_access_class(request.user, class_instance):
                 raise PermissionError('You do not have permission to access this classroom')
         elif request.user.role == 'student':
             if request.user not in class_instance.students.all():
@@ -8244,7 +8269,7 @@ class CourseAssessmentListView(APIView):
         if request.user.role != 'teacher':
             raise PermissionError('Only teachers can access this endpoint')
         
-        if course.teacher != request.user:
+        if not user_is_course_member(request.user, course):
             raise PermissionError('Only the course teacher can manage assessments')
         
         return course
@@ -8337,7 +8362,7 @@ class CourseAssessmentDetailView(APIView):
         if request.user.role != 'teacher':
             raise PermissionError('Only teachers can access this endpoint')
         
-        if course.teacher != request.user:
+        if not user_is_course_member(request.user, course):
             raise PermissionError('Only the course teacher can manage assessments')
         
         assessment = get_object_or_404(CourseAssessment, id=assessment_id, course=course)
@@ -8451,7 +8476,7 @@ class CourseAssessmentQuestionListView(APIView):
         if request.user.role != 'teacher':
             raise PermissionError('Only teachers can access this endpoint')
         
-        if course.teacher != request.user:
+        if not user_is_course_member(request.user, course):
             raise PermissionError('Only the course teacher can manage assessments')
         
         assessment = get_object_or_404(CourseAssessment, id=assessment_id, course=course)
@@ -8527,7 +8552,7 @@ class CourseAssessmentQuestionDetailView(APIView):
         if request.user.role != 'teacher':
             raise PermissionError('Only teachers can access this endpoint')
         
-        if course.teacher != request.user:
+        if not user_is_course_member(request.user, course):
             raise PermissionError('Only the course teacher can manage assessments')
         
         assessment = get_object_or_404(CourseAssessment, id=assessment_id, course=course)
@@ -8625,7 +8650,7 @@ class CourseAssessmentQuestionReorderView(APIView):
                     {'error': 'Only teachers can access this endpoint'},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-            if course.teacher != request.user:
+            if not user_is_course_member(request.user, course):
                 return Response(
                     {'error': 'Only the course teacher can manage assessments'},
                     status=status.HTTP_403_FORBIDDEN,
@@ -8728,7 +8753,7 @@ class AIGenerateAssessmentQuestionsView(APIView):
         if request.user.role != 'teacher':
             raise PermissionError('Only teachers can use AI generation')
         
-        if course.teacher != request.user:
+        if not user_is_course_member(request.user, course):
             raise PermissionError('Only the course teacher can generate assessment questions')
         
         assessment = get_object_or_404(CourseAssessment, id=assessment_id, course=course)

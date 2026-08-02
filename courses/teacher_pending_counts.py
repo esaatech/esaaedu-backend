@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from django.db.models import Max, Q
 
+from courses.permissions import courses_for_teacher, owned_or_member_q, user_is_course_member
+
 
 def _count_pending_latest_assessment_submissions(base_qs, group_fields: tuple[str, ...]) -> int:
     """
@@ -45,7 +47,7 @@ def pending_assignment_count_for_teacher(teacher):
     from courses.models import AssignmentSubmission
 
     return AssignmentSubmission.objects.filter(
-        assignment__lessons__course__teacher=teacher,
+        assignment__lessons__course__in=courses_for_teacher(teacher),
         status="submitted",
         is_graded=False,
     ).count()
@@ -55,7 +57,7 @@ def pending_test_submission_count_for_teacher(teacher):
     from courses.models import CourseAssessmentSubmission
 
     base = CourseAssessmentSubmission.objects.filter(
-        assessment__course__teacher=teacher,
+        assessment__course__in=courses_for_teacher(teacher),
         assessment__assessment_type="test",
     )
     return _count_pending_latest_assessment_submissions(base, ("student", "assessment"))
@@ -65,7 +67,7 @@ def pending_exam_submission_count_for_teacher(teacher):
     from courses.models import CourseAssessmentSubmission
 
     base = CourseAssessmentSubmission.objects.filter(
-        assessment__course__teacher=teacher,
+        assessment__course__in=courses_for_teacher(teacher),
         assessment__assessment_type="exam",
     )
     return _count_pending_latest_assessment_submissions(base, ("student", "assessment"))
@@ -75,7 +77,7 @@ def pending_project_submission_count_for_teacher(teacher):
     from courses.models import ProjectSubmission
 
     return ProjectSubmission.objects.filter(
-        project__course__teacher=teacher,
+        project__course__in=courses_for_teacher(teacher),
         status="SUBMITTED",
     ).count()
 

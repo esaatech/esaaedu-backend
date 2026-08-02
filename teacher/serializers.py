@@ -1,6 +1,14 @@
 from rest_framework import serializers
 from users.models import User, TeacherProfile
 from courses.models import Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission
+from courses.permissions import (
+    user_is_course_member,
+    user_is_course_owner,
+    courses_for_teacher,
+    owned_or_member_q,
+    user_can_access_class,
+    classes_for_teacher,
+)
 
 
 class TeacherProfileSerializer(serializers.ModelSerializer):
@@ -194,7 +202,7 @@ class ProjectCreateUpdateSerializer(serializers.ModelSerializer):
         """Ensure the course belongs to the requesting teacher"""
         request = self.context.get('request')
         if request and hasattr(request, 'user'):
-            if value.teacher != request.user:
+            if not user_is_course_member(request.user, value):
                 raise serializers.ValidationError("You can only create projects for your own courses.")
         return value
     
@@ -568,7 +576,7 @@ class AssignmentCreateUpdateSerializer(serializers.ModelSerializer):
                 from courses.models import Lesson
                 try:
                     lesson = Lesson.objects.get(id=value)
-                    if lesson.course.teacher != request.user:
+                    if not user_is_course_member(request.user, lesson.course):
                         raise serializers.ValidationError("You can only create assignments for your own courses.")
                 except Lesson.DoesNotExist:
                     raise serializers.ValidationError("Lesson not found.")

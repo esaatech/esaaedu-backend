@@ -82,7 +82,7 @@ INSTALLED_APPS = [
     # Local apps
     "authentication",
     "users",
-    "courses",
+    "courses.apps.CoursesConfig",
     "student",
     "home",
     "teacher",
