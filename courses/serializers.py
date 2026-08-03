@@ -826,7 +826,7 @@ class CourseListSerializer(serializers.ModelSerializer):
         return EnrolledCourse.objects.filter(course=obj, status='active').count()
 
     def get_has_enrollments(self, obj):
-        """True when lesson reorder/delete must be locked (active/completed/paused)."""
+        """True when lesson deletion is locked after enrollments (active/completed/paused)."""
         from student.models import EnrolledCourse
         return EnrolledCourse.objects.filter(
             course=obj,
@@ -924,7 +924,7 @@ class CourseDetailSerializer(serializers.ModelSerializer):
         return EnrolledCourse.objects.filter(course=obj, status='active').count()
 
     def get_has_enrollments(self, obj):
-        """True when lesson reorder/delete must be locked (active/completed/paused)."""
+        """True when lesson deletion is locked after enrollments (active/completed/paused)."""
         from student.models import EnrolledCourse
         return EnrolledCourse.objects.filter(
             course=obj,

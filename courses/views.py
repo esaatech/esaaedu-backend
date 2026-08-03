@@ -1345,14 +1345,14 @@ class ModuleDetailView(APIView):
 
 LESSON_STRUCTURE_LOCKED_STATUSES = ('active', 'completed', 'paused')
 LESSON_STRUCTURE_LOCKED_MESSAGE = (
-    'Lesson order and deletion are locked after students enroll. '
-    'You can still add new lessons at the end. '
-    'To use a different syllabus, clone the course.'
+    'Lesson deletion is locked after students enroll. '
+    'You can still add new lessons at the end and reorder lessons. '
+    'To remove lessons from the syllabus, clone the course.'
 )
 
 
 def course_has_structure_locking_enrollments(course) -> bool:
-    """True when syllabus reorder/delete must be frozen (any progressed enrollment)."""
+    """True when lesson deletion (and append-only create) rules apply after enrollment."""
     return EnrolledCourse.objects.filter(
         course=course,
         status__in=LESSON_STRUCTURE_LOCKED_STATUSES,
@@ -1488,13 +1488,6 @@ def lesson_detail(request, lesson_id):
                 context={'request': request, 'course': lesson.course}
             )
             if serializer.is_valid():
-                new_order = serializer.validated_data.get('order')
-                if (
-                    new_order is not None
-                    and new_order != lesson.order
-                    and course_has_structure_locking_enrollments(lesson.course)
-                ):
-                    return _lesson_structure_locked_response()
                 lesson = serializer.save()
                 _resync_course_enrollments_after_lesson_change(lesson.course)
                 response_serializer = LessonDetailSerializer(lesson)
@@ -1545,9 +1538,6 @@ def reorder_lessons(request, course_id):
             status=status.HTTP_403_FORBIDDEN
         )
 
-    if course_has_structure_locking_enrollments(course):
-        return _lesson_structure_locked_response()
-    
     try:
         serializer = LessonReorderSerializer(data=request.data)
         if serializer.is_valid():

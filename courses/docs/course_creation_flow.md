@@ -281,20 +281,20 @@ When a course is deleted via `DELETE /api/courses/teacher/{course_id}/`:
 
 ## Syllabus structure lock after enrollment
 
-Once a course has any `active`, `completed`, or `paused` enrollment, lesson **structure** is locked via the teacher API:
+Once a course has any `active`, `completed`, or `paused` enrollment:
 
 | Action | Behavior when enrolled |
 |--------|------------------------|
 | Create lesson | Allowed; `order` is forced to `max(order)+1` (append only) |
-| Reorder lessons | Blocked — `400` with `code: lesson_structure_locked` |
-| Delete lesson | Blocked — same code |
-| Update lesson `order` via PUT | Blocked — same code |
+| Reorder lessons | Allowed; triggers enrollment resync (`resync_after_lesson_structure_change`) |
+| Delete lesson | Blocked — `400` with `code: lesson_structure_locked` |
+| Update lesson `order` via PUT | Allowed; triggers enrollment resync |
 
-Course list/detail serializers expose `has_enrollments` so the teacher UI can disable drag/delete.
+Course list/detail serializers expose `has_enrollments` so the teacher UI can disable delete (reorder stays enabled).
 
-**Rationale:** Mid-sequence insert/reorder can auto-complete lessons behind a student’s pointer (`resync_after_lesson_structure_change`). Freezing order/delete after enrollment keeps progress stable; teachers who need a different syllabus should **clone** the course.
+**Rationale:** Deletion mid-course is still locked to protect progress. Reorder is allowed for teachers; Option A resync may auto-complete lessons that land behind a student’s pointer. Teachers who need to remove lessons should **clone** the course.
 
-**Bypass:** Django admin can still delete or change lesson `order`. Use only for intentional cleanup.
+**Bypass:** Django admin can still delete lessons. Use only for intentional cleanup.
 
 ## Course Cloning Flow
 
