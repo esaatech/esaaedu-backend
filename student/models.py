@@ -1854,6 +1854,7 @@ class CodeSnippet(models.Model):
         ('text', 'Plain text'),
         ('json', 'JSON'),
         ('flask', 'Flask'),
+        ('esp32', 'ESP32'),
         ('java', 'Java'),
         ('cpp', 'C++'),
         ('c', 'C'),
