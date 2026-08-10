@@ -211,3 +211,60 @@ class AIGatewayPlayground(models.Model):
 
     def __str__(self) -> str:
         return self.title or f"Gateway playground #{self.pk}"
+
+
+
+class StudyCoachDeckPlayground(models.Model):
+    """Admin playground for the study_coach_deck AI Service."""
+
+    DIFFICULTY_CHOICES = [
+        ("easy", "Easy"),
+        ("hard", "Hard"),
+        ("auto", "Auto"),
+    ]
+
+    title = models.CharField(max_length=200, default="Study Coach deck probe")
+    prompt_config = models.ForeignKey(
+        AIPromptConfiguration,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="study_coach_deck_playground_runs",
+        help_text="Blank uses the default prompt for slug study_coach_deck.",
+    )
+    lesson_title = models.CharField(max_length=300, default="Sample Lesson")
+    grounding_text = models.TextField(
+        blank=True,
+        help_text="Optional lesson body. Blank = title-only generation.",
+    )
+    difficulty_mode = models.CharField(
+        max_length=16,
+        choices=DIFFICULTY_CHOICES,
+        default="easy",
+    )
+    card_count = models.PositiveSmallIntegerField(default=6)
+    notes = models.TextField(blank=True)
+
+    succeeded = models.BooleanField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    result_json = models.JSONField(null=True, blank=True)
+    provider = models.CharField(max_length=32, blank=True)
+    model_id = models.CharField(max_length=128, blank=True)
+    temperature = models.DecimalField(
+        max_digits=3, decimal_places=2, null=True, blank=True
+    )
+    instruction_slug = models.CharField(max_length=80, blank=True)
+    grounding_mode = models.CharField(max_length=16, blank=True)
+    raw_response_text = models.TextField(blank=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        verbose_name = "Study Coach Deck Playground"
+        verbose_name_plural = "Study Coach Deck Playgrounds"
+
+    def __str__(self) -> str:
+        return self.title or f"Study Coach playground #{self.pk}"

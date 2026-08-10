@@ -1,0 +1,18 @@
+{% extends "admin/change_form.html" %}
+{% load i18n %}
+
+{% block field_sets %}
+{% for fieldset in adminform %}
+  {% if fieldset.name != "Last run results" %}
+    {% include "admin/includes/fieldset.html" with heading_level=2 prefix="fieldset" id_prefix=0 id_suffix=forloop.counter0 %}
+  {% endif %}
+{% endfor %}
+
+{% include "admin/ai_service/_playground_run_widget.html" with run_url=ai_playground_run_url persist_url=ai_playground_persist_url run_button_label="Generate study deck" %}
+
+{% for fieldset in adminform %}
+  {% if fieldset.name == "Last run results" %}
+    {% include "admin/includes/fieldset.html" with heading_level=2 prefix="fieldset" id_prefix=0 id_suffix=forloop.counter0 %}
+  {% endif %}
+{% endfor %}
+{% endblock %}

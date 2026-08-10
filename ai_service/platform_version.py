@@ -1,1 +1,1 @@
-AI_PLATFORM_BUILD = "phase2-admin-playground"
+AI_PLATFORM_BUILD = "phase3-study-coach-deck"

@@ -141,4 +141,6 @@ class AIPlaygroundAdminMixin:
         obj.temperature = temp if temp is not None else None
         obj.instruction_slug = payload.get("instruction_slug") or ""
         obj.raw_response_text = payload.get("raw_text") or ""
+        if hasattr(obj, "grounding_mode"):
+            obj.grounding_mode = payload.get("grounding_mode") or ""
         obj.last_run_at = timezone.now()

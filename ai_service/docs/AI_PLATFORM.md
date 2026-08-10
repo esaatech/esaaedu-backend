@@ -67,3 +67,25 @@ Shared pieces for Phase 3+ service playgrounds:
 ```bash
 python manage.py migrate ai_service
 ```
+
+## Phase 3 — `study_coach_deck` AI Service
+
+```bash
+python manage.py setup_ai_models
+python manage.py setup_study_coach_deck
+python manage.py migrate ai_service
+```
+
+Admin → **Study Coach Deck Playgrounds**:
+
+1. Set lesson title (+ optional grounding text)
+2. Pick difficulty / card count / prompt config
+3. **Generate study deck**
+4. Inspect `result.cards` JSON (hints, options, answers)
+5. **Save last run to record**
+
+Runner used by Admin (and Phase 4 product):
+
+`ai_service.runners.study_coach_deck.generate_study_coach_deck(...)`
+
+Gemini local tip: with `GEMINI_API_KEY` set, the gateway uses the Developer API (not Vertex) unless `AI_SERVICE_GEMINI_USE_VERTEX=true`.

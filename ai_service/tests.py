@@ -23,3 +23,23 @@ class ResolveGenerationSettingsTests(SimpleTestCase):
     def test_rejects_unknown_provider(self):
         with self.assertRaises(ValueError):
             resolve_generation_settings(provider="anthropic")
+
+
+from ai_service.schemas_study_coach import StudyCardOut, StudyDeckOut
+
+
+class StudyCoachSchemaTests(SimpleTestCase):
+    def test_mcq_requires_options_and_matching_answer(self):
+        card = StudyCardOut(
+            question_type="multiple_choice",
+            prompt="What is 2+2?",
+            options=["3", "4", "5"],
+            answer="4",
+            hints=["Add the numbers.", "It is an even number."],
+            difficulty="easy",
+        )
+        self.assertEqual(card.answer, "4")
+
+    def test_deck_min_cards(self):
+        with self.assertRaises(Exception):
+            StudyDeckOut(cards=[])

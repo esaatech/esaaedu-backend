@@ -70,11 +70,20 @@ def vertex_location() -> str:
 
 
 def use_vertex_for_gemini() -> bool:
-    """Prefer Vertex when a GCP project is configured (matches existing backend)."""
+    """
+    Vertex vs Gemini Developer API.
+
+    - AI_SERVICE_GEMINI_USE_VERTEX=true/false forces a mode
+    - If GEMINI_API_KEY / GOOGLE_API_KEY is set, prefer the API-key path
+      (matches local .env setups with GEMINI_API_KEY)
+    - Else fall back to Vertex when GCP_PROJECT_ID is configured
+    """
     flag = config("AI_SERVICE_GEMINI_USE_VERTEX", default="").strip().lower()
     if flag in ("1", "true", "yes"):
         return True
     if flag in ("0", "false", "no"):
+        return False
+    if gemini_api_key():
         return False
     return bool(gcp_project_id())
 
