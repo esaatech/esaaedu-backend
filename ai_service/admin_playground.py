@@ -142,3 +142,16 @@ class AIPlaygroundAdminMixin:
         if hasattr(obj, "grounding_mode"):
             obj.grounding_mode = payload.get("grounding_mode") or ""
         obj.last_run_at = timezone.now()
+
+
+    def save_model(self, request, obj, form, change):
+        """Apply pending playground result when staff clicks Django Save."""
+        raw = (request.POST.get("pending_result") or "").strip()
+        if raw:
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict):
+                self.apply_run_result(obj, payload)
+        super().save_model(request, obj, form, change)

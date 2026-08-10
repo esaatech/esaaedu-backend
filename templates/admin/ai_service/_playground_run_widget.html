@@ -8,7 +8,7 @@
     </button>
     {% if persist_url %}
     <button type="button" id="ai-playground-persist" class="button" disabled
-            title="{% translate 'Stores the last successful (or failed) preview on this saved record.' %}">
+            title="{% translate 'Stores the last preview into Last run results on this saved record.' %}">
       {% translate "Save last run to record" %}
     </button>
     {% endif %}
@@ -21,9 +21,19 @@
     {% blocktranslate trimmed %}
       Uses the shared domain runner (same path as production). Model and temperature come from
       the selected prompt configuration, or env defaults if none is selected.
+      Output appears below immediately. Use &quot;Save last run to record&quot; (or Django Save) to
+      fill the Last run results fields on this page.
     {% endblocktranslate %}
   </p>
   <div id="ai-playground-message" style="margin-top:12px;"></div>
+  <div class="form-row" style="margin-top:14px;">
+    <label style="font-weight:600;">{% translate "Live preview" %}</label>
+    <pre id="ai-playground-live-result"
+         style="white-space:pre-wrap;font-size:12px;max-height:480px;overflow:auto;
+                background:#0d1117;color:#e6edf3;padding:14px;border-radius:6px;margin:8px 0 0;">
+{% translate "Run the playground to see JSON output here." %}
+    </pre>
+  </div>
 </div>
 
 <script>
@@ -85,8 +95,22 @@
   }
 
   function updateResultPreview(payload) {
+    var live = document.getElementById("ai-playground-live-result");
+    if (!live || !payload) return;
+    if (payload.result != null) {
+      live.textContent = JSON.stringify(payload.result, null, 2);
+    } else if (payload.error) {
+      live.textContent = JSON.stringify({
+        success: false,
+        error: payload.error,
+        provider: payload.provider,
+        model_id: payload.model_id
+      }, null, 2);
+    } else {
+      live.textContent = JSON.stringify(payload, null, 2);
+    }
     var pre = document.getElementById("ai-playground-ro-result");
-    if (pre && payload && payload.result != null) {
+    if (pre && payload.result != null) {
       pre.textContent = JSON.stringify(payload.result, null, 2);
     }
   }
@@ -112,10 +136,12 @@
           if (persistBtn) persistBtn.disabled = false;
           updateResultPreview(res.j);
           if (res.j && res.j.success) {
+            var tip = persistUrl
+              ? " Click Save last run to record to fill Last run results below."
+              : " Click Django Save to store this run on the new record.";
             showMessage(
               "Success — provider=" + esc(res.j.provider) +
-              " model=" + esc(res.j.model_id) +
-              ". Use Save last run to record (or Django Save after persist).",
+              " model=" + esc(res.j.model_id) + "." + tip,
               false
             );
           } else {
