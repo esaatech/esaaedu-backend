@@ -1,0 +1,160 @@
+{% load i18n static %}
+{# Shared Admin Run widget for ai_service playgrounds. Reuse from Study Coach (Phase 3+) too. #}
+<div id="ai-playground-widget" class="module" style="margin-bottom:20px;">
+  <h2>{% translate "Playground" %}</h2>
+  <div class="form-row" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <button type="button" id="ai-playground-run" class="button default">
+      {{ run_button_label|default:"Run" }}
+    </button>
+    {% if persist_url %}
+    <button type="button" id="ai-playground-persist" class="button" disabled
+            title="{% translate 'Stores the last successful (or failed) preview on this saved record.' %}">
+      {% translate "Save last run to record" %}
+    </button>
+    {% endif %}
+    <span id="ai-playground-spinner" style="display:none;color:#417690;font-weight:600;">
+      {% translate "Running…" %}
+    </span>
+  </div>
+  <input type="hidden" id="ai-playground-pending" name="pending_result" value="">
+  <p class="help" style="margin-top:10px;margin-bottom:0;">
+    {% blocktranslate trimmed %}
+      Uses the shared domain runner (same path as production). Model and temperature come from
+      the selected prompt configuration, or env defaults if none is selected.
+    {% endblocktranslate %}
+  </p>
+  <div id="ai-playground-message" style="margin-top:12px;"></div>
+</div>
+
+<script>
+(function () {
+  var runUrl = "{{ run_url|escapejs }}";
+  var persistUrl = "{{ persist_url|default:''|escapejs }}";
+  var lastPayload = null;
+
+  function getCookie(name) {
+    var v = null;
+    if (document.cookie) {
+      var parts = document.cookie.split(";");
+      for (var i = 0; i < parts.length; i++) {
+        var cookie = parts[i].trim();
+        if (cookie.indexOf(name + "=") === 0) {
+          v = decodeURIComponent(cookie.slice(name.length + 1));
+          break;
+        }
+      }
+    }
+    return v;
+  }
+  var csrftoken = getCookie("csrftoken");
+
+  function setBusy(on) {
+    var btn = document.getElementById("ai-playground-run");
+    var sp = document.getElementById("ai-playground-spinner");
+    if (btn) btn.disabled = !!on;
+    if (sp) sp.style.display = on ? "inline" : "none";
+  }
+
+  function showMessage(html, isError) {
+    var el = document.getElementById("ai-playground-message");
+    if (!el) return;
+    el.innerHTML = html;
+    el.style.color = isError ? "#ba2121" : "#417690";
+  }
+
+  function esc(s) {
+    var d = document.createElement("div");
+    d.textContent = s == null ? "" : String(s);
+    return d.innerHTML;
+  }
+
+  function collectFormData() {
+    var form = document.querySelector("#ai-playground-widget")
+      && document.querySelector("#ai-playground-widget").closest("form");
+    if (!form) form = document.querySelector("form");
+    var fd = new FormData();
+    if (!form) return fd;
+    var fields = form.querySelectorAll("input, select, textarea");
+    for (var i = 0; i < fields.length; i++) {
+      var el = fields[i];
+      if (!el.name || el.type === "file" || el.type === "submit" || el.type === "button") continue;
+      if ((el.type === "checkbox" || el.type === "radio") && !el.checked) continue;
+      fd.append(el.name, el.value);
+    }
+    return fd;
+  }
+
+  function updateResultPreview(payload) {
+    var pre = document.getElementById("ai-playground-ro-result");
+    if (pre && payload && payload.result != null) {
+      pre.textContent = JSON.stringify(payload.result, null, 2);
+    }
+  }
+
+  var runBtn = document.getElementById("ai-playground-run");
+  if (runBtn) {
+    runBtn.addEventListener("click", function () {
+      setBusy(true);
+      showMessage("Calling AI gateway…", false);
+      var fd = collectFormData();
+      fetch(runUrl, {
+        method: "POST",
+        headers: { "X-CSRFToken": csrftoken },
+        body: fd,
+        credentials: "same-origin"
+      })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (res) {
+          lastPayload = res.j;
+          var pending = document.getElementById("ai-playground-pending");
+          if (pending) pending.value = JSON.stringify(res.j);
+          var persistBtn = document.getElementById("ai-playground-persist");
+          if (persistBtn) persistBtn.disabled = false;
+          updateResultPreview(res.j);
+          if (res.j && res.j.success) {
+            showMessage(
+              "Success — provider=" + esc(res.j.provider) +
+              " model=" + esc(res.j.model_id) +
+              ". Use Save last run to record (or Django Save after persist).",
+              false
+            );
+          } else {
+            showMessage(esc((res.j && res.j.error) || "Run failed"), true);
+          }
+        })
+        .catch(function (err) {
+          showMessage(esc(String(err)), true);
+        })
+        .finally(function () { setBusy(false); });
+    });
+  }
+
+  var persistBtn = document.getElementById("ai-playground-persist");
+  if (persistBtn && persistUrl) {
+    persistBtn.addEventListener("click", function () {
+      if (!lastPayload) {
+        showMessage("Run a preview first.", true);
+        return;
+      }
+      var fd = new FormData();
+      fd.append("pending_result", JSON.stringify(lastPayload));
+      fetch(persistUrl, {
+        method: "POST",
+        headers: { "X-CSRFToken": csrftoken },
+        body: fd,
+        credentials: "same-origin"
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (j && j.success) {
+            showMessage("Saved last run to this record. Reloading…", false);
+            window.location.reload();
+          } else {
+            showMessage(esc((j && j.error) || "Persist failed"), true);
+          }
+        })
+        .catch(function (err) { showMessage(esc(String(err)), true); });
+    });
+  }
+})();
+</script>

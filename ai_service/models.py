@@ -158,3 +158,56 @@ class AIPromptConfiguration(models.Model):
                 is_default=True,
             ).exclude(pk=self.pk).update(is_default=False)
         super().save(*args, **kwargs)
+
+
+
+class AIGatewayPlayground(models.Model):
+    """
+    Admin playground to probe the Pydantic AI gateway.
+
+    Run uses the same resolve_model() path product runners will use.
+    Phase 3+ service playgrounds follow this same Admin Run pattern.
+    """
+
+    title = models.CharField(max_length=200, default="Gateway probe")
+    prompt_config = models.ForeignKey(
+        AIPromptConfiguration,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="gateway_playground_runs",
+        help_text="Optional prompt config (model + system prompt). Blank uses env defaults.",
+    )
+    user_message = models.TextField(
+        blank=True,
+        default="Reply briefly confirming the gateway works.",
+        help_text="User message sent to the probe agent.",
+    )
+    notes = models.TextField(blank=True)
+
+    # Last run snapshots
+    succeeded = models.BooleanField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    result_json = models.JSONField(null=True, blank=True)
+    provider = models.CharField(max_length=32, blank=True)
+    model_id = models.CharField(max_length=128, blank=True)
+    temperature = models.DecimalField(
+        max_digits=3,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    instruction_slug = models.CharField(max_length=80, blank=True)
+    raw_response_text = models.TextField(blank=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        verbose_name = "AI Gateway Playground"
+        verbose_name_plural = "AI Gateway Playgrounds"
+
+    def __str__(self) -> str:
+        return self.title or f"Gateway playground #{self.pk}"

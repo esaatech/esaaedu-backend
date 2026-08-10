@@ -1,6 +1,18 @@
 from django.contrib import admin
+from django.urls import reverse
+from django.utils.html import format_html
 
-from .models import AIModel, AIPromptConfiguration, AIService
+from ai_service.admin_playground import AIPlaygroundAdminMixin
+from ai_service.models import (
+    AIGatewayPlayground,
+    AIModel,
+    AIPromptConfiguration,
+    AIService,
+)
+from ai_service.platform_version import AI_PLATFORM_BUILD
+from ai_service.runners.gateway_probe import run_gateway_probe
+
+admin.site.site_header = f"Little Learners Tech (AI platform {AI_PLATFORM_BUILD})"
 
 
 @admin.register(AIModel)
@@ -58,3 +70,131 @@ class AIPromptConfigurationAdmin(admin.ModelAdmin):
     search_fields = ("name", "slug", "system_prompt", "service__slug")
     autocomplete_fields = ("service", "ai_model")
     readonly_fields = ("created_at", "updated_at")
+
+
+def _gateway_probe_runner(*, user_message: str, prompt_config=None, **_kwargs):
+    return run_gateway_probe(user_message, prompt_config=prompt_config)
+
+
+@admin.register(AIGatewayPlayground)
+class AIGatewayPlaygroundAdmin(AIPlaygroundAdminMixin, admin.ModelAdmin):
+    """Phase 2 reference playground — Run uses the shared gateway probe runner."""
+
+    change_form_template = "admin/ai_service/aigatewayplayground/change_form.html"
+    playground_runner = _gateway_probe_runner
+    playground_input_fields = ("user_message",)
+
+    list_display = (
+        "title",
+        "succeeded",
+        "provider",
+        "model_id",
+        "last_run_at",
+        "updated_at",
+    )
+    list_filter = ("succeeded", "provider")
+    search_fields = ("title", "user_message", "notes", "error_message")
+    autocomplete_fields = ("prompt_config",)
+    readonly_fields = (
+        "succeeded_display",
+        "error_message_display",
+        "result_json_display",
+        "provider",
+        "model_id",
+        "temperature",
+        "instruction_slug",
+        "raw_response_text_display",
+        "last_run_at",
+        "created_at",
+        "updated_at",
+    )
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "title",
+                    "prompt_config",
+                    "user_message",
+                    "notes",
+                )
+            },
+        ),
+        (
+            "Last run results",
+            {
+                "fields": (
+                    "succeeded_display",
+                    "error_message_display",
+                    "result_json_display",
+                    "provider",
+                    "model_id",
+                    "temperature",
+                    "instruction_slug",
+                    "raw_response_text_display",
+                    "last_run_at",
+                )
+            },
+        ),
+        (
+            "Timestamps",
+            {"fields": ("created_at", "updated_at"), "classes": ("collapse",)},
+        ),
+    )
+
+    @admin.display(description="Succeeded")
+    def succeeded_display(self, obj):
+        if obj.succeeded is True:
+            return format_html('<img src="/static/admin/img/icon-yes.svg" alt="True">')
+        if obj.succeeded is False:
+            return format_html('<img src="/static/admin/img/icon-no.svg" alt="False">')
+        return "—"
+
+    @admin.display(description="Error")
+    def error_message_display(self, obj):
+        if not obj.error_message:
+            return "—"
+        return format_html(
+            '<span style="color:#ba2121;white-space:pre-wrap;">{}</span>',
+            obj.error_message,
+        )
+
+    @admin.display(description="Result JSON")
+    def result_json_display(self, obj):
+        if obj.result_json is None:
+            return "—"
+        import json
+
+        body = json.dumps(obj.result_json, indent=2, default=str)
+        return format_html(
+            '<pre id="ai-playground-ro-result" style="white-space:pre-wrap;font-size:12px;'
+            'max-height:420px;overflow:auto;background:#0d1117;color:#e6edf3;'
+            'padding:14px;border-radius:6px;margin:0;">{}</pre>',
+            body[:200000],
+        )
+
+    @admin.display(description="Raw response")
+    def raw_response_text_display(self, obj):
+        if not obj.raw_response_text:
+            return "—"
+        return format_html(
+            '<pre style="white-space:pre-wrap;font-size:12px;max-height:280px;'
+            'overflow:auto;background:#f8f9fa;padding:12px;border-radius:6px;margin:0;">{}</pre>',
+            obj.raw_response_text[:14000],
+        )
+
+    def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
+        extra_context = extra_context or {}
+        opts = self.model._meta
+        basename = f"{opts.app_label}_{opts.model_name}"
+        extra_context["ai_playground_run_url"] = reverse(
+            f"admin:{basename}_run_preview"
+        )
+        if object_id:
+            extra_context["ai_playground_persist_url"] = reverse(
+                f"admin:{basename}_persist_run",
+                args=[object_id],
+            )
+        else:
+            extra_context["ai_playground_persist_url"] = ""
+        return super().changeform_view(request, object_id, form_url, extra_context)
