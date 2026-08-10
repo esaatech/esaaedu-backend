@@ -1,0 +1,160 @@
+from django.core.validators import MaxValueValidator, MinValueValidator
+from django.db import models
+
+
+class AIModel(models.Model):
+    """Catalog of provider model ids (e.g. Gemini 2.5 Flash) for prompts and runs."""
+
+    class Provider(models.TextChoices):
+        GEMINI = "gemini", "Google Gemini"
+        OPENAI = "openai", "OpenAI"
+        DEEPSEEK = "deepseek", "DeepSeek"
+
+    provider = models.CharField(
+        max_length=32,
+        choices=Provider.choices,
+        default=Provider.GEMINI,
+    )
+    model_id = models.CharField(
+        max_length=128,
+        help_text="API model id (e.g. gemini-2.5-flash, gpt-4o-mini, deepseek-chat).",
+    )
+    display_name = models.CharField(max_length=128)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Inactive models are hidden from admin dropdowns.",
+    )
+    sort_order = models.PositiveSmallIntegerField(default=0)
+    default_temperature = models.DecimalField(
+        max_digits=3,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(2)],
+        help_text="Suggested default when a prompt does not set temperature.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "display_name"]
+        verbose_name = "AI model"
+        verbose_name_plural = "AI models"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "model_id"],
+                name="ai_service_aimodel_provider_model_id_uniq",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.display_name} ({self.model_id})"
+
+
+class AIService(models.Model):
+    """A product capability that has its own prompt(s), e.g. study_coach_deck."""
+
+    name = models.CharField(
+        max_length=100,
+        unique=True,
+        help_text="Human-readable name for the AI service",
+    )
+    slug = models.SlugField(
+        max_length=50,
+        unique=True,
+        help_text="Code identifier (e.g. study_coach_deck)",
+    )
+    description = models.TextField(
+        blank=True,
+        help_text="Description of what this AI service does",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this service is currently available",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        verbose_name = "AI Service"
+        verbose_name_plural = "AI Services"
+
+    def __str__(self) -> str:
+        return self.name
+
+    def get_default_prompt(self):
+        """Return the default active prompt for this service, if any."""
+        return self.prompts.filter(is_default=True, is_active=True).first()
+
+
+class AIPromptConfiguration(models.Model):
+    """System prompt + model settings for one AI Service variant."""
+
+    service = models.ForeignKey(
+        AIService,
+        on_delete=models.CASCADE,
+        related_name="prompts",
+        help_text="The AI service this prompt belongs to",
+    )
+    name = models.CharField(
+        max_length=100,
+        help_text="Human-readable name for this prompt variant",
+    )
+    slug = models.SlugField(
+        max_length=50,
+        help_text="Code identifier for this variant (e.g. default)",
+    )
+    system_prompt = models.TextField(
+        help_text="System / instructions text sent to the model",
+    )
+    ai_model = models.ForeignKey(
+        AIModel,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="prompt_configurations",
+        help_text="Default model for runs using this prompt variant.",
+    )
+    temperature = models.DecimalField(
+        max_digits=3,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(2)],
+        help_text="Sampling temperature (0–2). Blank = model or env default.",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this prompt is currently active",
+    )
+    is_default = models.BooleanField(
+        default=False,
+        help_text="Whether this is the default prompt for this service",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["service", "slug"],
+                name="ai_service_aipromptconfiguration_service_slug_uniq",
+            ),
+        ]
+        ordering = ["service", "name"]
+        verbose_name = "AI Prompt Configuration"
+        verbose_name_plural = "AI Prompt Configurations"
+
+    def __str__(self) -> str:
+        return f"{self.service.name} - {self.name}"
+
+    def save(self, *args, **kwargs):
+        """Ensure only one default prompt per service."""
+        if self.is_default:
+            AIPromptConfiguration.objects.filter(
+                service=self.service,
+                is_default=True,
+            ).exclude(pk=self.pk).update(is_default=False)
+        super().save(*args, **kwargs)

@@ -92,6 +92,7 @@ INSTALLED_APPS = [
     "portfolio",
     "tutorx",
     "studycoach",
+    "ai_service.apps.AiServiceConfig",
     "marketing",
     "blog",
     "lead_magnet",
