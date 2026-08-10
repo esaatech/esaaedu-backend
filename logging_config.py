@@ -63,9 +63,10 @@ LOGGING = {
             "level": "INFO",
             "propagate": False,
         },
+        # Keep SQL quiet unless you temporarily raise this to DEBUG for query debugging.
         "django.db.backends": {
             "handlers": ["console"],
-            "level": "DEBUG",
+            "level": "WARNING",
             "propagate": False,
         },
         "django.request": {
