@@ -9,6 +9,7 @@ from .models import StudySession
 from .serializers import (
     StudySessionAnswerSerializer,
     StudySessionCreateSerializer,
+    StudySessionListSerializer,
     StudySessionSerializer,
 )
 from .services.access import user_can_study_lesson
@@ -30,10 +31,32 @@ class StudySessionListCreateView(APIView):
                 {"error": "Only students can use Study Coach"},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        sessions = StudySession.objects.filter(student=request.user).select_related(
+
+        try:
+            limit = int(request.query_params.get("limit", 10))
+        except (TypeError, ValueError):
+            limit = 10
+        try:
+            offset = int(request.query_params.get("offset", 0))
+        except (TypeError, ValueError):
+            offset = 0
+        limit = max(1, min(limit, 50))
+        offset = max(0, offset)
+
+        qs = StudySession.objects.filter(student=request.user).select_related(
             "lesson", "lesson__course"
-        )[:20]
-        return Response(StudySessionSerializer(sessions, many=True).data)
+        )
+        total = qs.count()
+        page = list(qs[offset : offset + limit])
+        return Response(
+            {
+                "results": StudySessionListSerializer(page, many=True).data,
+                "count": total,
+                "limit": limit,
+                "offset": offset,
+                "has_more": offset + len(page) < total,
+            }
+        )
 
     def post(self, request):
         if not hasattr(request.user, "student_profile"):
@@ -123,15 +146,29 @@ class StudySessionAnswerView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        response_text = serializer.validated_data["response"]
-        correct = check_card_answer(card, response_text)
         progress = dict(session.progress or default_progress())
         answers = dict(progress.get("answers") or {})
+
+        # Idempotent: don't double-count if this card was already graded.
+        if card_id in answers:
+            existing = answers[card_id] or {}
+            return Response(
+                {
+                    "correct": bool(existing.get("correct")),
+                    "answer": card.get("answer"),
+                    "explanation": card.get("explanation"),
+                    "session": StudySessionSerializer(session).data,
+                }
+            )
+
+        response_text = serializer.validated_data["response"]
+        correct = check_card_answer(card, response_text)
         answers[card_id] = {
             "response": response_text,
             "correct": correct,
             "used_hint_count": serializer.validated_data.get("used_hint_count", 0),
             "flipped": serializer.validated_data.get("flipped", False),
+            "skipped": not str(response_text or "").strip(),
         }
         progress["answers"] = answers
         if correct:
