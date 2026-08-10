@@ -82,7 +82,7 @@ class AIGatewayPlaygroundAdmin(AIPlaygroundAdminMixin, admin.ModelAdmin):
     """Phase 2 reference playground — Run uses the shared gateway probe runner."""
 
     change_form_template = "admin/ai_service/aigatewayplayground/change_form.html"
-    playground_runner = _gateway_probe_runner
+    playground_runner = staticmethod(_gateway_probe_runner)
     playground_input_fields = ("user_message",)
 
     list_display = (
@@ -228,7 +228,7 @@ def _study_coach_deck_runner(
 @admin.register(StudyCoachDeckPlayground)
 class StudyCoachDeckPlaygroundAdmin(AIPlaygroundAdminMixin, admin.ModelAdmin):
     change_form_template = "admin/ai_service/studycoachdeckplayground/change_form.html"
-    playground_runner = _study_coach_deck_runner
+    playground_runner = staticmethod(_study_coach_deck_runner)
     playground_input_fields = (
         "lesson_title",
         "grounding_text",

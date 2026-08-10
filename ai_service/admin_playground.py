@@ -88,14 +88,12 @@ class AIPlaygroundAdminMixin:
             )
 
         inputs = self._collect_inputs(request)
+        runner = self.playground_runner
+        # Class-level functions become bound methods; unwrap so kwargs-only runners work.
+        if hasattr(runner, "__func__"):
+            runner = runner.__func__
         try:
-            result = self.playground_runner(**inputs)
-        except TypeError:
-            # Allow runners that take explicit kwargs matching field names
-            result = self.playground_runner(
-                **{k: v for k, v in inputs.items() if k != "prompt_config"},
-                prompt_config=inputs.get("prompt_config"),
-            )
+            result = runner(**inputs)
         except Exception as exc:
             return json_response({"success": False, "error": str(exc)}, status=500)
 
