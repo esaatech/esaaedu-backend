@@ -89,3 +89,21 @@ Runner used by Admin (and Phase 4 product):
 `ai_service.runners.study_coach_deck.generate_study_coach_deck(...)`
 
 Gemini local tip: with `GEMINI_API_KEY` set, the gateway uses the Developer API (not Vertex) unless `AI_SERVICE_GEMINI_USE_VERTEX=true`.
+
+## Logging & Slack alerts (ops)
+
+Every runner logs the resolved model at **INFO** (stdout via the `ai_service` logger):
+
+```
+INFO ai_service.run service=study_coach_deck provider=gemini model=gemini-2.5-flash temperature=0.4 ...
+```
+
+Failures are classified with `ai_service.exceptions.AIServiceError` / `from_exception(...)` (e.g. **429 / quota → `rate_limited`**), then sent through `notify_and_classify` → `error_alerts.notify_ai_failure` → **`SLACK_ERROR_ALERTS`** (throttled).
+
+Helpers:
+
+- `ai_service.alerts.log_run_model`
+- `ai_service.alerts.notify_and_classify`
+
+Set `SLACK_ERROR_ALERTS` in `.env` (same channel as other AI/app error alerts).
+

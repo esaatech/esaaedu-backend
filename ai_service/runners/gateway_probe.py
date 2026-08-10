@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from ai_service.alerts import log_run_model, notify_and_classify
 from ai_service.gateway import AIServiceGatewayError, resolve_model
 from ai_service.schemas import GatewayProbeResult
 
@@ -32,9 +33,15 @@ def run_gateway_probe(
         model, settings = resolve_model(prompt_config=prompt_config)
     except AIServiceGatewayError as exc:
         logger.warning("gateway_probe: resolve_model failed: %s", exc)
+        ai_exc = notify_and_classify(
+            exc,
+            context="gateway_probe:resolve_model",
+            endpoint="ai_service.runners.gateway_probe",
+        )
         return {
             "success": False,
-            "error": str(exc),
+            "error": ai_exc.log_message,
+            "error_code": ai_exc.error_code,
             "result": None,
             "provider": "",
             "model_id": "",
@@ -44,9 +51,15 @@ def run_gateway_probe(
         }
     except Exception as exc:
         logger.exception("gateway_probe: unexpected resolve failure")
+        ai_exc = notify_and_classify(
+            exc,
+            context="gateway_probe:resolve_model",
+            endpoint="ai_service.runners.gateway_probe",
+        )
         return {
             "success": False,
-            "error": f"Failed to resolve model: {exc}",
+            "error": ai_exc.log_message,
+            "error_code": ai_exc.error_code,
             "result": None,
             "provider": "",
             "model_id": "",
@@ -54,6 +67,13 @@ def run_gateway_probe(
             "instruction_slug": getattr(prompt_config, "slug", "") or "",
             "raw_text": None,
         }
+
+    log_run_model(
+        service="gateway_probe",
+        provider=settings.provider,
+        model_id=settings.model_id,
+        temperature=settings.temperature,
+    )
 
     instructions = (
         getattr(prompt_config, "system_prompt", None)
@@ -103,9 +123,15 @@ def run_gateway_probe(
         }
     except Exception as exc:
         logger.exception("gateway_probe: agent run failed")
+        ai_exc = notify_and_classify(
+            exc,
+            context=f"gateway_probe provider={settings.provider} model={settings.model_id}",
+            endpoint="ai_service.runners.gateway_probe",
+        )
         return {
             "success": False,
-            "error": str(exc),
+            "error": ai_exc.log_message,
+            "error_code": ai_exc.error_code,
             "result": None,
             "provider": settings.provider,
             "model_id": settings.model_id,

@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
+from ai_service.alerts import log_run_model, notify_and_classify
 from ai_service.gateway import AIServiceGatewayError, resolve_model
 from ai_service.prompt_utils import get_default_prompt_config
 from ai_service.schemas_study_coach import DifficultyMode, StudyDeckOut
@@ -62,14 +63,38 @@ def generate_study_coach_deck(
         model, settings = resolve_model(prompt_config=prompt_config)
     except AIServiceGatewayError as exc:
         logger.warning("study_coach_deck: resolve_model failed: %s", exc)
-        return _fail(str(exc), prompt_config=prompt_config, grounding_mode=grounding_mode)
-    except Exception as exc:
-        logger.exception("study_coach_deck: unexpected resolve failure")
+        ai_exc = notify_and_classify(
+            exc,
+            context="study_coach_deck:resolve_model",
+            endpoint="ai_service.runners.study_coach_deck",
+        )
         return _fail(
-            f"Failed to resolve model: {exc}",
+            ai_exc.log_message,
             prompt_config=prompt_config,
             grounding_mode=grounding_mode,
+            error_code=ai_exc.error_code,
         )
+    except Exception as exc:
+        logger.exception("study_coach_deck: unexpected resolve failure")
+        ai_exc = notify_and_classify(
+            exc,
+            context="study_coach_deck:resolve_model",
+            endpoint="ai_service.runners.study_coach_deck",
+        )
+        return _fail(
+            ai_exc.log_message,
+            prompt_config=prompt_config,
+            grounding_mode=grounding_mode,
+            error_code=ai_exc.error_code,
+        )
+
+    log_run_model(
+        service=SERVICE_SLUG,
+        provider=settings.provider,
+        model_id=settings.model_id,
+        temperature=settings.temperature,
+        extra=f"difficulty={mode} grounding_mode={grounding_mode} cards={count}",
+    )
 
     instructions = (
         getattr(prompt_config, "system_prompt", None) or DEFAULT_INSTRUCTIONS
@@ -85,11 +110,17 @@ def generate_study_coach_deck(
     try:
         from pydantic_ai import Agent
     except ImportError as exc:
+        ai_exc = notify_and_classify(
+            exc,
+            context="study_coach_deck:import",
+            endpoint="ai_service.runners.study_coach_deck",
+        )
         return _fail(
-            f"pydantic-ai is not installed: {exc}",
+            ai_exc.log_message,
             prompt_config=prompt_config,
             settings=settings,
             grounding_mode=grounding_mode,
+            error_code=ai_exc.error_code,
         )
 
     agent_kwargs: dict[str, Any] = {
@@ -110,6 +141,13 @@ def generate_study_coach_deck(
         result = agent.run_sync(user_prompt)
         deck: StudyDeckOut = result.output
         cards = [c.model_dump() for c in deck.cards]
+        logger.info(
+            "ai_service.run.success service=%s provider=%s model=%s cards=%s",
+            SERVICE_SLUG,
+            settings.provider,
+            settings.model_id,
+            len(cards),
+        )
         return {
             "success": True,
             "error": "",
@@ -123,12 +161,18 @@ def generate_study_coach_deck(
         }
     except Exception as exc:
         logger.exception("study_coach_deck: agent run failed")
+        ai_exc = notify_and_classify(
+            exc,
+            context=f"study_coach_deck provider={settings.provider} model={settings.model_id}",
+            endpoint="ai_service.runners.study_coach_deck",
+        )
         return _fail(
-            str(exc),
+            ai_exc.log_message,
             prompt_config=prompt_config,
             settings=settings,
             grounding_mode=grounding_mode,
             raw_text=str(exc),
+            error_code=ai_exc.error_code,
         )
 
 
@@ -155,10 +199,12 @@ def _fail(
     settings=None,
     grounding_mode: str = "title",
     raw_text: Optional[str] = None,
+    error_code: str = "",
 ) -> dict[str, Any]:
     return {
         "success": False,
         "error": error,
+        "error_code": error_code,
         "result": None,
         "provider": getattr(settings, "provider", "") if settings else "",
         "model_id": getattr(settings, "model_id", "") if settings else "",

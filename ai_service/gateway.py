@@ -20,13 +20,12 @@ from .config import (
     use_vertex_for_gemini,
     vertex_location,
 )
+from .exceptions import AIServiceGatewayError
 from .http_client import get_retrying_http_client
 
 logger = logging.getLogger(__name__)
 
-
-class AIServiceGatewayError(Exception):
-    """Raised when a model cannot be constructed (missing keys, bad provider, etc.)."""
+__all__ = ["AIServiceGatewayError", "resolve_model"]
 
 
 def resolve_model(
