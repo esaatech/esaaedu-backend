@@ -46,6 +46,7 @@ urlpatterns = [
     path("api/home/", include('home.urls')),
     path("api/portfolio/", include('portfolio.urls')),
     path("api/tutorx/", include('tutorx.urls')),
+    path("api/studycoach/", include('studycoach.urls')),
     path("api/blog/", include('blog.urls')),
     path("api/lead-magnet/", include('lead_magnet.urls')),
     path("api/communication/", include("communication.urls")),

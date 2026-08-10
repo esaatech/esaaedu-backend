@@ -91,6 +91,7 @@ INSTALLED_APPS = [
     "ai",
     "portfolio",
     "tutorx",
+    "studycoach",
     "marketing",
     "blog",
     "lead_magnet",
