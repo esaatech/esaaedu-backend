@@ -118,3 +118,37 @@ Student Tools → Study Coach → **Generate quiz** calls:
   `{"error": "We couldn't complete that AI request right now. Please try again.", "error_code": "..."}`
   with HTTP 429 (rate limited) or 503.
 
+## Phase 5 — Production hardening
+
+### Retries & timeouts
+
+| Knob | Default | Meaning |
+|------|---------|---------|
+| `AI_SERVICE_HTTP_TIMEOUT` | 60 | Per-request httpx / ModelSettings timeout (seconds) |
+| `AI_SERVICE_HTTP_CONNECT_TIMEOUT` | 10 | Connect timeout |
+| `AI_SERVICE_HTTP_RETRY_ATTEMPTS` | 3 | Total attempts for 429/5xx + connect errors |
+| `AI_SERVICE_RUN_TIMEOUT` | 90 | Wall-clock budget for full `agent.run_sync` |
+
+HTTP retries honor `Retry-After` when present (capped).
+
+### Logging
+
+On each run:
+
+```
+INFO ai_service.run service=… provider=… model=…
+INFO ai_service.run.finished service=… provider=… model=… success=True latency_ms=1234 grounding_mode=title
+```
+
+Failures are classified and sent to `SLACK_ERROR_ALERTS` (throttled). Study Coach never returns static cards — students see a friendly try-again message.
+
+### Deploy / seeds
+
+```bash
+python manage.py migrate
+python manage.py setup_ai_models
+python manage.py setup_study_coach_deck
+```
+
+Or set `AI_SERVICE_SEED_ON_STARTUP=true` so `entrypoint.sh` runs the setup commands after migrate (idempotent).
+

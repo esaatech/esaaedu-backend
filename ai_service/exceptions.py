@@ -90,6 +90,15 @@ def from_exception(exc: BaseException) -> AIServiceError:
     if isinstance(exc, AIServiceGatewayError):
         return configuration_error(str(exc))
 
+    # Avoid circular import at module load; timeout helper lives with runners.
+    try:
+        from ai_service.runners.run_helpers import AIServiceRunTimeout
+
+        if isinstance(exc, AIServiceRunTimeout):
+            return service_unavailable_error(str(exc), cause=exc)
+    except ImportError:
+        pass
+
     message = str(exc) or exc.__class__.__name__
     lower = message.lower()
     status = _extract_status_code(exc)

@@ -31,6 +31,31 @@ def log_run_model(
     )
 
 
+def log_run_finished(
+    *,
+    service: str,
+    provider: str,
+    model_id: str,
+    success: bool,
+    latency_ms: int,
+    grounding_mode: str = "",
+    extra: str = "",
+) -> None:
+    """INFO log when a run completes (success or classified failure after agent call)."""
+    gm = f" grounding_mode={grounding_mode}" if grounding_mode else ""
+    suffix = f" {extra}" if extra else ""
+    logger.info(
+        "ai_service.run.finished service=%s provider=%s model=%s success=%s latency_ms=%s%s%s",
+        service,
+        provider,
+        model_id,
+        success,
+        latency_ms,
+        gm,
+        suffix,
+    )
+
+
 def notify_and_classify(
     exc: BaseException,
     *,

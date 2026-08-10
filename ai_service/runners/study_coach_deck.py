@@ -1,15 +1,17 @@
 """
-Study Coach deck runner — shared by Admin playground and (Phase 4) studycoach views.
+Study Coach deck runner — shared by Admin playground and studycoach views.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Optional
 
-from ai_service.alerts import log_run_model, notify_and_classify
+from ai_service.alerts import log_run_finished, log_run_model, notify_and_classify
 from ai_service.gateway import AIServiceGatewayError, resolve_model
 from ai_service.prompt_utils import get_default_prompt_config
+from ai_service.runners.run_helpers import request_model_settings, run_agent_sync
 from ai_service.schemas_study_coach import DifficultyMode, StudyDeckOut
 
 logger = logging.getLogger(__name__)
@@ -123,30 +125,28 @@ def generate_study_coach_deck(
             error_code=ai_exc.error_code,
         )
 
-    agent_kwargs: dict[str, Any] = {
-        "output_type": StudyDeckOut,
-        "instructions": instructions,
-        "retries": {"output": 2},
-    }
+    agent = Agent(
+        model,
+        output_type=StudyDeckOut,
+        instructions=instructions,
+        retries={"output": 2},
+        model_settings=request_model_settings(temperature=settings.temperature),
+    )
+
+    started = time.perf_counter()
     try:
-        from pydantic_ai.settings import ModelSettings
-
-        agent_kwargs["model_settings"] = ModelSettings(temperature=settings.temperature)
-    except Exception:
-        agent_kwargs["model_settings"] = {"temperature": settings.temperature}
-
-    agent = Agent(model, **agent_kwargs)
-
-    try:
-        result = agent.run_sync(user_prompt)
+        result = run_agent_sync(agent, user_prompt)
         deck: StudyDeckOut = result.output
         cards = [c.model_dump() for c in deck.cards]
-        logger.info(
-            "ai_service.run.success service=%s provider=%s model=%s cards=%s",
-            SERVICE_SLUG,
-            settings.provider,
-            settings.model_id,
-            len(cards),
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        log_run_finished(
+            service=SERVICE_SLUG,
+            provider=settings.provider,
+            model_id=settings.model_id,
+            success=True,
+            latency_ms=latency_ms,
+            grounding_mode=grounding_mode,
+            extra=f"cards={len(cards)}",
         )
         return {
             "success": True,
@@ -158,13 +158,24 @@ def generate_study_coach_deck(
             "instruction_slug": getattr(prompt_config, "slug", "") or "",
             "raw_text": str({"cards": cards})[:20000],
             "grounding_mode": grounding_mode,
+            "latency_ms": latency_ms,
         }
     except Exception as exc:
+        latency_ms = int((time.perf_counter() - started) * 1000)
         logger.exception("study_coach_deck: agent run failed")
         ai_exc = notify_and_classify(
             exc,
             context=f"study_coach_deck provider={settings.provider} model={settings.model_id}",
             endpoint="ai_service.runners.study_coach_deck",
+        )
+        log_run_finished(
+            service=SERVICE_SLUG,
+            provider=settings.provider,
+            model_id=settings.model_id,
+            success=False,
+            latency_ms=latency_ms,
+            grounding_mode=grounding_mode,
+            extra=f"error_code={ai_exc.error_code}",
         )
         return _fail(
             ai_exc.log_message,

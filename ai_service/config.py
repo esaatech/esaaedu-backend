@@ -89,7 +89,28 @@ def use_vertex_for_gemini() -> bool:
 
 
 def http_retry_attempts() -> int:
-    return config("AI_SERVICE_HTTP_RETRY_ATTEMPTS", default=4, cast=int)
+    """Total HTTP attempts including the first try (default 3)."""
+    return config("AI_SERVICE_HTTP_RETRY_ATTEMPTS", default=3, cast=int)
+
+
+def http_timeout_seconds() -> float:
+    """Per-request / httpx read timeout (seconds)."""
+    return config("AI_SERVICE_HTTP_TIMEOUT", default=60.0, cast=float)
+
+
+def http_connect_timeout_seconds() -> float:
+    return config("AI_SERVICE_HTTP_CONNECT_TIMEOUT", default=10.0, cast=float)
+
+
+def run_timeout_seconds() -> float:
+    """Wall-clock budget for a full agent.run_sync (seconds)."""
+    return config("AI_SERVICE_RUN_TIMEOUT", default=90.0, cast=float)
+
+
+def seed_on_startup() -> bool:
+    """When true, entrypoint seeds AI catalog after migrate."""
+    raw = config("AI_SERVICE_SEED_ON_STARTUP", default="false")
+    return str(raw).strip().lower() in ("1", "true", "yes")
 
 
 def resolve_generation_settings(
