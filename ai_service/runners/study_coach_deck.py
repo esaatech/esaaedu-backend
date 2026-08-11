@@ -43,6 +43,7 @@ def generate_study_coach_deck(
     difficulty_mode: DifficultyMode = "easy",
     card_count: int = 6,
     prompt_config=None,
+    avoid_prompts: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """
     Generate a study quiz deck.
@@ -54,7 +55,7 @@ def generate_study_coach_deck(
     title = (lesson_title or "").strip() or "Untitled lesson"
     grounding = (grounding_text or "").strip()
     mode: DifficultyMode = difficulty_mode if difficulty_mode in ("easy", "hard", "auto") else "easy"
-    count = max(3, min(int(card_count or 6), 12))
+    count = max(1, min(int(card_count or 6), 20))
 
     if prompt_config is None:
         prompt_config = get_default_prompt_config(SERVICE_SLUG)
@@ -107,6 +108,7 @@ def generate_study_coach_deck(
         grounding=grounding,
         mode=mode,
         count=count,
+        avoid_prompts=avoid_prompts or [],
     )
 
     try:
@@ -187,7 +189,14 @@ def generate_study_coach_deck(
         )
 
 
-def _build_user_prompt(*, title: str, grounding: str, mode: DifficultyMode, count: int) -> str:
+def _build_user_prompt(
+    *,
+    title: str,
+    grounding: str,
+    mode: DifficultyMode,
+    count: int,
+    avoid_prompts: Optional[list[str]] = None,
+) -> str:
     parts = [
         f"Lesson title: {title}",
         f"Difficulty mode: {mode}",
@@ -200,6 +209,12 @@ def _build_user_prompt(*, title: str, grounding: str, mode: DifficultyMode, coun
         parts.append(
             "No lesson body provided. Generate fair practice from the lesson title alone."
         )
+    avoid = [p.strip() for p in (avoid_prompts or []) if (p or "").strip()]
+    if avoid:
+        parts.append(
+            "Do NOT repeat or closely rephrase these existing questions; make new ones:"
+        )
+        parts.append("\n".join(f"- {p[:200]}" for p in avoid[:40]))
     return "\n\n".join(parts)
 
 

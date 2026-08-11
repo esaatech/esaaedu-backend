@@ -9,13 +9,17 @@ from .models import StudySession
 from .serializers import (
     StudySessionAnswerSerializer,
     StudySessionCreateSerializer,
+    StudySessionExtendSerializer,
     StudySessionListSerializer,
     StudySessionSerializer,
 )
 from .services.access import user_can_study_lesson
-from .services.deck_generator import generate_deck_for_lesson
+from .services.deck_generator import (
+    MAX_CARD_COUNT,
+    clamp_card_count,
+    generate_deck_for_lesson,
+)
 from .services.static_generator import check_card_answer, default_progress
-
 
 class StudySessionListCreateView(APIView):
     """
@@ -77,9 +81,11 @@ class StudySessionListCreateView(APIView):
             )
 
         difficulty_mode = serializer.validated_data["difficulty_mode"]
+        card_count = clamp_card_count(serializer.validated_data.get("card_count"))
         deck = generate_deck_for_lesson(
             lesson=lesson,
             difficulty_mode=difficulty_mode,
+            card_count=card_count,
         )
         if not deck.get("success"):
             return Response(
@@ -121,6 +127,94 @@ class StudySessionDetailView(APIView):
             student=request.user,
         )
         return Response(StudySessionSerializer(session).data)
+
+
+class StudySessionExtendView(APIView):
+    """POST: append more AI cards to an existing session (same session, max 20)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, session_id):
+        if not hasattr(request.user, "student_profile"):
+            return Response(
+                {"error": "Only students can use Study Coach"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        session = get_object_or_404(
+            StudySession.objects.select_related("lesson", "lesson__course"),
+            id=session_id,
+            student=request.user,
+        )
+        serializer = StudySessionExtendSerializer(data=request.data or {})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        existing = list(session.cards or [])
+        remaining = MAX_CARD_COUNT - len(existing)
+        if remaining <= 0:
+            return Response(
+                {
+                    "error": f"This quiz already has the maximum of {MAX_CARD_COUNT} cards.",
+                    "error_code": "max_cards_reached",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        requested = int(serializer.validated_data.get("card_count") or 6)
+        card_count = max(1, min(requested, remaining, MAX_CARD_COUNT))
+
+        avoid_prompts = [
+            str(c.get("prompt") or "").strip()
+            for c in existing
+            if str(c.get("prompt") or "").strip()
+        ]
+        deck = generate_deck_for_lesson(
+            lesson=session.lesson,
+            difficulty_mode=session.difficulty_mode,
+            card_count=card_count,
+            avoid_prompts=avoid_prompts,
+        )
+        if not deck.get("success"):
+            return Response(
+                {
+                    "error": deck.get("error"),
+                    "error_code": deck.get("error_code") or "generation_failed",
+                },
+                status=deck.get("status_code") or status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        new_cards = list(deck.get("cards") or [])
+        if not new_cards:
+            return Response(
+                {
+                    "error": "We couldn't generate more cards right now. Please try again.",
+                    "error_code": "generation_failed",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        # Keep only what fits under the session cap.
+        room = MAX_CARD_COUNT - len(existing)
+        appended = new_cards[:room]
+        resume_index = len(existing)
+        session.cards = existing + appended
+
+        progress = dict(session.progress or default_progress())
+        # Continue from the first newly added card.
+        progress["current_index"] = resume_index
+        session.progress = progress
+        session.status = "active"
+        session.save(update_fields=["cards", "progress", "status", "updated_at"])
+
+        return Response(
+            {
+                "added": len(appended),
+                "resume_index": resume_index,
+                "session": StudySessionSerializer(session).data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class StudySessionAnswerView(APIView):

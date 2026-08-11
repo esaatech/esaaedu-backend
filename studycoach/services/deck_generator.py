@@ -20,6 +20,17 @@ from ai_service.runners.study_coach_deck import generate_study_coach_deck
 logger = logging.getLogger(__name__)
 
 MAX_GROUNDING_CHARS = 12000
+MIN_CARD_COUNT = 3
+MAX_CARD_COUNT = 20
+DEFAULT_CARD_COUNT = 6
+
+
+def clamp_card_count(value: int | None, *, default: int = DEFAULT_CARD_COUNT) -> int:
+    try:
+        n = int(value if value is not None else default)
+    except (TypeError, ValueError):
+        n = default
+    return max(MIN_CARD_COUNT, min(n, MAX_CARD_COUNT))
 
 
 def build_lesson_grounding(lesson) -> str:
@@ -61,7 +72,8 @@ def generate_deck_for_lesson(
     *,
     lesson,
     difficulty_mode: str = "easy",
-    card_count: int = 6,
+    card_count: int = DEFAULT_CARD_COUNT,
+    avoid_prompts: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Build grounding from lesson and run study_coach_deck.
@@ -83,12 +95,14 @@ def generate_deck_for_lesson(
     """
     title = (getattr(lesson, "title", None) or "").strip() or "Untitled lesson"
     grounding = build_lesson_grounding(lesson)
+    count = clamp_card_count(card_count)
 
     raw = generate_study_coach_deck(
         lesson_title=title,
         grounding_text=grounding,
         difficulty_mode=difficulty_mode,  # type: ignore[arg-type]
-        card_count=card_count,
+        card_count=count,
+        avoid_prompts=avoid_prompts or [],
     )
 
     if not raw.get("success"):

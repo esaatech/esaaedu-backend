@@ -9,6 +9,11 @@ class StudySessionCreateSerializer(serializers.Serializer):
         choices=["easy", "hard", "auto"],
         default="easy",
     )
+    card_count = serializers.IntegerField(required=False, min_value=3, max_value=20, default=6)
+
+
+class StudySessionExtendSerializer(serializers.Serializer):
+    card_count = serializers.IntegerField(required=False, min_value=1, max_value=20, default=6)
 
 
 class StudySessionAnswerSerializer(serializers.Serializer):

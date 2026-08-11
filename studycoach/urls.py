@@ -10,6 +10,11 @@ urlpatterns = [
         name="studycoach-session-detail",
     ),
     path(
+        "sessions/<uuid:session_id>/extend/",
+        views.StudySessionExtendView.as_view(),
+        name="studycoach-session-extend",
+    ),
+    path(
         "sessions/<uuid:session_id>/answer/",
         views.StudySessionAnswerView.as_view(),
         name="studycoach-session-answer",

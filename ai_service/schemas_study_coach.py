@@ -46,4 +46,4 @@ class StudyCardOut(BaseModel):
 
 
 class StudyDeckOut(BaseModel):
-    cards: list[StudyCardOut] = Field(min_length=3, max_length=12)
+    cards: list[StudyCardOut] = Field(min_length=1, max_length=20)
