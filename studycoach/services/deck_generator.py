@@ -7,7 +7,6 @@ No static fallback — callers must surface a friendly try-again on failure.
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from typing import Any
@@ -35,27 +34,19 @@ def clamp_card_count(value: int | None, *, default: int = DEFAULT_CARD_COUNT) ->
 
 def build_lesson_grounding(lesson) -> str:
     """
-    Extract plain-ish lesson text for grounding.
+    Extract lesson description for grounding (HTML stripped).
 
-    Priority: tutorx_content → text_content → description.
     Empty string means title-only grounding_mode from the runner.
     """
-    parts: list[str] = []
+    raw = (getattr(lesson, "description", None) or "").strip()
+    if not raw:
+        return ""
 
-    tutorx = (getattr(lesson, "tutorx_content", None) or "").strip()
-    if tutorx:
-        parts.append(_blocknote_or_plain_to_text(tutorx))
+    text = strip_tags(raw).replace("\xa0", " ").strip()
+    if not text:
+        return ""
 
-    text = (getattr(lesson, "text_content", None) or "").strip()
-    if text:
-        parts.append(strip_tags(text).strip())
-
-    description = (getattr(lesson, "description", None) or "").strip()
-    if description and not parts:
-        parts.append(strip_tags(description).strip())
-
-    combined = "\n\n".join(p for p in parts if p)
-    return combined[:MAX_GROUNDING_CHARS]
+    return text[:MAX_GROUNDING_CHARS]
 
 
 def stamp_card_ids(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -167,44 +158,3 @@ def _status_for_error_code(error_code: str) -> int:
     return 503
 
 
-def _blocknote_or_plain_to_text(raw: str) -> str:
-    raw = (raw or "").strip()
-    if not raw:
-        return ""
-    if not (raw.startswith("[") or raw.startswith("{")):
-        return strip_tags(raw).strip()
-
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return strip_tags(raw).strip()
-
-    texts: list[str] = []
-    _walk_blocknote(data, texts)
-    joined = "\n".join(t.strip() for t in texts if t and str(t).strip())
-    return joined if joined else strip_tags(raw).strip()
-
-
-def _walk_blocknote(node: Any, out: list[str]) -> None:
-    if node is None:
-        return
-    if isinstance(node, list):
-        for item in node:
-            _walk_blocknote(item, out)
-        return
-    if not isinstance(node, dict):
-        return
-
-    # Inline text node
-    if node.get("type") == "text" and node.get("text"):
-        out.append(str(node["text"]))
-
-    content = node.get("content")
-    if isinstance(content, list):
-        _walk_blocknote(content, out)
-    elif isinstance(content, str) and content.strip():
-        out.append(content)
-
-    children = node.get("children")
-    if children is not None:
-        _walk_blocknote(children, out)

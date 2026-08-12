@@ -30,7 +30,7 @@ Rules:
   - easy: mostly multiple_choice / true_false, clearer first hints
   - hard: mostly short_answer, tougher prompts, vaguer early hints
   - auto: mix — start easier, later cards harder
-- If lesson grounding text is provided, questions MUST be answerable from that material.
+- If lesson description is provided, questions MUST be answerable from that material.
 - If only a lesson title is provided, invent fair practice grounded in that title/topic and stay educational.
 - Do not include card ids; the server assigns them.
 """
@@ -203,11 +203,11 @@ def _build_user_prompt(
         f"Generate exactly {count} quiz cards.",
     ]
     if grounding:
-        parts.append("Lesson grounding material (use ONLY this content for answers):")
+        parts.append("Lesson description (use ONLY this for answers):")
         parts.append(grounding[:12000])
     else:
         parts.append(
-            "No lesson body provided. Generate fair practice from the lesson title alone."
+            "No lesson description provided. Generate fair practice from the lesson title alone."
         )
     avoid = [p.strip() for p in (avoid_prompts or []) if (p or "").strip()]
     if avoid:
