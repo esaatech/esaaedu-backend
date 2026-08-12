@@ -243,11 +243,48 @@ def normalize_answer(value: str) -> str:
     return " ".join((value or "").strip().lower().split())
 
 
+def normalize_numeric_answer(value: str) -> str | None:
+    """
+    Normalize number-like answers so commas / spaces don't fail grading.
+
+    "4,287", "4287", "4 287" → "4287"
+    Returns None if the value is not a simple number.
+    """
+    text = (value or "").strip().lower().replace("−", "-").replace("–", "-")
+    # Drop thousand separators and spaces; keep a single decimal point / leading minus.
+    cleaned = "".join(ch for ch in text if ch.isdigit() or ch in ".-")
+    if cleaned.count(".") > 1:
+        return None
+    if cleaned.count("-") > 1 or ("-" in cleaned and not cleaned.startswith("-")):
+        return None
+    if cleaned in ("", "-", ".", "-."):
+        return None
+    # Must contain at least one digit
+    if not any(ch.isdigit() for ch in cleaned):
+        return None
+    try:
+        number = float(cleaned)
+    except ValueError:
+        return None
+    if number.is_integer():
+        return str(int(number))
+    return str(number)
+
+
 def check_card_answer(card: dict[str, Any], response: str) -> bool:
-    expected = normalize_answer(str(card.get("answer", "")))
-    got = normalize_answer(response)
+    expected_raw = str(card.get("answer", ""))
+    got_raw = response
+    expected = normalize_answer(expected_raw)
+    got = normalize_answer(got_raw)
     if not expected:
         return False
+
+    # Numeric answers: ignore commas / spacing ("6,555" == "6555")
+    expected_num = normalize_numeric_answer(expected_raw)
+    got_num = normalize_numeric_answer(got_raw)
+    if expected_num is not None and got_num is not None:
+        return expected_num == got_num
+
     qtype = card.get("question_type")
     if qtype in ("multiple_choice", "true_false"):
         return got == expected
@@ -256,3 +293,47 @@ def check_card_answer(card: dict[str, Any], response: str) -> bool:
     if expected in got or got in expected:
         return True
     return False
+
+
+def card_avoid_label(card: dict[str, Any]) -> str:
+    """
+    Fingerprint for dedupe / avoid lists.
+
+    Column-math cards often share the same prompt ("Add these numbers."), so we
+    include the operands/operator so the model can avoid real duplicates.
+    """
+    prompt = str(card.get("prompt") or "").strip()
+    display = card.get("display")
+    if isinstance(display, dict) and display.get("type") == "column_math":
+        operator = str(display.get("operator") or "").strip()
+        operands = display.get("operands") or []
+        if isinstance(operands, list) and operands:
+            joined = " ".join(str(o).strip() for o in operands if str(o).strip())
+            return f"{prompt} | {operator} {joined}".strip(" |")
+    display_json = str(card.get("display_json") or "").strip()
+    if display_json:
+        return f"{prompt} | {display_json[:160]}".strip(" |")
+    return prompt
+
+
+def dedupe_cards(
+    cards: list[dict[str, Any]],
+    *,
+    existing: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Drop cards that collide with existing fingerprints (or earlier in the batch)."""
+    seen: set[str] = set()
+    for card in existing or []:
+        label = card_avoid_label(card).lower()
+        if label:
+            seen.add(label)
+
+    unique: list[dict[str, Any]] = []
+    for card in cards:
+        label = card_avoid_label(card).lower()
+        if label and label in seen:
+            continue
+        if label:
+            seen.add(label)
+        unique.append(card)
+    return unique

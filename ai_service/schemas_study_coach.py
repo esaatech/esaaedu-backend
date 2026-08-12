@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 QuestionType = Literal["multiple_choice", "true_false", "short_answer"]
@@ -14,12 +14,17 @@ DifficultyMode = Literal["easy", "hard", "auto"]
 
 class StudyCardOut(BaseModel):
     question_type: QuestionType
-    prompt: str = Field(min_length=1)
+    # Keep schema simple for model-serving (avoid min_length/max constraints).
+    prompt: str
     options: Optional[list[str]] = None
-    answer: str = Field(min_length=1)
-    hints: list[str] = Field(min_length=1)
+    answer: str
+    hints: list[str]
     explanation: Optional[str] = None
     difficulty: CardDifficulty
+    # Gemini rejects nested structured `display` objects ("too many states").
+    # Pass layout as a JSON *string*; the server parses it into `display`.
+    # Example: '{"type":"column_math","operator":"+","operands":["42","35"]}'
+    display_json: Optional[str] = None
 
     @field_validator("hints")
     @classmethod
@@ -46,4 +51,5 @@ class StudyCardOut(BaseModel):
 
 
 class StudyDeckOut(BaseModel):
-    cards: list[StudyCardOut] = Field(min_length=1, max_length=20)
+    # Keep schema simple for model-serving (avoid list length constraints).
+    cards: list[StudyCardOut]

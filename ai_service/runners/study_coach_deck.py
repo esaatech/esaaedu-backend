@@ -17,8 +17,10 @@ from ai_service.schemas_study_coach import DifficultyMode, StudyDeckOut
 logger = logging.getLogger(__name__)
 
 SERVICE_SLUG = "study_coach_deck"
+PROMPT_SLUG_V1 = "default"
+PROMPT_SLUG_MATH_DISPLAY = "math_display"
 
-DEFAULT_INSTRUCTIONS = """You generate Quizlet-style study quiz cards for students.
+DEFAULT_INSTRUCTIONS_V1 = """You generate Quizlet-style study quiz cards for students.
 
 Rules:
 - Return ONLY structured data matching the schema (cards array).
@@ -34,6 +36,39 @@ Rules:
 - If only a lesson title is provided, invent fair practice grounded in that title/topic and stay educational.
 - Do not include card ids; the server assigns them.
 """
+
+MATH_DISPLAY_INSTRUCTIONS = """You generate Quizlet-style study quiz cards for students.
+
+Rules:
+- Return ONLY structured data matching the schema (cards array).
+- Each card must include ordered Socratic hints that guide thinking without dumping the final answer in hint 1.
+- Hints should be progressive: first nudge, later more specific.
+- For multiple_choice / true_false, include options and set answer to exactly one option string.
+- For short_answer, answer is the expected brief response; hints still must not fully spoil it in the first hint.
+- Match difficulty_mode:
+  - easy: mostly multiple_choice / true_false, clearer first hints
+  - hard: mostly short_answer, tougher prompts, vaguer early hints
+  - auto: mix — start easier, later cards harder
+- If lesson description is provided, questions MUST be answerable from that material.
+- If only a lesson title is provided, invent fair practice grounded in that title/topic and stay educational.
+- Do not include card ids; the server assigns them.
+- Do not return HTML, Markdown tables, or Manim/Python.
+
+Math display:
+- For school-style stacked arithmetic (add/subtract/multiply/divide in a column), you MUST set display_json to a JSON string, for example:
+  "{\"type\":\"column_math\",\"operator\":\"+\",\"operands\":[\"42\",\"35\"]}"
+  Allowed operators: +, -, ×, ÷ (you may also use *, /, x).
+  Put 2–4 operands as strings.
+  Keep prompt as a short instruction such as "Add these numbers."
+  Keep answer as a plain digit string without thousand separators (e.g. "4287", not "4,287").
+  Never reuse the same operands+operator pair in the same deck.
+- Do NOT copy example problems from the lesson description verbatim (e.g. if the description shows 387+49 or 402-168, invent different numbers of similar difficulty).
+- For other math in prompt, hints, options, answer, or explanation (fractions, exponents, roots), use LaTeX with $...$ or $$...$$. Example: $\\frac{1}{2}$, $x^2$.
+- If the card is not stacked arithmetic, omit display_json (or set it null).
+"""
+
+# Code fallback when no prompt config is loaded — matches the current product default.
+DEFAULT_INSTRUCTIONS = MATH_DISPLAY_INSTRUCTIONS
 
 
 def generate_study_coach_deck(
@@ -212,9 +247,15 @@ def _build_user_prompt(
     avoid = [p.strip() for p in (avoid_prompts or []) if (p or "").strip()]
     if avoid:
         parts.append(
-            "Do NOT repeat or closely rephrase these existing questions; make new ones:"
+            "Do NOT repeat or closely rephrase these existing questions; make new ones. "
+            "For stacked math, do not reuse the same operands/operator:"
         )
         parts.append("\n".join(f"- {p[:200]}" for p in avoid[:40]))
+    parts.append(
+        "Within this deck, every card must be distinct "
+        "(different prompts, or different operands/operators for column math). "
+        "Do not reuse example numbers from the lesson description; invent fresh problems."
+    )
     return "\n\n".join(parts)
 
 

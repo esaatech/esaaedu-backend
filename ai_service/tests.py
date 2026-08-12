@@ -41,8 +41,20 @@ class StudyCoachSchemaTests(SimpleTestCase):
         self.assertEqual(card.answer, "4")
 
     def test_deck_min_cards(self):
-        with self.assertRaises(Exception):
-            StudyDeckOut(cards=[])
+        # Empty decks are allowed by schema; product layer rejects empty cards.
+        deck = StudyDeckOut(cards=[])
+        self.assertEqual(deck.cards, [])
+
+    def test_column_math_display_json_optional(self):
+        card = StudyCardOut(
+            question_type="short_answer",
+            prompt="Add these numbers.",
+            answer="77",
+            hints=["Line up the ones place."],
+            difficulty="easy",
+            display_json='{"type":"column_math","operator":"+","operands":["42","35"]}',
+        )
+        self.assertIn("column_math", card.display_json or "")
 
 
 from unittest.mock import patch

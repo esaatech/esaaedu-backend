@@ -19,7 +19,12 @@ from .services.deck_generator import (
     clamp_card_count,
     generate_deck_for_lesson,
 )
-from .services.static_generator import check_card_answer, default_progress
+from .services.static_generator import (
+    card_avoid_label,
+    check_card_answer,
+    dedupe_cards,
+    default_progress,
+)
 
 class StudySessionListCreateView(APIView):
     """
@@ -165,9 +170,9 @@ class StudySessionExtendView(APIView):
         card_count = max(1, min(requested, remaining, MAX_CARD_COUNT))
 
         avoid_prompts = [
-            str(c.get("prompt") or "").strip()
-            for c in existing
-            if str(c.get("prompt") or "").strip()
+            label
+            for label in (card_avoid_label(c) for c in existing)
+            if label
         ]
         deck = generate_deck_for_lesson(
             lesson=session.lesson,
@@ -184,7 +189,7 @@ class StudySessionExtendView(APIView):
                 status=deck.get("status_code") or status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        new_cards = list(deck.get("cards") or [])
+        new_cards = dedupe_cards(list(deck.get("cards") or []), existing=existing)
         if not new_cards:
             return Response(
                 {

@@ -7,6 +7,7 @@ No static fallback — callers must surface a friendly try-again on failure.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import Any
@@ -15,6 +16,8 @@ from django.utils.html import strip_tags
 
 from ai_service.exceptions import USER_FACING_AI_SERVICE_ERROR
 from ai_service.runners.study_coach_deck import generate_study_coach_deck
+
+from .static_generator import dedupe_cards
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +52,50 @@ def build_lesson_grounding(lesson) -> str:
     return text[:MAX_GROUNDING_CHARS]
 
 
+def _parse_display_json(raw: Any) -> dict[str, Any] | None:
+    """Parse model-provided display_json string into a display object."""
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("studycoach invalid display_json=%s", text[:200])
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def normalize_card_display(card: dict[str, Any]) -> dict[str, Any]:
+    """Promote display_json → display for the frontend."""
+    item = dict(card)
+    existing = item.get("display")
+    if isinstance(existing, dict) and existing.get("type"):
+        return item
+
+    parsed = _parse_display_json(item.get("display_json"))
+    if parsed and parsed.get("type") == "column_math":
+        operands = parsed.get("operands") or []
+        if not isinstance(operands, list):
+            operands = []
+        item["display"] = {
+            "type": "column_math",
+            "operator": str(parsed.get("operator") or "+"),
+            "operands": [str(o).strip() for o in operands if o is not None and str(o).strip()],
+        }
+    return item
+
+
 def stamp_card_ids(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Ensure each card has a server-assigned UUID id."""
+    """Ensure each card has a server-assigned UUID id and normalized display."""
     stamped: list[dict[str, Any]] = []
     for card in cards:
-        item = dict(card)
+        item = normalize_card_display(dict(card))
         item["id"] = str(uuid.uuid4())
         stamped.append(item)
     return stamped
@@ -136,9 +178,27 @@ def generate_deck_for_lesson(
             "model_id": raw.get("model_id") or "",
         }
 
+    stamped = dedupe_cards(stamp_card_ids(cards))
+    if not stamped:
+        logger.warning(
+            "studycoach deck empty after dedupe lesson=%s provider=%s model=%s",
+            getattr(lesson, "id", None),
+            raw.get("provider"),
+            raw.get("model_id"),
+        )
+        return {
+            "success": False,
+            "error": USER_FACING_AI_SERVICE_ERROR,
+            "error_code": "generation_failed",
+            "status_code": 503,
+            "grounding_mode": raw.get("grounding_mode") or ("grounded" if grounding else "title"),
+            "provider": raw.get("provider") or "",
+            "model_id": raw.get("model_id") or "",
+        }
+
     return {
         "success": True,
-        "cards": stamp_card_ids(cards),
+        "cards": stamped,
         "grounding_mode": raw.get("grounding_mode") or ("grounded" if grounding else "title"),
         "provider": raw.get("provider") or "",
         "model_id": raw.get("model_id") or "",
