@@ -21,10 +21,10 @@ from .services.deck_generator import (
 )
 from .services.static_generator import (
     card_avoid_label,
-    check_card_answer,
-    dedupe_cards,
     default_progress,
+    dedupe_cards,
 )
+from .services.grading import StudyCoachGradeError, grade_study_card
 
 class StudySessionListCreateView(APIView):
     """
@@ -261,13 +261,27 @@ class StudySessionAnswerView(APIView):
             )
 
         response_text = serializer.validated_data["response"]
-        correct = check_card_answer(card, response_text)
+        try:
+            correct, grade_meta = grade_study_card(
+                card,
+                response_text,
+                lesson=session.lesson,
+            )
+        except StudyCoachGradeError as exc:
+            return Response(
+                {
+                    "error": str(exc),
+                    "error_code": exc.error_code,
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         answers[card_id] = {
             "response": response_text,
             "correct": correct,
             "used_hint_count": serializer.validated_data.get("used_hint_count", 0),
             "flipped": serializer.validated_data.get("flipped", False),
             "skipped": not str(response_text or "").strip(),
+            **grade_meta,
         }
         progress["answers"] = answers
         if correct:

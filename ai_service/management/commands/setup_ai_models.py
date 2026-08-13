@@ -13,6 +13,14 @@ from ai_service.models import AIModel
 DEFAULT_MODELS = [
     {
         "provider": AIModel.Provider.GEMINI,
+        "model_id": "gemini-2.5-flash-lite",
+        "display_name": "Gemini 2.5 Flash Lite",
+        "description": "Fastest Gemini for single-question grading and other low-latency checks.",
+        "sort_order": 5,
+        "default_temperature": 0.20,
+    },
+    {
+        "provider": AIModel.Provider.GEMINI,
         "model_id": "gemini-2.5-flash",
         "display_name": "Gemini 2.5 Flash",
         "description": "Fast default for structured generation (Vertex or API key).",

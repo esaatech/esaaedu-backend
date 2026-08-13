@@ -114,7 +114,10 @@ Student Tools → Study Coach → **Generate quiz** calls:
 `studycoach.services.deck_generator.generate_deck_for_lesson` → `generate_study_coach_deck`
 
 - Grounding from lesson `description` only (HTML stripped; else title-only).
+- Book pages for the lesson are passed as a **catalog** (id, page number, title, short excerpt). The model cites `source_page_id`; the server validates it and stores `{ material_id, page, title }`. The frontend builds the student page URL. The model never invents URLs.
+- Every card gets a short `explanation` (prompt-required; server fills a fallback if missing).
 - Prompt variants: keep original slug `default` unchanged; `math_display` is the active default (column math via `display_json` string + LaTeX). Re-run `setup_study_coach_deck` to seed/update `math_display` without overwriting `default`.
+- Short-answer **Check** uses a separate service, `study_coach_grade` (`python manage.py setup_study_coach_grade`). Default model is **Gemini 2.5 Flash Lite** (falls back to Flash, then DeepSeek). Same grading intent as assignment GeminiGrader (meaning over exact wording), tiny `{correct, feedback}` output, 20s timeout.
 - **No static fallback.** On failure the API returns:
   `{"error": "We couldn't complete that AI request right now. Please try again.", "error_code": "..."}`
   with HTTP 429 (rate limited) or 503.
@@ -149,6 +152,7 @@ Failures are classified and sent to `SLACK_ERROR_ALERTS` (throttled). Study Coac
 python manage.py migrate
 python manage.py setup_ai_models
 python manage.py setup_study_coach_deck
+python manage.py setup_study_coach_grade
 ```
 
 Or set `AI_SERVICE_SEED_ON_STARTUP=true` so `entrypoint.sh` runs the setup commands after migrate (idempotent).

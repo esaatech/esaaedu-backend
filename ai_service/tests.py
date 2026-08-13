@@ -36,6 +36,7 @@ class StudyCoachSchemaTests(SimpleTestCase):
             options=["3", "4", "5"],
             answer="4",
             hints=["Add the numbers.", "It is an even number."],
+            explanation="Add 2 and 2 to get 4.",
             difficulty="easy",
         )
         self.assertEqual(card.answer, "4")
@@ -51,10 +52,41 @@ class StudyCoachSchemaTests(SimpleTestCase):
             prompt="Add these numbers.",
             answer="77",
             hints=["Line up the ones place."],
+            explanation="Add the ones, then the tens.",
             difficulty="easy",
             display_json='{"type":"column_math","operator":"+","operands":["42","35"]}',
         )
         self.assertIn("column_math", card.display_json or "")
+
+    def test_source_page_id_optional(self):
+        card = StudyCardOut(
+            question_type="short_answer",
+            prompt="What is 4/10 simplified thinking?",
+            answer="4/10",
+            hints=["Keep the denominator."],
+            explanation="Subtract the numerators and keep the same denominator.",
+            source_page_id="11111111-1111-1111-1111-111111111111",
+            difficulty="easy",
+        )
+        self.assertEqual(card.source_page_id, "11111111-1111-1111-1111-111111111111")
+        self.assertIn("denominator", card.explanation or "")
+
+    def test_explanation_required(self):
+        with self.assertRaises(Exception):
+            StudyCardOut(
+                question_type="short_answer",
+                prompt="What is 2+2?",
+                answer="4",
+                hints=["Add them."],
+                explanation="   ",
+                difficulty="easy",
+            )
+
+    def test_grade_schema_is_tiny(self):
+        from ai_service.schemas_study_coach import StudyCardGradeOut
+
+        grade = StudyCardGradeOut(correct=True, feedback="You got the core idea.")
+        self.assertTrue(grade.correct)
 
 
 from unittest.mock import patch

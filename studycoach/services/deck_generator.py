@@ -25,6 +25,8 @@ MAX_GROUNDING_CHARS = 12000
 MIN_CARD_COUNT = 3
 MAX_CARD_COUNT = 20
 DEFAULT_CARD_COUNT = 6
+MAX_PAGE_CATALOG = 60
+FALLBACK_EXPLANATION = "Review this idea in the lesson, then try a similar problem."
 
 
 def clamp_card_count(value: int | None, *, default: int = DEFAULT_CARD_COUNT) -> int:
@@ -50,6 +52,95 @@ def build_lesson_grounding(lesson) -> str:
         return ""
 
     return text[:MAX_GROUNDING_CHARS]
+
+
+def _page_excerpt(content: str) -> str:
+    text = (content or "").strip()
+    if not text:
+        return ""
+    if text.startswith("[") or text.startswith("{"):
+        return ""
+    return strip_tags(text).replace("\xa0", " ").strip()[:180]
+
+
+def build_page_catalog(lesson) -> list[dict[str, Any]]:
+    """Book pages for this lesson — ids the model may cite as source_page_id."""
+    from courses.models import BookPage
+
+    pages = (
+        BookPage.objects.filter(book_material__lessons=lesson)
+        .select_related("book_material")
+        .order_by("book_material__order", "page_number")[:MAX_PAGE_CATALOG]
+    )
+    catalog: list[dict[str, Any]] = []
+    for page in pages:
+        catalog.append(
+            {
+                "id": str(page.id),
+                "material_id": str(page.book_material_id),
+                "page": int(page.page_number),
+                "title": (page.title or "").strip() or f"Page {page.page_number}",
+                "excerpt": _page_excerpt(page.content),
+            }
+        )
+    return catalog
+
+
+def format_page_catalog_for_prompt(catalog: list[dict[str, Any]]) -> str:
+    if not catalog:
+        return ""
+    lines = []
+    for item in catalog:
+        excerpt = (item.get("excerpt") or "").strip()
+        title = item.get("title") or f"Page {item.get('page')}"
+        line = f"- id={item['id']} | page={item['page']} | title={title}"
+        if excerpt:
+            line += f" | excerpt={excerpt}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def resolve_card_source(
+    card: dict[str, Any], catalog: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Map a model-cited page id (or unique page number) to a stored source object."""
+    if not catalog:
+        return None
+    raw = str(card.get("source_page_id") or "").strip()
+    by_id = {str(item["id"]): item for item in catalog}
+    matched = by_id.get(raw)
+    if not matched and raw.isdigit():
+        hits = [item for item in catalog if int(item.get("page") or 0) == int(raw)]
+        if len(hits) == 1:
+            matched = hits[0]
+    if not matched and len(catalog) == 1:
+        matched = catalog[0]
+    if not matched:
+        return None
+    return {
+        "material_id": str(matched["material_id"]),
+        "page": int(matched["page"]),
+        "title": str(matched.get("title") or f"Page {matched['page']}"),
+    }
+
+
+def attach_card_sources(
+    cards: list[dict[str, Any]], catalog: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Stamp validated `source` onto cards; drop invented source_page_id values."""
+    attached: list[dict[str, Any]] = []
+    for card in cards:
+        item = dict(card)
+        explanation = str(item.get("explanation") or "").strip()
+        item["explanation"] = explanation or FALLBACK_EXPLANATION
+        source = resolve_card_source(item, catalog)
+        item.pop("source_page_id", None)
+        if source:
+            item["source"] = source
+        else:
+            item.pop("source", None)
+        attached.append(item)
+    return attached
 
 
 def _parse_display_json(raw: Any) -> dict[str, Any] | None:
@@ -128,6 +219,7 @@ def generate_deck_for_lesson(
     """
     title = (getattr(lesson, "title", None) or "").strip() or "Untitled lesson"
     grounding = build_lesson_grounding(lesson)
+    catalog = build_page_catalog(lesson)
     count = clamp_card_count(card_count)
 
     raw = generate_study_coach_deck(
@@ -136,6 +228,7 @@ def generate_deck_for_lesson(
         difficulty_mode=difficulty_mode,  # type: ignore[arg-type]
         card_count=count,
         avoid_prompts=avoid_prompts or [],
+        page_catalog_text=format_page_catalog_for_prompt(catalog),
     )
 
     if not raw.get("success"):
@@ -178,7 +271,7 @@ def generate_deck_for_lesson(
             "model_id": raw.get("model_id") or "",
         }
 
-    stamped = dedupe_cards(stamp_card_ids(cards))
+    stamped = attach_card_sources(dedupe_cards(stamp_card_ids(cards)), catalog)
     if not stamped:
         logger.warning(
             "studycoach deck empty after dedupe lesson=%s provider=%s model=%s",

@@ -19,7 +19,11 @@ class StudyCardOut(BaseModel):
     options: Optional[list[str]] = None
     answer: str
     hints: list[str]
-    explanation: Optional[str] = None
+    # Required so the model always writes a Check-screen explanation (optional fields get omitted).
+    explanation: str
+    # BookPage.id from the concept-page catalog. Server turns this into a real URL.
+    # Never a full URL — the model must copy an id from the prompt, or omit it.
+    source_page_id: Optional[str] = None
     difficulty: CardDifficulty
     # Gemini rejects nested structured `display` objects ("too many states").
     # Pass layout as a JSON *string*; the server parses it into `display`.
@@ -33,6 +37,14 @@ class StudyCardOut(BaseModel):
         if not cleaned:
             raise ValueError("hints must include at least one non-empty hint")
         return cleaned
+
+    @field_validator("explanation")
+    @classmethod
+    def explanation_nonempty(cls, v: str) -> str:
+        text = (v or "").strip()
+        if not text:
+            raise ValueError("explanation is required")
+        return text
 
     @model_validator(mode="after")
     def options_match_type(self) -> "StudyCardOut":
@@ -53,3 +65,10 @@ class StudyCardOut(BaseModel):
 class StudyDeckOut(BaseModel):
     # Keep schema simple for model-serving (avoid list length constraints).
     cards: list[StudyCardOut]
+
+
+class StudyCardGradeOut(BaseModel):
+    """Fast structured grade for one Study Coach short-answer card."""
+
+    correct: bool
+    feedback: str

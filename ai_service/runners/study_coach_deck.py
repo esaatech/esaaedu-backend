@@ -35,6 +35,8 @@ Rules:
 - If lesson description is provided, questions MUST be answerable from that material.
 - If only a lesson title is provided, invent fair practice grounded in that title/topic and stay educational.
 - Do not include card ids; the server assigns them.
+- Every card MUST include a short explanation (1–3 sentences) of why the answer is correct. Teach the method; do not only repeat the answer.
+- If a concept-page catalog is provided, set source_page_id to the matching page id from that list. Never invent ids or URLs. If none apply, omit source_page_id.
 """
 
 MATH_DISPLAY_INSTRUCTIONS = """You generate Quizlet-style study quiz cards for students.
@@ -52,6 +54,8 @@ Rules:
 - If lesson description is provided, questions MUST be answerable from that material.
 - If only a lesson title is provided, invent fair practice grounded in that title/topic and stay educational.
 - Do not include card ids; the server assigns them.
+- Every card MUST include a short explanation (1–3 sentences) of why the answer is correct. Teach the method; do not only repeat the answer.
+- If a concept-page catalog is provided, set source_page_id to the matching page id from that list. Never invent ids or URLs. If none apply, omit source_page_id.
 - Do not return HTML, Markdown tables, or Manim/Python.
 
 Math display:
@@ -67,6 +71,12 @@ Math display:
 - If the card is not stacked arithmetic, omit display_json (or set it null).
 """
 
+# Always appended so a stale DB prompt still requires Check-screen explanations.
+CARD_FOLLOWUP_RULES = """
+Every card MUST include a non-empty explanation: 1–3 sentences teaching why the answer is correct (the method or reason, not only repeating the answer).
+If a concept-page catalog is provided, set source_page_id to a listed page id. Never invent ids or URLs.
+"""
+
 # Code fallback when no prompt config is loaded — matches the current product default.
 DEFAULT_INSTRUCTIONS = MATH_DISPLAY_INSTRUCTIONS
 
@@ -79,6 +89,7 @@ def generate_study_coach_deck(
     card_count: int = 6,
     prompt_config=None,
     avoid_prompts: Optional[list[str]] = None,
+    page_catalog_text: str = "",
 ) -> dict[str, Any]:
     """
     Generate a study quiz deck.
@@ -137,6 +148,8 @@ def generate_study_coach_deck(
     instructions = (
         getattr(prompt_config, "system_prompt", None) or DEFAULT_INSTRUCTIONS
     ).strip()
+    if CARD_FOLLOWUP_RULES.strip() not in instructions:
+        instructions = f"{instructions}\n\n{CARD_FOLLOWUP_RULES.strip()}"
 
     user_prompt = _build_user_prompt(
         title=title,
@@ -144,6 +157,7 @@ def generate_study_coach_deck(
         mode=mode,
         count=count,
         avoid_prompts=avoid_prompts or [],
+        page_catalog_text=page_catalog_text or "",
     )
 
     try:
@@ -231,6 +245,7 @@ def _build_user_prompt(
     mode: DifficultyMode,
     count: int,
     avoid_prompts: Optional[list[str]] = None,
+    page_catalog_text: str = "",
 ) -> str:
     parts = [
         f"Lesson title: {title}",
@@ -244,6 +259,13 @@ def _build_user_prompt(
         parts.append(
             "No lesson description provided. Generate fair practice from the lesson title alone."
         )
+    catalog = (page_catalog_text or "").strip()
+    if catalog:
+        parts.append(
+            "Concept pages for this lesson. If a question is about a page, "
+            "copy that page's id into source_page_id. Do not invent ids or URLs:"
+        )
+        parts.append(catalog[:8000])
     avoid = [p.strip() for p in (avoid_prompts or []) if (p or "").strip()]
     if avoid:
         parts.append(
@@ -254,7 +276,8 @@ def _build_user_prompt(
     parts.append(
         "Within this deck, every card must be distinct "
         "(different prompts, or different operands/operators for column math). "
-        "Do not reuse example numbers from the lesson description; invent fresh problems."
+        "Do not reuse example numbers from the lesson description; invent fresh problems. "
+        "Each card must include a short explanation (1–3 sentences) of why the answer is correct."
     )
     return "\n\n".join(parts)
 
