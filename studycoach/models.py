@@ -16,6 +16,7 @@ class StudySession(models.Model):
         ("grounded", "Grounded"),
         ("title", "Title"),
         ("static", "Static"),
+        ("bank", "Practice bank"),
     ]
     STATUS_CHOICES = [
         ("active", "Active"),

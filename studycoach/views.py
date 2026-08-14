@@ -20,6 +20,7 @@ from .serializers import (
 from .services.access import user_can_manage_lesson_bank, user_can_study_lesson
 from .services.bank_generator import (
     MAX_BANK_ITEMS,
+    draw_cards_from_bank,
     generate_into_bank,
     resolve_sources_from_ids,
 )
@@ -97,6 +98,26 @@ class StudySessionListCreateView(APIView):
 
         difficulty_mode = serializer.validated_data["difficulty_mode"]
         card_count = clamp_card_count(serializer.validated_data.get("card_count"))
+        bank_cards = draw_cards_from_bank(
+            lesson,
+            difficulty_mode=difficulty_mode,
+            card_count=card_count,
+        )
+        if bank_cards:
+            session = StudySession.objects.create(
+                student=request.user,
+                lesson=lesson,
+                difficulty_mode=difficulty_mode,
+                grounding_mode="bank",
+                status="active",
+                cards=bank_cards,
+                progress=default_progress(),
+            )
+            return Response(
+                StudySessionSerializer(session).data,
+                status=status.HTTP_201_CREATED,
+            )
+
         deck = generate_deck_for_lesson(
             lesson=lesson,
             difficulty_mode=difficulty_mode,
@@ -184,30 +205,46 @@ class StudySessionExtendView(APIView):
             for label in (card_avoid_label(c) for c in existing)
             if label
         ]
-        deck = generate_deck_for_lesson(
-            lesson=session.lesson,
+        bank_cards = draw_cards_from_bank(
+            session.lesson,
             difficulty_mode=session.difficulty_mode,
             card_count=card_count,
-            avoid_prompts=avoid_prompts,
+            exclude_prompts=avoid_prompts,
         )
-        if not deck.get("success"):
-            return Response(
-                {
-                    "error": deck.get("error"),
-                    "error_code": deck.get("error_code") or "generation_failed",
-                },
-                status=deck.get("status_code") or status.HTTP_503_SERVICE_UNAVAILABLE,
+        if bank_cards is not None:
+            if not bank_cards:
+                return Response(
+                    {
+                        "error": "No more practice questions in this lesson bank.",
+                        "error_code": "bank_exhausted",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            new_cards = bank_cards
+        else:
+            deck = generate_deck_for_lesson(
+                lesson=session.lesson,
+                difficulty_mode=session.difficulty_mode,
+                card_count=card_count,
+                avoid_prompts=avoid_prompts,
             )
-
-        new_cards = dedupe_cards(list(deck.get("cards") or []), existing=existing)
-        if not new_cards:
-            return Response(
-                {
-                    "error": "We couldn't generate more cards right now. Please try again.",
-                    "error_code": "generation_failed",
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+            if not deck.get("success"):
+                return Response(
+                    {
+                        "error": deck.get("error"),
+                        "error_code": deck.get("error_code") or "generation_failed",
+                    },
+                    status=deck.get("status_code") or status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            new_cards = dedupe_cards(list(deck.get("cards") or []), existing=existing)
+            if not new_cards:
+                return Response(
+                    {
+                        "error": "We couldn't generate more cards right now. Please try again.",
+                        "error_code": "generation_failed",
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
 
         # Keep only what fits under the session cap.
         room = MAX_CARD_COUNT - len(existing)

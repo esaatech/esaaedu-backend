@@ -250,9 +250,13 @@ class StudyCoachGradingTests(SimpleTestCase):
             grade_study_card(card, "electrons moving through a wire")
 
 
+from types import SimpleNamespace
+
 from studycoach.services.bank_generator import (
     card_to_item_fields,
     filter_catalog,
+    item_to_session_card,
+    pool_for_difficulty,
     resolve_sources_from_ids,
 )
 
@@ -300,3 +304,28 @@ class CoachBankGeneratorTests(SimpleTestCase):
         self.assertEqual(len(sources), 1)
         self.assertEqual(sources[0]["kind"], "page")
         self.assertEqual(sources[0]["page"], 2)
+
+    def test_pool_for_difficulty_prefers_easy(self):
+        items = [
+            SimpleNamespace(difficulty="hard"),
+            SimpleNamespace(difficulty="easy"),
+            SimpleNamespace(difficulty="intermediate"),
+        ]
+        pool = pool_for_difficulty(items, "easy")
+        self.assertEqual([item.difficulty for item in pool], ["easy"])
+
+    def test_item_to_session_card_keeps_prompt(self):
+        item = SimpleNamespace(
+            question_type="short_answer",
+            prompt='[{"id":"1","type":"image","props":{"url":"https://example.com/a.png"}}]',
+            options=[],
+            answer="A",
+            hints=[],
+            explanation="",
+            difficulty="easy",
+            sources=[],
+        )
+        card = item_to_session_card(item)
+        self.assertIn("id", card)
+        self.assertIn("image", card["prompt"])
+        self.assertEqual(card["difficulty"], "easy")

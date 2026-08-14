@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import random
+import uuid
 from typing import Any
+
+from django.core.exceptions import ObjectDoesNotExist
 
 from .card_metadata import (
     FALLBACK_EXPLANATION,
@@ -73,6 +77,73 @@ def card_to_item_fields(card: dict[str, Any]) -> dict[str, Any]:
         "difficulty": normalize_difficulty(card.get("difficulty")),
         "sources": sources,
     }
+
+
+def item_to_session_card(item) -> dict[str, Any]:
+    """Map a CoachItem onto the student session card shape (images stay in prompt JSON)."""
+    card = card_to_item_fields(
+        {
+            "question_type": item.question_type,
+            "prompt": item.prompt,
+            "options": item.options or [],
+            "answer": item.answer,
+            "hints": item.hints or [],
+            "explanation": item.explanation,
+            "difficulty": item.difficulty,
+            "sources": item.sources or [],
+        }
+    )
+    card["id"] = str(uuid.uuid4())
+    return card
+
+
+def pool_for_difficulty(items: list, difficulty_mode: str) -> list:
+    if difficulty_mode == "easy":
+        preferred = [item for item in items if item.difficulty == "easy"]
+        return preferred or [item for item in items if item.difficulty == "intermediate"] or list(
+            items
+        )
+    if difficulty_mode == "hard":
+        preferred = [item for item in items if item.difficulty == "hard"]
+        return preferred or [item for item in items if item.difficulty == "intermediate"] or list(
+            items
+        )
+    return list(items)
+
+
+def draw_cards_from_bank(
+    lesson,
+    *,
+    difficulty_mode: str,
+    card_count: int,
+    exclude_prompts: list[str] | None = None,
+) -> list[dict[str, Any]] | None:
+    """
+    Sample practice cards from the lesson bank.
+
+    None = no bank / empty bank (caller should live-generate).
+    [] = bank exists but nothing left after filters (caller should not live-generate).
+    """
+    try:
+        bank = lesson.coach_bank
+    except ObjectDoesNotExist:
+        return None
+    items = list(bank.items.all())
+    if not items:
+        return None
+    excluded = {str(label).strip() for label in (exclude_prompts or []) if str(label).strip()}
+    if excluded:
+        items = [
+            item
+            for item in items
+            if card_avoid_label(item_to_avoid_card(item)) not in excluded
+        ]
+    pool = pool_for_difficulty(items, difficulty_mode)
+    if not pool:
+        return []
+    random.shuffle(pool)
+    take = max(1, min(int(card_count or 6), len(pool)))
+    return [item_to_session_card(item) for item in pool[:take]]
 
 
 def generate_into_bank(
