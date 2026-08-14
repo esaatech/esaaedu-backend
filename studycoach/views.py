@@ -5,15 +5,25 @@ from rest_framework.views import APIView
 
 from courses.models import Lesson
 
-from .models import StudySession
+from .models import CoachBank, CoachItem, StudySession
 from .serializers import (
+    CoachBankGenerateSerializer,
+    CoachBankSerializer,
+    CoachItemSerializer,
+    CoachItemWriteSerializer,
     StudySessionAnswerSerializer,
     StudySessionCreateSerializer,
     StudySessionExtendSerializer,
     StudySessionListSerializer,
     StudySessionSerializer,
 )
-from .services.access import user_can_study_lesson
+from .services.access import user_can_manage_lesson_bank, user_can_study_lesson
+from .services.bank_generator import (
+    MAX_BANK_ITEMS,
+    generate_into_bank,
+    resolve_sources_from_ids,
+)
+from .services.card_metadata import build_content_catalog
 from .services.deck_generator import (
     MAX_CARD_COUNT,
     clamp_card_count,
@@ -313,3 +323,162 @@ class StudySessionAnswerView(APIView):
                 "session": StudySessionSerializer(session).data,
             }
         )
+
+
+def _teacher_lesson(request, lesson_id):
+    lesson = get_object_or_404(Lesson, id=lesson_id)
+    if not user_can_manage_lesson_bank(request.user, lesson):
+        return None, Response(
+            {"error": "Only course teachers can manage this practice bank"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return lesson, None
+
+
+def _serialize_bank(bank):
+    bank.item_count = bank.items.count()
+    return CoachBankSerializer(bank).data
+
+
+class LessonCoachBankView(APIView):
+    """GET: get-or-create the practice bank for a lesson. DELETE: remove it."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, lesson_id):
+        lesson, error = _teacher_lesson(request, lesson_id)
+        if error:
+            return error
+        bank, _created = CoachBank.objects.get_or_create(lesson=lesson)
+        return Response(_serialize_bank(bank))
+
+    def delete(self, request, lesson_id):
+        lesson, error = _teacher_lesson(request, lesson_id)
+        if error:
+            return error
+        CoachBank.objects.filter(lesson=lesson).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class LessonCoachCatalogView(APIView):
+    """Lesson pages / videos / PDFs the teacher can tag on questions."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, lesson_id):
+        lesson, error = _teacher_lesson(request, lesson_id)
+        if error:
+            return error
+        catalog = build_content_catalog(lesson)
+        return Response({"results": catalog, "count": len(catalog)})
+
+
+class LessonCoachGenerateView(APIView):
+    """Append AI practice questions to the lesson bank."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, lesson_id):
+        lesson, error = _teacher_lesson(request, lesson_id)
+        if error:
+            return error
+        serializer = CoachBankGenerateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        bank, _created = CoachBank.objects.get_or_create(lesson=lesson)
+        result = generate_into_bank(
+            bank,
+            difficulty_mode=serializer.validated_data["difficulty_mode"],
+            card_count=serializer.validated_data.get("card_count") or 10,
+            source_ids=serializer.validated_data.get("source_ids") or [],
+        )
+        if not result.get("success"):
+            return Response(
+                {
+                    "error": result.get("error"),
+                    "error_code": result.get("error_code") or "generation_failed",
+                    "bank": _serialize_bank(bank),
+                },
+                status=result.get("status_code") or status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(
+            {
+                "added": result.get("added") or 0,
+                "bank": _serialize_bank(bank),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class LessonCoachItemListCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, lesson_id):
+        lesson, error = _teacher_lesson(request, lesson_id)
+        if error:
+            return error
+        bank, _created = CoachBank.objects.get_or_create(lesson=lesson)
+        if bank.items.count() >= MAX_BANK_ITEMS:
+            return Response(
+                {"error": "This lesson already has 100 practice questions."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = CoachItemWriteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        catalog = build_content_catalog(lesson)
+        source_ids = serializer.validated_data.pop("source_ids", None)
+        payload = dict(serializer.validated_data)
+        if source_ids is not None:
+            payload["sources"] = resolve_sources_from_ids(source_ids, catalog)
+        elif payload.get("sources"):
+            payload["sources"] = resolve_sources_from_ids(
+                [str(s.get("id") or "") for s in payload["sources"] if isinstance(s, dict)],
+                catalog,
+            )
+        last = bank.items.order_by("-order").first()
+        payload["order"] = (last.order + 1) if last else 1
+        if not payload.get("hints"):
+            payload["hints"] = ["Think about what the lesson covers."]
+        item = CoachItem.objects.create(bank=bank, **payload)
+        bank.save(update_fields=["updated_at"])
+        return Response(CoachItemSerializer(item).data, status=status.HTTP_201_CREATED)
+
+
+class CoachItemDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _item_for_teacher(self, request, item_id):
+        item = get_object_or_404(CoachItem.objects.select_related("bank__lesson__course"), id=item_id)
+        if not user_can_manage_lesson_bank(request.user, item.bank.lesson):
+            return None, Response(
+                {"error": "Only course teachers can manage this practice bank"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return item, None
+
+    def patch(self, request, item_id):
+        item, error = self._item_for_teacher(request, item_id)
+        if error:
+            return error
+        serializer = CoachItemWriteSerializer(item, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        catalog = build_content_catalog(item.bank.lesson)
+        source_ids = serializer.validated_data.pop("source_ids", None)
+        for key, value in serializer.validated_data.items():
+            setattr(item, key, value)
+        if source_ids is not None:
+            item.sources = resolve_sources_from_ids(source_ids, catalog)
+        item.save()
+        item.bank.save(update_fields=["updated_at"])
+        return Response(CoachItemSerializer(item).data)
+
+    def delete(self, request, item_id):
+        item, error = self._item_for_teacher(request, item_id)
+        if error:
+            return error
+        bank = item.bank
+        item.delete()
+        bank.save(update_fields=["updated_at"])
+        return Response(status=status.HTTP_204_NO_CONTENT)

@@ -8,7 +8,7 @@ from pydantic import BaseModel, field_validator, model_validator
 
 
 QuestionType = Literal["multiple_choice", "true_false", "short_answer"]
-CardDifficulty = Literal["easy", "hard"]
+CardDifficulty = Literal["easy", "intermediate", "hard"]
 DifficultyMode = Literal["easy", "hard", "auto"]
 
 
@@ -21,8 +21,10 @@ class StudyCardOut(BaseModel):
     hints: list[str]
     # Required so the model always writes a Check-screen explanation (optional fields get omitted).
     explanation: str
-    # BookPage.id from the concept-page catalog. Server turns this into a real URL.
-    # Never a full URL — the model must copy an id from the prompt, or omit it.
+    # Catalog locator ids (BookPage or LessonMaterial). Server validates and stores sources[].
+    # Never a full URL — copy ids from the prompt, or omit.
+    source_ids: Optional[list[str]] = None
+    # Legacy single page id — still accepted and merged into source_ids.
     source_page_id: Optional[str] = None
     difficulty: CardDifficulty
     # Gemini rejects nested structured `display` objects ("too many states").

@@ -29,14 +29,15 @@ Rules:
 - For multiple_choice / true_false, include options and set answer to exactly one option string.
 - For short_answer, answer is the expected brief response; hints still must not fully spoil it in the first hint.
 - Match difficulty_mode:
-  - easy: mostly multiple_choice / true_false, clearer first hints
-  - hard: mostly short_answer, tougher prompts, vaguer early hints
-  - auto: mix — start easier, later cards harder
+  - easy: mostly multiple_choice / true_false, clearer first hints; set each card difficulty to easy
+  - hard: mostly short_answer, tougher prompts, vaguer early hints; set each card difficulty to hard
+  - auto: mix — start easier, later cards harder; use easy, intermediate, and hard
+- Each card's difficulty MUST be one of: easy, intermediate, hard.
 - If lesson description is provided, questions MUST be answerable from that material.
 - If only a lesson title is provided, invent fair practice grounded in that title/topic and stay educational.
 - Do not include card ids; the server assigns them.
 - Every card MUST include a short explanation (1–3 sentences) of why the answer is correct. Teach the method; do not only repeat the answer.
-- If a concept-page catalog is provided, set source_page_id to the matching page id from that list. Never invent ids or URLs. If none apply, omit source_page_id.
+- If a content catalog is provided, copy one or more listed ids into source_ids (a question may cite a page and a video, for example). Never invent ids or URLs. If none apply, omit source_ids.
 """
 
 MATH_DISPLAY_INSTRUCTIONS = """You generate Quizlet-style study quiz cards for students.
@@ -48,14 +49,15 @@ Rules:
 - For multiple_choice / true_false, include options and set answer to exactly one option string.
 - For short_answer, answer is the expected brief response; hints still must not fully spoil it in the first hint.
 - Match difficulty_mode:
-  - easy: mostly multiple_choice / true_false, clearer first hints
-  - hard: mostly short_answer, tougher prompts, vaguer early hints
-  - auto: mix — start easier, later cards harder
+  - easy: mostly multiple_choice / true_false, clearer first hints; set each card difficulty to easy
+  - hard: mostly short_answer, tougher prompts, vaguer early hints; set each card difficulty to hard
+  - auto: mix — start easier, later cards harder; use easy, intermediate, and hard
+- Each card's difficulty MUST be one of: easy, intermediate, hard.
 - If lesson description is provided, questions MUST be answerable from that material.
 - If only a lesson title is provided, invent fair practice grounded in that title/topic and stay educational.
 - Do not include card ids; the server assigns them.
 - Every card MUST include a short explanation (1–3 sentences) of why the answer is correct. Teach the method; do not only repeat the answer.
-- If a concept-page catalog is provided, set source_page_id to the matching page id from that list. Never invent ids or URLs. If none apply, omit source_page_id.
+- If a content catalog is provided, copy one or more listed ids into source_ids (a question may cite a page and a video, for example). Never invent ids or URLs. If none apply, omit source_ids.
 - Do not return HTML, Markdown tables, or Manim/Python.
 
 Math display:
@@ -71,10 +73,11 @@ Math display:
 - If the card is not stacked arithmetic, omit display_json (or set it null).
 """
 
-# Always appended so a stale DB prompt still requires Check-screen explanations.
+# Always appended so a stale DB prompt still requires Check-screen explanations + locators.
 CARD_FOLLOWUP_RULES = """
 Every card MUST include a non-empty explanation: 1–3 sentences teaching why the answer is correct (the method or reason, not only repeating the answer).
-If a concept-page catalog is provided, set source_page_id to a listed page id. Never invent ids or URLs.
+Each card's difficulty MUST be easy, intermediate, or hard.
+If a content catalog is provided, copy one or more listed ids into source_ids. A question may cite multiple items (page, video, PDF). Never invent ids or URLs.
 """
 
 # Code fallback when no prompt config is loaded — matches the current product default.
@@ -262,8 +265,9 @@ def _build_user_prompt(
     catalog = (page_catalog_text or "").strip()
     if catalog:
         parts.append(
-            "Concept pages for this lesson. If a question is about a page, "
-            "copy that page's id into source_page_id. Do not invent ids or URLs:"
+            "Lesson content catalog. If a question is about an item, copy that "
+            "item's id into source_ids (you may list more than one). "
+            "Do not invent ids or URLs:"
         )
         parts.append(catalog[:8000])
     avoid = [p.strip() for p in (avoid_prompts or []) if (p or "").strip()]

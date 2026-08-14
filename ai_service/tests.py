@@ -58,16 +58,19 @@ class StudyCoachSchemaTests(SimpleTestCase):
         )
         self.assertIn("column_math", card.display_json or "")
 
-    def test_source_page_id_optional(self):
+    def test_source_ids_optional_and_intermediate_difficulty(self):
         card = StudyCardOut(
             question_type="short_answer",
             prompt="What is 4/10 simplified thinking?",
             answer="4/10",
             hints=["Keep the denominator."],
             explanation="Subtract the numerators and keep the same denominator.",
+            source_ids=["11111111-1111-1111-1111-111111111111"],
             source_page_id="11111111-1111-1111-1111-111111111111",
-            difficulty="easy",
+            difficulty="intermediate",
         )
+        self.assertEqual(card.difficulty, "intermediate")
+        self.assertEqual(card.source_ids, ["11111111-1111-1111-1111-111111111111"])
         self.assertEqual(card.source_page_id, "11111111-1111-1111-1111-111111111111")
         self.assertIn("denominator", card.explanation or "")
 

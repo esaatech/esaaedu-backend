@@ -114,7 +114,7 @@ Student Tools → Study Coach → **Generate quiz** calls:
 `studycoach.services.deck_generator.generate_deck_for_lesson` → `generate_study_coach_deck`
 
 - Grounding from lesson `description` only (HTML stripped; else title-only).
-- Book pages for the lesson are passed as a **catalog** (id, page number, title, short excerpt). The model cites `source_page_id`; the server validates it and stores `{ material_id, page, title }`. The frontend builds the student page URL. The model never invents URLs.
+- Lesson content catalog (book pages, videos, PDFs, documents) is passed as ids + kind + title (pages also include page number and a short excerpt). The model cites one or more `source_ids`; the server validates them and stores `sources: [{ kind, id, material_id, title, page? }]`. A question may tag multiple items. Invented ids are dropped. Each card also has `difficulty`: `easy` | `intermediate` | `hard`. The frontend builds student links from locators. The model never invents URLs.
 - Every card gets a short `explanation` (prompt-required; server fills a fallback if missing).
 - Prompt variants: keep original slug `default` unchanged; `math_display` is the active default (column math via `display_json` string + LaTeX). Re-run `setup_study_coach_deck` to seed/update `math_display` without overwriting `default`.
 - Short-answer **Check** uses a separate service, `study_coach_grade` (`python manage.py setup_study_coach_grade`). Default model is **Gemini 2.5 Flash Lite** (falls back to Flash, then DeepSeek). Same grading intent as assignment GeminiGrader (meaning over exact wording), tiny `{correct, feedback}` output, 20s timeout.
