@@ -4314,6 +4314,106 @@ class AudioVideoUploadView(APIView):
             )
 
 
+def _hls_prefix_from_file_url(file_url: str) -> str | None:
+    """Extract GCS object prefix (hls/audio-video/<uuid>) from a playlist URL."""
+    if not file_url:
+        return None
+    marker = "/hls/"
+    idx = file_url.find(marker)
+    if idx == -1:
+        return None
+    path = file_url[idx + 1:].split("?", 1)[0].split("#", 1)[0]
+    if path.endswith("/playlist.m3u8"):
+        return path[: -len("/playlist.m3u8")]
+    if path.endswith(".m3u8"):
+        return path.rsplit("/", 1)[0]
+    return path.rstrip("/")
+
+
+class AudioVideoDeleteView(APIView):
+    """
+    Delete an uploaded audio/video (including HLS playlist + segments) from GCS.
+    Looks up AudioVideoMaterial by id or file_url; falls back to HLS prefix from the URL.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request):
+        if request.user.role != "teacher":
+            return Response(
+                {"error": "Only teachers can delete audio/video files"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        material_id = request.data.get("audio_video_material_id")
+        file_url = (request.data.get("file_url") or "").strip()
+        lesson_id = request.data.get("lesson_id")
+
+        if not material_id and not file_url:
+            return Response(
+                {"error": "audio_video_material_id or file_url is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        material = None
+        if material_id:
+            material = AudioVideoMaterial.objects.filter(id=material_id).first()
+        if material is None and file_url:
+            material = AudioVideoMaterial.objects.filter(file_url=file_url).first()
+
+        deleted_url = (material.file_url if material else file_url) or ""
+
+        if material:
+            uploaded_by_self = material.uploaded_by_id == request.user.id
+            used_on_own_lesson = Lesson.objects.filter(
+                owned_or_member_q(request.user, "course__"),
+                video_url=material.file_url,
+            ).exists()
+            if not uploaded_by_self and not used_on_own_lesson:
+                return Response(
+                    {"error": "You do not have permission to delete this video"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            material.delete()
+        else:
+            prefix = _hls_prefix_from_file_url(file_url)
+            if not prefix:
+                return Response(
+                    {"error": "Uploaded video was not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            used_on_own_lesson = Lesson.objects.filter(
+                owned_or_member_q(request.user, "course__"),
+                video_url=file_url,
+            ).exists()
+            if not used_on_own_lesson:
+                return Response(
+                    {"error": "You do not have permission to delete this video"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            try:
+                delete_hls_from_gcs(prefix)
+            except Exception as e:
+                logger.exception("Failed to delete HLS from GCS: %s", e)
+                return Response(
+                    {"error": "Failed to delete video from storage"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+        if lesson_id and deleted_url:
+            lesson = Lesson.objects.filter(
+                owned_or_member_q(request.user, "course__"),
+                id=lesson_id,
+            ).first()
+            if lesson and lesson.video_url == deleted_url:
+                lesson.video_url = ""
+                lesson.save(update_fields=["video_url"])
+
+        return Response(
+            {"message": "Video deleted", "file_url": deleted_url},
+            status=status.HTTP_200_OK,
+        )
+
+
 class CourseImageUploadView(APIView):
     """
     API view for uploading course images to Google Cloud Storage.

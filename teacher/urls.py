@@ -100,6 +100,7 @@ urlpatterns = [
     
     # Audio/Video Upload URLs
     path('audio-video/upload/', views.AudioVideoUploadView.as_view(), name='audio_video_upload'),
+    path('audio-video/delete/', views.AudioVideoDeleteView.as_view(), name='audio_video_delete'),
     
     # Course Image Upload URLs
     path('course-images/upload/', views.CourseImageUploadView.as_view(), name='course_image_upload'),
