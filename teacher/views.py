@@ -5886,3 +5886,209 @@ class StudentUnreadCountView(APIView):
                 {'error': 'Failed to get unread count', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class TeacherClassroomClassesView(APIView):
+    """
+    Get all classes for the teacher classroom page.
+    Returns classes categorized by status: in_progress, upcoming, and finished.
+
+    GET /api/teacher/classroom/classes/
+    """
+    permission_classes = [IsAuthenticated]
+
+    COLOR_PALETTE = [
+        {'bg': '#3B82F6', 'border': '#2563EB', 'text': '#FFFFFF'},
+        {'bg': '#10B981', 'border': '#059669', 'text': '#FFFFFF'},
+        {'bg': '#F59E0B', 'border': '#D97706', 'text': '#FFFFFF'},
+        {'bg': '#EF4444', 'border': '#DC2626', 'text': '#FFFFFF'},
+        {'bg': '#8B5CF6', 'border': '#7C3AED', 'text': '#FFFFFF'},
+        {'bg': '#06B6D4', 'border': '#0891B2', 'text': '#FFFFFF'},
+        {'bg': '#F97316', 'border': '#EA580C', 'text': '#FFFFFF'},
+        {'bg': '#EC4899', 'border': '#DB2777', 'text': '#FFFFFF'},
+    ]
+
+    def get(self, request):
+        try:
+            if not request.user.is_teacher:
+                return Response(
+                    {'error': 'Only teachers can access classroom classes'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            finished_offset = int(request.query_params.get('finished_offset', 0))
+            finished_limit = int(request.query_params.get('finished_limit', 5))
+            now = timezone.now()
+
+            empty = {
+                'in_progress_classes': [],
+                'upcoming_classes': [],
+                'finished_events': [],
+                'summary': {
+                    'total_in_progress': 0,
+                    'total_upcoming': 0,
+                    'total_finished': 0,
+                },
+                'finished_events_pagination': {
+                    'offset': finished_offset,
+                    'limit': finished_limit,
+                    'total_count': 0,
+                    'has_more': False,
+                },
+            }
+
+            classes = (
+                classes_for_teacher(request.user)
+                .exclude(course__delivery_type='self_paced')
+                .filter(is_active=True)
+                .select_related('course')
+            )
+
+            if not classes.exists():
+                return Response(empty, status=status.HTTP_200_OK)
+
+            class_ids = list(classes.values_list('id', flat=True))
+            events = (
+                ClassEvent.objects.filter(class_instance_id__in=class_ids)
+                .select_related('class_instance', 'class_instance__course', 'lesson')
+                .order_by('start_time')
+            )
+
+            events_by_class = {}
+            for event in events:
+                events_by_class.setdefault(event.class_instance_id, []).append(event)
+
+            in_progress_classes = []
+            upcoming_classes = []
+            finished_events = []
+            class_map = {}
+
+            for index, class_obj in enumerate(classes):
+                class_events = events_by_class.get(class_obj.id, [])
+                if not class_events:
+                    continue
+
+                colors = self.COLOR_PALETTE[index % len(self.COLOR_PALETTE)]
+                class_map[str(class_obj.id)] = {
+                    'class_obj': class_obj,
+                    'colors': colors,
+                }
+
+                current_event = None
+                upcoming_event = None
+                for event in class_events:
+                    if not event.start_time:
+                        continue
+                    event_start = event.start_time
+                    event_end = event.end_time or event_start
+                    if event_start <= now < event_end:
+                        current_event = event
+                        break
+                    if event_start > now and (
+                        not upcoming_event or event_start < upcoming_event.start_time
+                    ):
+                        upcoming_event = event
+
+                class_data = {
+                    'id': str(class_obj.id),
+                    'name': class_obj.name,
+                    'course_name': class_obj.course.title,
+                    'course_id': str(class_obj.course.id),
+                    'color': colors['bg'],
+                }
+
+                if current_event:
+                    class_data['current_event'] = self._serialize_event(current_event)
+                    in_progress_classes.append(class_data)
+                elif upcoming_event:
+                    class_data['next_event'] = self._serialize_event(upcoming_event)
+                    upcoming_classes.append(class_data)
+
+            for event in events:
+                if not event.start_time:
+                    continue
+                event_end = event.end_time or event.start_time
+                if event_end >= now:
+                    continue
+
+                class_id = str(event.class_instance_id)
+                class_info = class_map.get(class_id)
+                if not class_info:
+                    continue
+
+                class_obj = class_info['class_obj']
+                colors = class_info['colors']
+                finished_events.append({
+                    'event_id': str(event.id),
+                    'event_title': event.title,
+                    'event_start': event.start_time.isoformat() if event.start_time else None,
+                    'event_end': event_end.isoformat() if event_end else None,
+                    'event_description': event.description or '',
+                    'event_type': event.event_type,
+                    'meeting_platform': event.meeting_platform,
+                    'meeting_link': event.meeting_link,
+                    'meeting_id': event.meeting_id,
+                    'meeting_password': event.meeting_password,
+                    'class_id': class_id,
+                    'class_name': class_obj.name,
+                    'course_id': str(class_obj.course.id),
+                    'course_name': class_obj.course.title,
+                    'color': colors['bg'],
+                    'lesson_id': str(event.lesson.id) if event.lesson else None,
+                })
+
+            in_progress_classes.sort(
+                key=lambda x: x['current_event']['start'] if 'current_event' in x else ''
+            )
+            upcoming_classes.sort(
+                key=lambda x: x['next_event']['start'] if 'next_event' in x else ''
+            )
+            finished_events.sort(
+                key=lambda x: x['event_end'] or x['event_start'] or '',
+                reverse=True,
+            )
+
+            total_finished_count = len(finished_events)
+            paginated_finished_events = finished_events[
+                finished_offset:finished_offset + finished_limit
+            ]
+
+            return Response({
+                'in_progress_classes': in_progress_classes,
+                'upcoming_classes': upcoming_classes,
+                'finished_events': paginated_finished_events,
+                'summary': {
+                    'total_in_progress': len(in_progress_classes),
+                    'total_upcoming': len(upcoming_classes),
+                    'total_finished': total_finished_count,
+                },
+                'finished_events_pagination': {
+                    'offset': finished_offset,
+                    'limit': finished_limit,
+                    'total_count': total_finished_count,
+                    'has_more': (finished_offset + finished_limit) < total_finished_count,
+                },
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f'Failed to fetch teacher classroom classes: {e}')
+            return Response(
+                {'error': f'Failed to fetch classroom classes: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    def _serialize_event(self, event):
+        return {
+            'id': str(event.id),
+            'title': event.title,
+            'start': event.start_time.isoformat() if event.start_time else None,
+            'end': event.end_time.isoformat() if event.end_time else (
+                event.start_time.isoformat() if event.start_time else None
+            ),
+            'description': event.description or '',
+            'event_type': event.event_type,
+            'meeting_platform': event.meeting_platform,
+            'meeting_link': event.meeting_link,
+            'meeting_id': event.meeting_id,
+            'meeting_password': event.meeting_password,
+        }
