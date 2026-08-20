@@ -1677,8 +1677,10 @@ class StudentLessonProgress(models.Model):
     
     def update_progress_data(self, data):
         """Update lesson-specific progress data"""
-        self.progress_data.update(data)
-        self.save()
+        merged = dict(self.progress_data or {})
+        merged.update(data)
+        self.progress_data = merged
+        self.save(update_fields=['progress_data', 'updated_at'])
     
     @property
     def is_completed(self):

@@ -24,7 +24,7 @@ from .permissions import (
 )
 
 logger = logging.getLogger(__name__)
-from student.models import EnrolledCourse, StudentAttendance
+from student.models import EnrolledCourse, StudentAttendance, StudentLessonProgress
 from django.db.models import F, Sum, Max
 from courses.models import ClassEvent
 from .serializers import (
@@ -5277,6 +5277,16 @@ class StudentLessonDetailView(APIView):
                             content_copy.pop('transcript', None)
                             serialized_data['content'] = content_copy
             
+            serialized_data['position_seconds'] = None
+            serialized_data['duration_seconds'] = None
+            try:
+                progress = _student_lesson_progress_for_request(request, lesson)
+                if progress and isinstance(progress.progress_data, dict):
+                    serialized_data['position_seconds'] = progress.progress_data.get('position_seconds')
+                    serialized_data['duration_seconds'] = progress.progress_data.get('duration_seconds')
+            except Exception:
+                pass
+
             return Response(serialized_data)
             
         except Exception as e:
@@ -5366,6 +5376,90 @@ class StudentLessonDetailView(APIView):
                 {'error': f'Failed to mark lesson complete: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+def _parse_progress_seconds(value):
+    if value is None or value == '':
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number < 0:
+        return None
+    return number
+
+
+def _student_enrollment_for_lesson(user, lesson):
+    if user is None or not getattr(user, 'is_authenticated', False):
+        return None
+    try:
+        student_profile = user.student_profile
+    except Exception:
+        return None
+    return EnrolledCourse.objects.filter(
+        student_profile=student_profile,
+        course=lesson.course,
+        status__in=['active', 'completed'],
+    ).first()
+
+
+def _student_lesson_progress_for_request(request, lesson):
+    enrollment = _student_enrollment_for_lesson(request.user, lesson)
+    if enrollment is None:
+        return None
+    return StudentLessonProgress.objects.filter(
+        enrollment=enrollment,
+        lesson=lesson,
+    ).first()
+
+
+class StudentLessonPlaybackProgressView(APIView):
+    """
+    Save per-student video resume position without marking the lesson complete.
+    Stored on StudentLessonProgress.progress_data.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, lesson_id):
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+        enrollment = _student_enrollment_for_lesson(request.user, lesson)
+        if enrollment is None:
+            return Response(
+                {'error': 'You are not enrolled in this course'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        position_seconds = _parse_progress_seconds(request.data.get('position_seconds'))
+        if position_seconds is None:
+            return Response(
+                {'error': 'position_seconds is required and must be a non-negative number'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        duration_seconds = _parse_progress_seconds(request.data.get('duration_seconds'))
+
+        progress, _created = StudentLessonProgress.objects.get_or_create(
+            enrollment=enrollment,
+            lesson=lesson,
+            defaults={'status': 'not_started'},
+        )
+        if progress.status == 'not_started':
+            progress.mark_as_started()
+
+        payload = {'position_seconds': position_seconds}
+        if duration_seconds is not None:
+            payload['duration_seconds'] = duration_seconds
+        progress.update_progress_data(payload)
+
+        data = dict(progress.progress_data or {})
+        return Response(
+            {
+                'position_seconds': data.get('position_seconds', position_seconds),
+                'duration_seconds': data.get('duration_seconds'),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class StudentLessonNextView(APIView):
