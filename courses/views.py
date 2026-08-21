@@ -5279,11 +5279,17 @@ class StudentLessonDetailView(APIView):
             
             serialized_data['position_seconds'] = None
             serialized_data['duration_seconds'] = None
+            serialized_data['completed_interactive_event_ids'] = []
             try:
                 progress = _student_lesson_progress_for_request(request, lesson)
                 if progress and isinstance(progress.progress_data, dict):
                     serialized_data['position_seconds'] = progress.progress_data.get('position_seconds')
                     serialized_data['duration_seconds'] = progress.progress_data.get('duration_seconds')
+                    raw_ids = progress.progress_data.get('completed_interactive_event_ids')
+                    if isinstance(raw_ids, list):
+                        serialized_data['completed_interactive_event_ids'] = [
+                            str(item) for item in raw_ids if item
+                        ]
             except Exception:
                 pass
 
@@ -5450,6 +5456,18 @@ class StudentLessonPlaybackProgressView(APIView):
         payload = {'position_seconds': position_seconds}
         if duration_seconds is not None:
             payload['duration_seconds'] = duration_seconds
+
+        completed_ids = request.data.get('completed_interactive_event_ids')
+        if completed_ids is not None:
+            if not isinstance(completed_ids, list):
+                return Response(
+                    {'error': 'completed_interactive_event_ids must be a list of strings'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            payload['completed_interactive_event_ids'] = [
+                str(item) for item in completed_ids if item
+            ]
+
         progress.update_progress_data(payload)
 
         data = dict(progress.progress_data or {})
@@ -5457,6 +5475,7 @@ class StudentLessonPlaybackProgressView(APIView):
             {
                 'position_seconds': data.get('position_seconds', position_seconds),
                 'duration_seconds': data.get('duration_seconds'),
+                'completed_interactive_event_ids': data.get('completed_interactive_event_ids', []),
             },
             status=status.HTTP_200_OK,
         )
