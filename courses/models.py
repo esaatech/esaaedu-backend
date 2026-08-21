@@ -973,6 +973,106 @@ class AudioVideoMaterial(models.Model):
         super().delete(*args, **kwargs)
 
 
+class LessonVideoUpload(models.Model):
+    """
+    Staged lesson video upload (signed URL → GCS → HLS convert → attach).
+
+    Conversion is pluggable via courses.services.lesson_video_conversion so a
+    future Cloud Run job can replace in-process ffmpeg without changing the API.
+    """
+
+    TARGET_VIDEO_AUDIO = 'video_audio'
+    TARGET_TUTORX = 'tutorx'
+    TARGET_CHOICES = [
+        (TARGET_VIDEO_AUDIO, 'Video/Audio lesson'),
+        (TARGET_TUTORX, 'TutorX interactive video'),
+    ]
+
+    STATUS_DRAFT = 'draft'
+    STATUS_UPLOADED = 'uploaded'
+    STATUS_PROCESSING = 'processing'
+    STATUS_READY = 'ready'
+    STATUS_FAILED = 'failed'
+    STATUS_CANCELLED = 'cancelled'
+    STATUS_CHOICES = [
+        (STATUS_DRAFT, 'Draft (awaiting upload)'),
+        (STATUS_UPLOADED, 'Uploaded to storage'),
+        (STATUS_PROCESSING, 'Converting'),
+        (STATUS_READY, 'Ready'),
+        (STATUS_FAILED, 'Failed'),
+        (STATUS_CANCELLED, 'Cancelled'),
+    ]
+
+    # Teacher must delete before starting another upload (one active video per lesson).
+    BLOCKING_STATUSES = (
+        STATUS_DRAFT,
+        STATUS_UPLOADED,
+        STATUS_PROCESSING,
+        STATUS_READY,
+        STATUS_FAILED,
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    lesson = models.ForeignKey(
+        Lesson,
+        on_delete=models.CASCADE,
+        related_name='video_uploads',
+    )
+    target = models.CharField(max_length=20, choices=TARGET_CHOICES)
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_DRAFT,
+        db_index=True,
+    )
+
+    original_filename = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=100, default='video/mp4')
+    declared_size_bytes = models.PositiveBigIntegerField(default=0)
+    gcs_object_name = models.CharField(
+        max_length=512,
+        help_text='Pending object path in GCS (source upload before HLS).',
+    )
+
+    audio_video_material = models.ForeignKey(
+        'AudioVideoMaterial',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='source_uploads',
+    )
+    playlist_url = models.URLField(blank=True, null=True)
+    error_message = models.TextField(blank=True, default='')
+
+    created_by = models.ForeignKey(
+        'users.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='lesson_video_uploads',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    uploaded_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['lesson', 'status']),
+            models.Index(fields=['status', 'created_at']),
+        ]
+        verbose_name = 'Lesson video upload'
+        verbose_name_plural = 'Lesson video uploads'
+
+    def __str__(self):
+        return f'{self.lesson_id} {self.target} {self.status} ({self.id})'
+
+    @property
+    def is_blocking(self) -> bool:
+        return self.status in self.BLOCKING_STATUSES
+
+
 class SubmissionType(models.Model):
     """
     Submission types that can be managed from admin

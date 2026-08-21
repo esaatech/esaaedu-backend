@@ -3,8 +3,18 @@ from django.contrib import admin
 from django.contrib import messages
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from .models import Course, CourseMembership, Lesson, LessonMaterial, Module, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, SubmissionType, Note, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission
+from .models import Course, CourseMembership, Lesson, LessonMaterial, Module, Quiz, Question, QuizAttempt, Class, ClassSession, ClassEvent, CourseReview, CourseCategory, Project, ProjectSubmission, Assignment, AssignmentQuestion, AssignmentSubmission, ProjectPlatform, SubmissionType, Note, BookPage, VideoMaterial, DocumentMaterial, Classroom, Board, BoardPage, CourseAssessment, CourseAssessmentQuestion, CourseAssessmentSubmission, AudioVideoMaterial, LessonVideoUpload
+
 from .views import delete_course_with_cleanup
+
+
+@admin.register(LessonVideoUpload)
+class LessonVideoUploadAdmin(admin.ModelAdmin):
+    list_display = ['id', 'lesson', 'target', 'status', 'original_filename', 'created_at']
+    list_filter = ['status', 'target', 'created_at']
+    search_fields = ['original_filename', 'lesson__title', 'gcs_object_name']
+    raw_id_fields = ['lesson', 'audio_video_material', 'created_by']
+    readonly_fields = ['id', 'created_at', 'updated_at', 'uploaded_at', 'completed_at']
 
 
 @admin.register(CourseMembership)

@@ -9,6 +9,7 @@ from communication.views import (
     TeacherStudentOutboundThreadView,
 )
 from . import views
+from . import views_lesson_video_upload
 from .calendar_views import StaffCalendarWeekApiView, StaffClassDialogApiView, StaffTeacherDialogApiView
 from .roster_views import StaffTeacherRosterDetailView, StaffTeacherRosterListView
 from student import views as student_views
@@ -102,6 +103,33 @@ urlpatterns = [
     # Audio/Video Upload URLs
     path('audio-video/upload/', views.AudioVideoUploadView.as_view(), name='audio_video_upload'),
     path('audio-video/delete/', views.AudioVideoDeleteView.as_view(), name='audio_video_delete'),
+
+    # Staged lesson video uploads (signed URL → GCS → convert)
+    path(
+        'lesson-video-uploads/',
+        views_lesson_video_upload.LessonVideoUploadCreateView.as_view(),
+        name='lesson_video_upload_create',
+    ),
+    path(
+        'lesson-video-uploads/<uuid:upload_id>/',
+        views_lesson_video_upload.LessonVideoUploadDetailView.as_view(),
+        name='lesson_video_upload_detail',
+    ),
+    path(
+        'lesson-video-uploads/<uuid:upload_id>/complete/',
+        views_lesson_video_upload.LessonVideoUploadCompleteView.as_view(),
+        name='lesson_video_upload_complete',
+    ),
+    path(
+        'lesson-video-uploads/<uuid:upload_id>/convert/',
+        views_lesson_video_upload.LessonVideoUploadConvertView.as_view(),
+        name='lesson_video_upload_convert',
+    ),
+    path(
+        'lessons/<uuid:lesson_id>/video-upload/',
+        views_lesson_video_upload.LessonVideoUploadForLessonView.as_view(),
+        name='lesson_video_upload_for_lesson',
+    ),
     
     # Course Image Upload URLs
     path('course-images/upload/', views.CourseImageUploadView.as_view(), name='course_image_upload'),

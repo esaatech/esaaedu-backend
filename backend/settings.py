@@ -251,6 +251,12 @@ else:
     MEDIA_ROOT = BASE_DIR / 'media'
     MEDIA_URL = '/media/'
 
+# Lesson video conversion: "inline" (ffmpeg in this process) or "deferred"
+# (mark processing; a Cloud Run Job / worker will convert later).
+LESSON_VIDEO_CONVERSION_BACKEND = config(
+    'LESSON_VIDEO_CONVERSION_BACKEND', default='inline'
+)
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
