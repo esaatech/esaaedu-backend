@@ -226,6 +226,40 @@ def attach_ready_job_to_lesson(job: LessonVideoUpload) -> None:
                 logger.warning('Failed deleting previous TutorX AV material: %s', e)
 
 
+def ensure_ready_upload_attached(lesson: Lesson) -> LessonVideoUpload | None:
+    """
+    If a ready LessonVideoUpload exists but the lesson/TutorX link was lost,
+    re-attach it. Returns the ready job when present.
+    """
+    job = (
+        LessonVideoUpload.objects.filter(
+            lesson=lesson,
+            status=LessonVideoUpload.STATUS_READY,
+        )
+        .select_related('audio_video_material')
+        .order_by('-completed_at', '-created_at')
+        .first()
+    )
+    if not job or not job.playlist_url:
+        return job
+
+    if job.target == LessonVideoUpload.TARGET_VIDEO_AUDIO:
+        if lesson.video_url != job.playlist_url:
+            attach_ready_job_to_lesson(job)
+        return job
+
+    if job.target == LessonVideoUpload.TARGET_TUTORX:
+        from tutorx.models import InteractiveVideo
+
+        interactive = InteractiveVideo.objects.filter(lesson=lesson).first()
+        linked_id = getattr(interactive, 'audio_video_material_id', None)
+        if linked_id != job.audio_video_material_id:
+            attach_ready_job_to_lesson(job)
+        return job
+
+    return job
+
+
 @transaction.atomic
 def delete_upload(job: LessonVideoUpload, *, user) -> None:
     if not user_is_course_member(user, job.lesson.course):

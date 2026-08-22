@@ -679,12 +679,26 @@ class TutorXLessonContentView(APIView):
             )
         content = getattr(lesson, 'tutorx_content', '') or ''
         response_data = {'content': content}
-        if hasattr(lesson, 'interactive_video'):
-            from .serializers import InteractiveVideoSerializer
 
-            response_data['interactive_video'] = InteractiveVideoSerializer(
-                lesson.interactive_video
-            ).data
+        # Recover ready staged uploads that never linked onto InteractiveVideo.
+        try:
+            from courses.services.lesson_video_upload import ensure_ready_upload_attached
+
+            ensure_ready_upload_attached(lesson)
+        except Exception:
+            pass
+
+        from .models import InteractiveVideo
+        from .serializers import InteractiveVideoSerializer
+
+        interactive = (
+            InteractiveVideo.objects.filter(lesson_id=lesson.id)
+            .prefetch_related('events')
+            .select_related('audio_video_material')
+            .first()
+        )
+        if interactive is not None:
+            response_data['interactive_video'] = InteractiveVideoSerializer(interactive).data
         return Response(response_data, status=status.HTTP_200_OK)
 
     @transaction.atomic
@@ -1051,8 +1065,17 @@ class TutorXLessonVideoView(APIView):
             'interactive_video_id': None,
             'video_url': None,
         }
+        try:
+            from courses.services.lesson_video_upload import ensure_ready_upload_attached
+
+            ensure_ready_upload_attached(lesson)
+        except Exception:
+            pass
+
         if hasattr(lesson, 'interactive_video'):
             iv = lesson.interactive_video
+            # Reload in case ensure_ready_upload_attached just linked material
+            iv.refresh_from_db()
             data['interactive_video_id'] = str(iv.id)
             if iv.audio_video_material:
                 data['video_url'] = iv.audio_video_material.file_url
