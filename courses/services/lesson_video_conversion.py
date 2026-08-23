@@ -162,27 +162,37 @@ class InlineFfmpegConversionBackend:
 
 class DeferredConversionBackend:
     """
-    Mark the job as processing and leave conversion to an external worker.
+    Mark the upload as processing and start the Cloud Run convert Job.
 
-    Wire a Cloud Run Job / queue consumer to call InlineFfmpegConversionBackend
-    (or shared convert logic) for STATUS_PROCESSING jobs.
+    Used in production so ffmpeg does not run inside the API request.
+    Local/dev should keep LESSON_VIDEO_CONVERSION_BACKEND=inline.
     """
 
     def start(self, job: LessonVideoUpload) -> LessonVideoUpload:
+        from courses.services.cloud_run_jobs import CloudRunJobError, enqueue_lesson_video_convert
+
         job.status = LessonVideoUpload.STATUS_PROCESSING
         job.error_message = ''
         job.save(update_fields=['status', 'error_message', 'updated_at'])
-        # Future: enqueue Cloud Run Job with job.id
+
+        try:
+            enqueue_lesson_video_convert(str(job.id))
+        except CloudRunJobError as e:
+            logger.exception('Failed to enqueue conversion for upload %s', job.id)
+            job.status = LessonVideoUpload.STATUS_FAILED
+            job.error_message = str(e)[:2000]
+            job.save(update_fields=['status', 'error_message', 'updated_at'])
+            return job
+
         logger.info(
-            'Deferred conversion requested for lesson video upload %s '
-            '(no worker configured — job left in processing)',
+            'Deferred conversion enqueued for lesson video upload %s',
             job.id,
         )
         return job
 
 
 def get_conversion_backend() -> VideoConversionBackend:
-    mode = getattr(settings, 'LESSON_VIDEO_CONVERSION_BACKEND', 'inline')
-    if mode == 'deferred':
+    mode = (getattr(settings, 'LESSON_VIDEO_CONVERSION_BACKEND', 'inline') or 'inline').strip().lower()
+    if mode in ('deferred', 'cloudrun', 'cloud_run_job'):
         return DeferredConversionBackend()
     return InlineFfmpegConversionBackend()

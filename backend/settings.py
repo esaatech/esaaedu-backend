@@ -251,10 +251,21 @@ else:
     MEDIA_ROOT = BASE_DIR / 'media'
     MEDIA_URL = '/media/'
 
-# Lesson video conversion: "inline" (ffmpeg in this process) or "deferred"
-# (mark processing; a Cloud Run Job / worker will convert later).
+# Lesson video conversion:
+# - "inline" (default): ffmpeg in this process — use locally.
+# - "deferred": mark processing + enqueue Cloud Run Job — use on the API service in prod.
 LESSON_VIDEO_CONVERSION_BACKEND = config(
     'LESSON_VIDEO_CONVERSION_BACKEND', default='inline'
+)
+LESSON_VIDEO_CLOUD_RUN_JOB_NAME = config(
+    'LESSON_VIDEO_CLOUD_RUN_JOB_NAME', default='esaaedu-hls-video-converter'
+)
+LESSON_VIDEO_CLOUD_RUN_JOB_REGION = config(
+    'LESSON_VIDEO_CLOUD_RUN_JOB_REGION', default='us-central1'
+)
+LESSON_VIDEO_CLOUD_RUN_PROJECT = config(
+    'LESSON_VIDEO_CLOUD_RUN_PROJECT',
+    default=config('GCS_PROJECT_ID', default=None),
 )
 
 # Default primary key field type
@@ -516,22 +527,24 @@ else:
         db_name = config('DB_NAME', default='stbacedemy-backened')
         db_user = config('DB_USER', default='postgres')
         
-        # Check if running on Cloud Run (GAE_ENV or Cloud Run specific env)
-        is_cloud_run = config('GAE_ENV', default=None) is not None or config('K_SERVICE', default=None) is not None
-        
+        # Cloud Run service sets K_SERVICE; Cloud Run Jobs set CLOUD_RUN_JOB.
+        is_cloud_run = (
+            config('GAE_ENV', default=None) is not None
+            or config('K_SERVICE', default=None) is not None
+            or config('CLOUD_RUN_JOB', default=None) is not None
+        )
+
+        db_host = config('DB_HOST', default='34.42.36.55')
         if is_cloud_run:
-            # Use Unix socket for Cloud Run
-            db_host = f"/cloudsql/esaasolution:us-central1:sbtacedemy"
+            # Prefer Unix socket (Cloud SQL connector). Honor an explicit /cloudsql/ host.
+            if not str(db_host).startswith('/cloudsql/'):
+                db_host = '/cloudsql/esaasolution:us-central1:sbtacedemy'
             db_port = None
-            
+        elif str(db_host).startswith('/cloudsql/'):
+            db_port = None
         else:
-            # Use IP for local development
-            db_host = config('DB_HOST', default='34.42.36.55')
             db_port = config('DB_PORT', default='5432')
-            
-        
-        
-        
+
         database_config = {
             'ENGINE': 'django.db.backends.postgresql',
             'NAME': db_name,
@@ -539,10 +552,11 @@ else:
             'PASSWORD': config('DB_PASSWORD', default=''),
             'HOST': db_host,
             'OPTIONS': {
-                'sslmode': 'require',
+                # Unix socket to Cloud SQL does not use TLS the same way as public IP.
+                'sslmode': 'disable' if str(db_host).startswith('/cloudsql/') else 'require',
             },
         }
-        
+
         # Only add PORT if not using Unix socket
         if db_port:
             database_config['PORT'] = db_port

@@ -99,7 +99,9 @@ class LessonVideoUploadCompleteView(APIView):
     """
     POST /api/teacher/lesson-video-uploads/<id>/complete/
 
-    Confirms the GCS object exists, then starts conversion (inline by default).
+    Confirms the GCS object exists, then starts conversion.
+    - inline (local): waits for ffmpeg, returns 200 when ready/failed
+    - deferred (prod): enqueues Cloud Run Job, returns 202 while processing
     """
 
     permission_classes = [permissions.IsAuthenticated]
@@ -110,7 +112,13 @@ class LessonVideoUploadCompleteView(APIView):
             job = complete_upload(job, user=request.user)
         except LessonVideoUploadError as e:
             return _error_response(e)
-        return Response(serialize_job(job))
+
+        http_status = (
+            status.HTTP_202_ACCEPTED
+            if job.status == LessonVideoUpload.STATUS_PROCESSING
+            else status.HTTP_200_OK
+        )
+        return Response(serialize_job(job), status=http_status)
 
 
 class LessonVideoUploadConvertView(APIView):
@@ -128,7 +136,13 @@ class LessonVideoUploadConvertView(APIView):
             job = retry_conversion(job, user=request.user)
         except LessonVideoUploadError as e:
             return _error_response(e)
-        return Response(serialize_job(job))
+
+        http_status = (
+            status.HTTP_202_ACCEPTED
+            if job.status == LessonVideoUpload.STATUS_PROCESSING
+            else status.HTTP_200_OK
+        )
+        return Response(serialize_job(job), status=http_status)
 
 
 class LessonVideoUploadForLessonView(APIView):

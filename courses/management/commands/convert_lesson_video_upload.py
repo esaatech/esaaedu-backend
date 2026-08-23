@@ -28,6 +28,11 @@ class Command(BaseCommand):
         except LessonVideoUpload.DoesNotExist as e:
             raise CommandError(f'Upload not found: {upload_id}') from e
 
+        # Idempotent: already converted (e.g. Job retry after API finished).
+        if job.status == LessonVideoUpload.STATUS_READY and job.playlist_url:
+            self.stdout.write(self.style.SUCCESS(f'Already ready: {job.playlist_url}'))
+            return
+
         if job.status not in (
             LessonVideoUpload.STATUS_UPLOADED,
             LessonVideoUpload.STATUS_PROCESSING,
