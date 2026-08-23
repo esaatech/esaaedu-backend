@@ -74,3 +74,25 @@ class StudyCardGradeOut(BaseModel):
 
     correct: bool
     feedback: str
+
+
+CoachAction = Literal["practice", "study_then_retake", "mastered"]
+MixOrder = Literal["easy_first", "hard_first", "shuffled"]
+
+
+class NextMixOut(BaseModel):
+    easy: int = 0
+    intermediate: int = 0
+    hard: int = 0
+    order: MixOrder = "easy_first"
+    source_ids: Optional[list[str]] = None
+
+
+class StudyCoachFeedbackOut(BaseModel):
+    """Session-level coaching after Grade: copy plus the next Auto mix / study task."""
+
+    headline: str
+    message: str
+    action: CoachAction
+    next_mix: Optional[NextMixOut] = None
+    study_source_ids: Optional[list[str]] = None

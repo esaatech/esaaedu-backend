@@ -45,12 +45,14 @@ def grade_study_card(
     response: str,
     *,
     lesson=None,
+    fallback_on_ai_error: bool = False,
 ) -> tuple[bool, dict[str, Any]]:
     """
     Returns (correct, meta).
 
     meta.graded_by is "skipped" | "key" | "ai".
-    Raises StudyCoachGradeError if AI grading cannot complete.
+    Raises StudyCoachGradeError if AI grading cannot complete and
+    fallback_on_ai_error is False.
     """
     skipped = not str(response or "").strip()
     if skipped:
@@ -74,6 +76,11 @@ def grade_study_card(
             raw.get("error_code"),
             (raw.get("error") or "")[:300],
         )
+        if fallback_on_ai_error:
+            return key_correct, {
+                "graded_by": "key",
+                "ai_error": raw.get("error_code") or "generation_failed",
+            }
         raise StudyCoachGradeError(error_code=raw.get("error_code") or "generation_failed")
 
     result = raw.get("result") or {}

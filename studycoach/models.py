@@ -38,7 +38,7 @@ class StudySession(models.Model):
     difficulty_mode = models.CharField(
         max_length=16,
         choices=DIFFICULTY_MODE_CHOICES,
-        default="easy",
+        default="auto",
     )
     grounding_mode = models.CharField(
         max_length=16,
@@ -133,3 +133,62 @@ class CoachItem(models.Model):
 
     def __str__(self):
         return f"CoachItem {self.id} ({self.difficulty})"
+
+
+class CoachLessonMemory(models.Model):
+    """Per-student, per-lesson Auto coach state (next mix, study gate, last feedback)."""
+
+    ACTION_CHOICES = [
+        ("practice", "Practice"),
+        ("study_then_retake", "Study then retake"),
+        ("mastered", "Mastered"),
+    ]
+    RUNG_CHOICES = [
+        ("mix_easy", "Mix easy"),
+        ("mix_climb", "Mix climb"),
+        ("all_hard", "All hard"),
+        ("mastered", "Mastered"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    student = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="study_coach_memories",
+    )
+    lesson = models.ForeignKey(
+        "courses.Lesson",
+        on_delete=models.CASCADE,
+        related_name="study_coach_memories",
+    )
+    action = models.CharField(max_length=32, choices=ACTION_CHOICES, default="practice")
+    auto_rung = models.CharField(max_length=32, choices=RUNG_CHOICES, default="mix_easy")
+    next_mix = models.JSONField(default=dict, blank=True)
+    study_sources = models.JSONField(default=list, blank=True)
+    study_cleared_at = models.DateTimeField(null=True, blank=True)
+    last_feedback = models.JSONField(default=dict, blank=True)
+    last_band_scores = models.JSONField(default=dict, blank=True)
+    last_session = models.ForeignKey(
+        StudySession,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="coach_memories",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["student", "lesson"],
+                name="studycoach_memory_student_lesson",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["student", "-updated_at"], name="studycoach__student_mem_idx"),
+        ]
+
+    def __str__(self):
+        return f"CoachLessonMemory {self.student_id} {self.lesson_id}"

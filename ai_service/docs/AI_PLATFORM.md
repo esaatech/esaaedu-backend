@@ -131,7 +131,7 @@ Student Tools → Study Coach → **Generate quiz** calls:
 | `AI_SERVICE_HTTP_TIMEOUT` | 60 | Per-request httpx / ModelSettings timeout (seconds) |
 | `AI_SERVICE_HTTP_CONNECT_TIMEOUT` | 10 | Connect timeout |
 | `AI_SERVICE_HTTP_RETRY_ATTEMPTS` | 3 | Total attempts for 429/5xx + connect errors |
-| `AI_SERVICE_RUN_TIMEOUT` | 90 | Wall-clock budget for full `agent.run_sync` |
+| `AI_SERVICE_RUN_TIMEOUT` | 90 | Wall-clock budget for a full agent run on the shared AI event loop |
 
 HTTP retries honor `Retry-After` when present (capped).
 

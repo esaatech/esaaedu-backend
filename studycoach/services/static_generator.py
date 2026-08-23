@@ -7,6 +7,7 @@ difficulty_mode: easy | hard | auto
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any, Literal
 
@@ -236,6 +237,7 @@ def default_progress() -> dict[str, Any]:
         "incorrect_count": 0,
         "streak": 0,
         "answers": {},
+        "graded": False,
     }
 
 
@@ -295,24 +297,91 @@ def check_card_answer(card: dict[str, Any], response: str) -> bool:
     return False
 
 
+def _collapse_ws(value: str) -> str:
+    return " ".join((value or "").strip().lower().split())
+
+
+def _collect_blocknote_text(node: Any, texts: list[str], urls: list[str]) -> None:
+    if isinstance(node, dict):
+        text = node.get("text")
+        if isinstance(text, str) and text.strip():
+            texts.append(text)
+        if node.get("type") == "image":
+            props = node.get("props") if isinstance(node.get("props"), dict) else {}
+            url = str(props.get("url") or "").strip()
+            if url:
+                urls.append(url)
+            caption = props.get("caption")
+            if isinstance(caption, str) and caption.strip():
+                texts.append(caption)
+        for key, value in node.items():
+            if key in ("text", "props"):
+                continue
+            _collect_blocknote_text(value, texts, urls)
+    elif isinstance(node, list):
+        for item in node:
+            _collect_blocknote_text(item, texts, urls)
+
+
+def prompt_plain_text(prompt: str) -> str:
+    """Plain, normalized question text (BlockNote JSON → visible text)."""
+    raw = str(prompt or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("[") or raw.startswith("{"):
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+        if parsed is not None:
+            texts: list[str] = []
+            urls: list[str] = []
+            _collect_blocknote_text(parsed, texts, urls)
+            if texts:
+                raw = " ".join(texts)
+            elif urls:
+                raw = " ".join(urls)
+    return _collapse_ws(raw)
+
+
+def _column_math_display(card: dict[str, Any]) -> dict[str, Any] | None:
+    display = card.get("display")
+    if isinstance(display, dict) and display.get("type") == "column_math":
+        return display
+    raw = card.get("display_json")
+    if isinstance(raw, dict) and raw.get("type") == "column_math":
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if isinstance(parsed, dict) and parsed.get("type") == "column_math":
+            return parsed
+    return None
+
+
 def card_avoid_label(card: dict[str, Any]) -> str:
     """
     Fingerprint for dedupe / avoid lists.
 
-    Column-math cards often share the same prompt ("Add these numbers."), so we
-    include the operands/operator so the model can avoid real duplicates.
+    Uses visible prompt text (not BlockNote JSON), lowercased with collapsed
+    whitespace. Column-math cards often share the same prompt
+    ("Add these numbers."), so we include the operands/operator.
     """
-    prompt = str(card.get("prompt") or "").strip()
-    display = card.get("display")
-    if isinstance(display, dict) and display.get("type") == "column_math":
-        operator = str(display.get("operator") or "").strip()
-        operands = display.get("operands") or []
+    prompt = prompt_plain_text(str(card.get("prompt") or ""))
+    math = _column_math_display(card)
+    if math:
+        operator = _collapse_ws(str(math.get("operator") or ""))
+        operands = math.get("operands") or []
         if isinstance(operands, list) and operands:
-            joined = " ".join(str(o).strip() for o in operands if str(o).strip())
+            joined = " ".join(
+                prompt_plain_text(str(o)) for o in operands if str(o).strip()
+            )
             return f"{prompt} | {operator} {joined}".strip(" |")
     display_json = str(card.get("display_json") or "").strip()
-    if display_json:
-        return f"{prompt} | {display_json[:160]}".strip(" |")
+    if display_json and not math:
+        return f"{prompt} | {_collapse_ws(display_json[:160])}".strip(" |")
     return prompt
 
 

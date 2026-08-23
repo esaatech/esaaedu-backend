@@ -20,6 +20,21 @@ urlpatterns = [
         name="studycoach-session-answer",
     ),
     path(
+        "sessions/<uuid:session_id>/grade/",
+        views.StudySessionGradeView.as_view(),
+        name="studycoach-session-grade",
+    ),
+    path(
+        "memories/",
+        views.CoachMemoryListView.as_view(),
+        name="studycoach-memories",
+    ),
+    path(
+        "memories/<uuid:lesson_id>/reread/",
+        views.CoachMemoryRereadView.as_view(),
+        name="studycoach-memory-reread",
+    ),
+    path(
         "lesson-bank/<uuid:lesson_id>/",
         views.LessonCoachBankView.as_view(),
         name="studycoach-lesson-bank",

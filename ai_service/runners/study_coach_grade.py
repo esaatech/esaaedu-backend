@@ -2,7 +2,7 @@
 Study Coach short-answer grader — fast model, one card at a time.
 
 Uses the same grading intent as GeminiGrader (meaning over exact wording),
-but a tiny structured output so Check stays snappy.
+but a tiny structured output. Session Grade batches these after the quiz.
 """
 
 from __future__ import annotations
@@ -21,7 +21,8 @@ logger = logging.getLogger(__name__)
 
 SERVICE_SLUG = "study_coach_grade"
 PROMPT_SLUG_DEFAULT = "default"
-GRADE_RUN_TIMEOUT_SECONDS = 20
+# Batch Grade can wait on several short answers; match the HTTP client budget.
+GRADE_RUN_TIMEOUT_SECONDS = 60
 
 # Same intent as ai.gemini_grader.GeminiGrader, trimmed for a single quiz card.
 DEFAULT_INSTRUCTIONS = """You are an expert educational grader writing feedback directly to students. Your role is to evaluate student answers with:

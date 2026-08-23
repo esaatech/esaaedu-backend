@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import CoachBank, CoachItem, StudySession
+from .models import CoachBank, CoachItem, CoachLessonMemory, StudySession
 
 
 @admin.register(StudySession)
@@ -32,4 +32,12 @@ class CoachItemAdmin(admin.ModelAdmin):
     list_display = ("id", "bank", "order", "question_type", "difficulty", "updated_at")
     list_filter = ("question_type", "difficulty")
     search_fields = ("prompt",)
+    readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(CoachLessonMemory)
+class CoachLessonMemoryAdmin(admin.ModelAdmin):
+    list_display = ("id", "student", "lesson", "action", "auto_rung", "updated_at")
+    list_filter = ("action", "auto_rung")
+    search_fields = ("student__email", "lesson__title")
     readonly_fields = ("id", "created_at", "updated_at")

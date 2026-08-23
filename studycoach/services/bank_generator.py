@@ -8,6 +8,7 @@ from typing import Any
 
 from django.core.exceptions import ObjectDoesNotExist
 
+from .auto_mix import draw_by_mix, first_auto_mix, normalize_mix
 from .card_metadata import (
     FALLBACK_EXPLANATION,
     build_content_catalog,
@@ -15,7 +16,7 @@ from .card_metadata import (
     stored_source,
 )
 from .deck_generator import generate_deck_for_lesson
-from .static_generator import card_avoid_label
+from .static_generator import card_avoid_label, dedupe_cards
 
 MAX_BANK_ITEMS = 100
 MAX_GENERATE_PER_REQUEST = 20
@@ -99,15 +100,9 @@ def item_to_session_card(item) -> dict[str, Any]:
 
 def pool_for_difficulty(items: list, difficulty_mode: str) -> list:
     if difficulty_mode == "easy":
-        preferred = [item for item in items if item.difficulty == "easy"]
-        return preferred or [item for item in items if item.difficulty == "intermediate"] or list(
-            items
-        )
+        return [item for item in items if item.difficulty == "easy"]
     if difficulty_mode == "hard":
-        preferred = [item for item in items if item.difficulty == "hard"]
-        return preferred or [item for item in items if item.difficulty == "intermediate"] or list(
-            items
-        )
+        return [item for item in items if item.difficulty == "hard"]
     return list(items)
 
 
@@ -117,6 +112,7 @@ def draw_cards_from_bank(
     difficulty_mode: str,
     card_count: int,
     exclude_prompts: list[str] | None = None,
+    next_mix: dict | None = None,
 ) -> list[dict[str, Any]] | None:
     """
     Sample practice cards from the lesson bank.
@@ -131,6 +127,16 @@ def draw_cards_from_bank(
     items = list(bank.items.all())
     if not items:
         return None
+    take_n = max(1, min(int(card_count or 6), len(items)))
+    if difficulty_mode == "auto":
+        mix = normalize_mix(next_mix, default_n=take_n) or first_auto_mix(take_n)
+        return draw_by_mix(
+            items,
+            mix,
+            to_card=item_to_session_card,
+            avoid_card=item_to_avoid_card,
+            exclude_prompts=exclude_prompts,
+        )
     excluded = {str(label).strip() for label in (exclude_prompts or []) if str(label).strip()}
     if excluded:
         items = [
@@ -153,8 +159,6 @@ def generate_into_bank(
     card_count: int = 10,
     source_ids: list[str] | None = None,
 ) -> dict[str, Any]:
-    from .models import CoachItem
-
     current = bank.items.count()
     room = max(0, MAX_BANK_ITEMS - current)
     requested = max(3, min(int(card_count or 10), MAX_GENERATE_PER_REQUEST, room))
@@ -196,15 +200,30 @@ def generate_into_bank(
             "added": 0,
         }
 
+    unique = dedupe_cards(
+        list(deck.get("cards") or []),
+        existing=[item_to_avoid_card(item) for item in existing],
+    )
     created = []
-    for card in deck.get("cards") or []:
+    for card in unique:
         fields = card_to_item_fields(card)
         if not fields["prompt"]:
             continue
-        item = CoachItem.objects.create(bank=bank, order=next_order, **fields)
+        item = bank.items.create(order=next_order, **fields)
         created.append(item)
         next_order += 1
-        avoid.append(card_avoid_label({"prompt": fields["prompt"]}))
+
+    if not created:
+        return {
+            "success": False,
+            "error": (
+                "Those questions were too similar to ones already in the bank. "
+                "Try generating again, or write your own."
+            ),
+            "error_code": "all_duplicates",
+            "status_code": 400,
+            "added": 0,
+        }
 
     bank.save(update_fields=["updated_at"])
     return {

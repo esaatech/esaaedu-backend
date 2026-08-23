@@ -5,12 +5,13 @@ from rest_framework.views import APIView
 
 from courses.models import Lesson
 
-from .models import CoachBank, CoachItem, StudySession
+from .models import CoachBank, CoachItem, CoachLessonMemory, StudySession
 from .serializers import (
     CoachBankGenerateSerializer,
     CoachBankSerializer,
     CoachItemSerializer,
     CoachItemWriteSerializer,
+    CoachLessonMemorySerializer,
     StudySessionAnswerSerializer,
     StudySessionCreateSerializer,
     StudySessionExtendSerializer,
@@ -30,12 +31,18 @@ from .services.deck_generator import (
     clamp_card_count,
     generate_deck_for_lesson,
 )
+from .services.lesson_memory import (
+    clear_study_gate,
+    get_memory,
+    study_gate_blocks,
+)
+from .services.session_grade import grade_and_coach_session
 from .services.static_generator import (
     card_avoid_label,
     default_progress,
     dedupe_cards,
 )
-from .services.grading import StudyCoachGradeError, grade_study_card
+from .services.grading import StudyCoachGradeError
 
 class StudySessionListCreateView(APIView):
     """
@@ -98,12 +105,36 @@ class StudySessionListCreateView(APIView):
 
         difficulty_mode = serializer.validated_data["difficulty_mode"]
         card_count = clamp_card_count(serializer.validated_data.get("card_count"))
+        memory = get_memory(request.user, lesson)
+        if difficulty_mode == "auto" and study_gate_blocks(memory):
+            return Response(
+                {
+                    "error": "Read the lesson pages first, then tap I’ve reread the topic.",
+                    "error_code": "study_required",
+                    "memory": CoachLessonMemorySerializer(memory).data,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        next_mix = None
+        if difficulty_mode == "auto" and memory is not None:
+            next_mix = memory.next_mix or None
+
         bank_cards = draw_cards_from_bank(
             lesson,
             difficulty_mode=difficulty_mode,
             card_count=card_count,
+            next_mix=next_mix,
         )
-        if bank_cards:
+        if bank_cards is not None:
+            if not bank_cards:
+                return Response(
+                    {
+                        "error": "This lesson bank has no matching practice questions for that mix.",
+                        "error_code": "bank_empty_filter",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             session = StudySession.objects.create(
                 student=request.user,
                 lesson=lesson,
@@ -205,11 +236,18 @@ class StudySessionExtendView(APIView):
             for label in (card_avoid_label(c) for c in existing)
             if label
         ]
+        memory = get_memory(request.user, session.lesson)
+        next_mix = (
+            memory.next_mix
+            if session.difficulty_mode == "auto" and memory is not None
+            else None
+        )
         bank_cards = draw_cards_from_bank(
             session.lesson,
             difficulty_mode=session.difficulty_mode,
             card_count=card_count,
             exclude_prompts=avoid_prompts,
+            next_mix=next_mix,
         )
         if bank_cards is not None:
             if not bank_cards:
@@ -270,7 +308,7 @@ class StudySessionExtendView(APIView):
 
 
 class StudySessionAnswerView(APIView):
-    """POST an answer for the current card; updates progress."""
+    """POST: save a response for a card. Does not grade. Check is client-side reveal."""
 
     permission_classes = [permissions.IsAuthenticated]
 
@@ -285,7 +323,8 @@ class StudySessionAnswerView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         card_id = str(serializer.validated_data["card_id"])
-        card = next((c for c in session.cards if str(c.get("id")) == card_id), None)
+        cards = list(session.cards or [])
+        card = next((c for c in cards if str(c.get("id")) == card_id), None)
         if not card:
             return Response(
                 {"error": "Card not found in this session"},
@@ -294,13 +333,11 @@ class StudySessionAnswerView(APIView):
 
         progress = dict(session.progress or default_progress())
         answers = dict(progress.get("answers") or {})
-
-        # Idempotent: don't double-count if this card was already graded.
-        if card_id in answers:
-            existing = answers[card_id] or {}
+        existing = dict(answers.get(card_id) or {})
+        if progress.get("graded") or existing.get("graded"):
             return Response(
                 {
-                    "correct": bool(existing.get("correct")),
+                    "correct": existing.get("correct"),
                     "answer": card.get("answer"),
                     "explanation": card.get("explanation"),
                     "session": StudySessionSerializer(session).data,
@@ -308,12 +345,50 @@ class StudySessionAnswerView(APIView):
             )
 
         response_text = serializer.validated_data["response"]
+        answers[card_id] = {
+            "response": response_text,
+            "used_hint_count": serializer.validated_data.get("used_hint_count", 0),
+            "flipped": serializer.validated_data.get("flipped", False),
+            "skipped": not str(response_text or "").strip(),
+            "graded": False,
+        }
+        progress["answers"] = answers
+
+        card_index = next(
+            (i for i, c in enumerate(cards) if str(c.get("id")) == card_id),
+            int(progress.get("current_index") or 0),
+        )
+        if serializer.validated_data.get("advance"):
+            progress["current_index"] = min(card_index + 1, len(cards))
+        else:
+            progress["current_index"] = card_index
+
+        session.progress = progress
+        session.save(update_fields=["progress", "updated_at"])
+
+        return Response(
+            {
+                "correct": None,
+                "answer": card.get("answer"),
+                "explanation": card.get("explanation"),
+                "session": StudySessionSerializer(session).data,
+            }
+        )
+
+
+class StudySessionGradeView(APIView):
+    """POST: grade saved answers (essays via AI), then coach feedback in the same request."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, session_id):
+        session = get_object_or_404(
+            StudySession.objects.select_related("lesson", "lesson__course"),
+            id=session_id,
+            student=request.user,
+        )
         try:
-            correct, grade_meta = grade_study_card(
-                card,
-                response_text,
-                lesson=session.lesson,
-            )
+            result = grade_and_coach_session(session)
         except StudyCoachGradeError as exc:
             return Response(
                 {
@@ -322,44 +397,59 @@ class StudySessionAnswerView(APIView):
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        answers[card_id] = {
-            "response": response_text,
-            "correct": correct,
-            "used_hint_count": serializer.validated_data.get("used_hint_count", 0),
-            "flipped": serializer.validated_data.get("flipped", False),
-            "skipped": not str(response_text or "").strip(),
-            **grade_meta,
-        }
-        progress["answers"] = answers
-        if correct:
-            progress["correct_count"] = int(progress.get("correct_count") or 0) + 1
-            progress["streak"] = int(progress.get("streak") or 0) + 1
-        else:
-            progress["incorrect_count"] = int(progress.get("incorrect_count") or 0) + 1
-            progress["streak"] = 0
-
-        # Advance index if this was the current card
-        current_index = int(progress.get("current_index") or 0)
-        if (
-            0 <= current_index < len(session.cards)
-            and str(session.cards[current_index].get("id")) == card_id
-        ):
-            progress["current_index"] = min(current_index + 1, len(session.cards))
-
-        if progress["current_index"] >= len(session.cards):
-            session.status = "completed"
-
-        session.progress = progress
-        session.save(update_fields=["progress", "status", "updated_at"])
-
+        session = result["session"]
         return Response(
             {
-                "correct": correct,
-                "answer": card.get("answer"),
-                "explanation": card.get("explanation"),
                 "session": StudySessionSerializer(session).data,
+                "feedback": result["feedback"],
+                "memory": CoachLessonMemorySerializer(result["memory"]).data,
             }
         )
+
+
+class CoachMemoryListView(APIView):
+    """GET recent Auto memories for the current student (study gate + last feedback)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        if not hasattr(request.user, "student_profile"):
+            return Response(
+                {"error": "Only students can use Study Coach"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        rows = list(
+            CoachLessonMemory.objects.filter(student=request.user)
+            .select_related("lesson", "lesson__course", "last_session")[:50]
+        )
+        return Response(
+            {
+                "results": CoachLessonMemorySerializer(rows, many=True).data,
+                "count": len(rows),
+            }
+        )
+
+
+class CoachMemoryRereadView(APIView):
+    """POST: student confirms they reread the assigned pages; unlocks Auto retake."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, lesson_id):
+        if not hasattr(request.user, "student_profile"):
+            return Response(
+                {"error": "Only students can use Study Coach"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        lesson = get_object_or_404(Lesson, id=lesson_id)
+        memory = get_memory(request.user, lesson)
+        if not memory:
+            return Response(
+                {"error": "No Study Coach memory for this lesson.", "error_code": "not_found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        memory = clear_study_gate(memory)
+        return Response(CoachLessonMemorySerializer(memory).data)
 
 
 def _teacher_lesson(request, lesson_id):

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import CoachBank, CoachItem, StudySession
+from .models import CoachBank, CoachItem, CoachLessonMemory, StudySession
 from .services.card_metadata import CARD_DIFFICULTIES, normalize_difficulty, normalize_stored_cards
 
 
@@ -8,7 +8,7 @@ class StudySessionCreateSerializer(serializers.Serializer):
     lesson_id = serializers.UUIDField()
     difficulty_mode = serializers.ChoiceField(
         choices=["easy", "hard", "auto"],
-        default="easy",
+        default="auto",
     )
     card_count = serializers.IntegerField(required=False, min_value=3, max_value=20, default=6)
 
@@ -19,10 +19,10 @@ class StudySessionExtendSerializer(serializers.Serializer):
 
 class StudySessionAnswerSerializer(serializers.Serializer):
     card_id = serializers.UUIDField()
-    # Blank allowed so Next can auto-grade a skipped card as incorrect.
     response = serializers.CharField(allow_blank=True, max_length=2000)
     used_hint_count = serializers.IntegerField(required=False, min_value=0, default=0)
     flipped = serializers.BooleanField(required=False, default=False)
+    advance = serializers.BooleanField(required=False, default=False)
 
 
 class StudySessionSerializer(serializers.ModelSerializer):
@@ -185,3 +185,34 @@ class CoachBankGenerateSerializer(serializers.Serializer):
         required=False,
         allow_empty=True,
     )
+
+
+class CoachLessonMemorySerializer(serializers.ModelSerializer):
+    lesson_id = serializers.UUIDField(source="lesson.id", read_only=True)
+    lesson_title = serializers.CharField(source="lesson.title", read_only=True)
+    course_id = serializers.UUIDField(source="lesson.course_id", read_only=True)
+    last_session_id = serializers.UUIDField(read_only=True, allow_null=True)
+    study_required = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CoachLessonMemory
+        fields = [
+            "id",
+            "lesson_id",
+            "lesson_title",
+            "course_id",
+            "action",
+            "auto_rung",
+            "next_mix",
+            "study_sources",
+            "study_cleared_at",
+            "study_required",
+            "last_feedback",
+            "last_band_scores",
+            "last_session_id",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_study_required(self, obj) -> bool:
+        return obj.action == "study_then_retake" and obj.study_cleared_at is None

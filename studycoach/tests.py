@@ -249,6 +249,28 @@ class StudyCoachGradingTests(SimpleTestCase):
         with self.assertRaises(StudyCoachGradeError):
             grade_study_card(card, "electrons moving through a wire")
 
+    @patch("studycoach.services.grading.generate_study_coach_grade")
+    def test_ai_error_can_fall_back_to_key(self, mock_grade):
+        mock_grade.return_value = {
+            "success": False,
+            "error": "timeout",
+            "error_code": "service_unavailable",
+            "result": None,
+        }
+        card = {
+            "question_type": "short_answer",
+            "prompt": "What is current?",
+            "answer": "The flow of charge",
+        }
+        correct, meta = grade_study_card(
+            card,
+            "electrons moving through a wire",
+            fallback_on_ai_error=True,
+        )
+        self.assertFalse(correct)
+        self.assertEqual(meta["graded_by"], "key")
+        self.assertEqual(meta["ai_error"], "service_unavailable")
+
 
 from types import SimpleNamespace
 
@@ -314,6 +336,13 @@ class CoachBankGeneratorTests(SimpleTestCase):
         pool = pool_for_difficulty(items, "easy")
         self.assertEqual([item.difficulty for item in pool], ["easy"])
 
+    def test_pool_for_difficulty_hard_does_not_fall_back(self):
+        items = [
+            SimpleNamespace(difficulty="easy"),
+            SimpleNamespace(difficulty="intermediate"),
+        ]
+        self.assertEqual(pool_for_difficulty(items, "hard"), [])
+
     def test_item_to_session_card_keeps_prompt(self):
         item = SimpleNamespace(
             question_type="short_answer",
@@ -329,3 +358,150 @@ class CoachBankGeneratorTests(SimpleTestCase):
         self.assertIn("id", card)
         self.assertIn("image", card["prompt"])
         self.assertEqual(card["difficulty"], "easy")
+
+
+from studycoach.services.static_generator import card_avoid_label, dedupe_cards
+
+
+class CardAvoidLabelTests(SimpleTestCase):
+    def test_case_and_whitespace_match(self):
+        self.assertEqual(
+            card_avoid_label({"prompt": "What is current?"}),
+            card_avoid_label({"prompt": "  what   is CURRENT?  "}),
+        )
+
+    def test_blocknote_plain_text_matches_raw(self):
+        blocknote = (
+            '[{"id":"1","type":"paragraph","content":'
+            '[{"type":"text","text":"What is current?","styles":{}}]}]'
+        )
+        self.assertEqual(
+            card_avoid_label({"prompt": blocknote}),
+            card_avoid_label({"prompt": "What is current?"}),
+        )
+
+    def test_column_math_operands_keep_cards_distinct(self):
+        a = card_avoid_label(
+            {
+                "prompt": "Add these numbers.",
+                "display": {"type": "column_math", "operator": "+", "operands": ["12", "8"]},
+            }
+        )
+        b = card_avoid_label(
+            {
+                "prompt": "Add these numbers.",
+                "display": {"type": "column_math", "operator": "+", "operands": ["3", "9"]},
+            }
+        )
+        self.assertNotEqual(a, b)
+        self.assertIn("12", a)
+        self.assertIn("8", a)
+
+    def test_dedupe_drops_existing_case_variant(self):
+        unique = dedupe_cards(
+            [{"prompt": "what is current?"}, {"prompt": "What is voltage?"}],
+            existing=[{"prompt": "What is current?"}],
+        )
+        self.assertEqual([c["prompt"] for c in unique], ["What is voltage?"])
+
+
+from studycoach.services.bank_generator import generate_into_bank
+
+
+class GenerateIntoBankDedupeTests(SimpleTestCase):
+    def _bank(self, prompts: list[str]):
+        existing = [
+            SimpleNamespace(prompt=prompt, order=i + 1) for i, prompt in enumerate(prompts)
+        ]
+        created = []
+
+        def create(*, order, **fields):
+            item = SimpleNamespace(order=order, **fields)
+            created.append(item)
+            return item
+
+        items = MagicMock()
+        items.count.return_value = len(existing)
+        items.order_by.return_value = existing
+        items.create.side_effect = create
+        bank = MagicMock()
+        bank.items = items
+        bank.lesson = SimpleNamespace(title="Electricity")
+        bank._created = created
+        return bank
+
+    @patch("studycoach.services.bank_generator.generate_deck_for_lesson")
+    @patch("studycoach.services.bank_generator.build_content_catalog", return_value=[])
+    def test_skips_existing_prompt_different_case(self, _catalog, mock_deck):
+        bank = self._bank(["What is current?"])
+        mock_deck.return_value = {
+            "success": True,
+            "cards": [
+                {"prompt": "what is current?", "answer": "flow of charge"},
+                {"prompt": "What is voltage?", "answer": "energy per charge"},
+            ],
+        }
+        result = generate_into_bank(bank, card_count=10)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["added"], 1)
+        self.assertEqual(bank._created[0].prompt, "What is voltage?")
+
+    @patch("studycoach.services.bank_generator.generate_deck_for_lesson")
+    @patch("studycoach.services.bank_generator.build_content_catalog", return_value=[])
+    def test_errors_when_entire_batch_matches_bank(self, _catalog, mock_deck):
+        bank = self._bank(["What is current?"])
+        mock_deck.return_value = {
+            "success": True,
+            "cards": [{"prompt": "what is current?", "answer": "flow of charge"}],
+        }
+        result = generate_into_bank(bank, card_count=10)
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_code"], "all_duplicates")
+        self.assertEqual(result["added"], 0)
+        bank.items.create.assert_not_called()
+
+
+from studycoach.services.auto_mix import (
+    allocate_counts,
+    fallback_next,
+    first_auto_mix,
+    normalize_mix,
+)
+
+
+class AutoMixTests(SimpleTestCase):
+    def test_ten_cards_split_5_3_2(self):
+        self.assertEqual(allocate_counts(10), {"easy": 5, "intermediate": 3, "hard": 2})
+
+    def test_six_cards_split_3_2_1(self):
+        self.assertEqual(allocate_counts(6), {"easy": 3, "intermediate": 2, "hard": 1})
+
+    def test_normalize_mix_drops_empty(self):
+        self.assertIsNone(normalize_mix({"easy": 0, "intermediate": 0, "hard": 0}))
+        mix = normalize_mix({"easy": 6, "order": "nope", "source_ids": ["a", "a", ""]})
+        self.assertEqual(mix["easy"], 6)
+        self.assertEqual(mix["order"], "easy_first")
+        self.assertEqual(mix["source_ids"], ["a"])
+
+    def test_fallback_climbs_when_all_easy_correct(self):
+        cards = [
+            {"id": "1", "difficulty": "easy"},
+            {"id": "2", "difficulty": "easy"},
+            {"id": "3", "difficulty": "intermediate"},
+        ]
+        answers = {
+            "1": {"correct": True},
+            "2": {"correct": True},
+            "3": {"correct": False},
+        }
+        action, rung, mix = fallback_next(
+            cards=cards, answers=answers, rung="mix_easy", card_count=6
+        )
+        self.assertEqual(action, "practice")
+        self.assertEqual(rung, "mix_climb")
+        self.assertGreater(mix["intermediate"], mix["easy"])
+
+    def test_first_auto_mix_has_order(self):
+        mix = first_auto_mix(10)
+        self.assertEqual(mix["order"], "easy_first")
+        self.assertEqual(mix["easy"], 5)

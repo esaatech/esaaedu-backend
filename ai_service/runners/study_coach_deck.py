@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 SERVICE_SLUG = "study_coach_deck"
 PROMPT_SLUG_V1 = "default"
 PROMPT_SLUG_MATH_DISPLAY = "math_display"
+MAX_AVOID_PROMPTS = 100
+AVOID_PROMPT_CHARS = 200
 
 DEFAULT_INSTRUCTIONS_V1 = """You generate Quizlet-style study quiz cards for students.
 
@@ -276,7 +278,9 @@ def _build_user_prompt(
             "Do NOT repeat or closely rephrase these existing questions; make new ones. "
             "For stacked math, do not reuse the same operands/operator:"
         )
-        parts.append("\n".join(f"- {p[:200]}" for p in avoid[:40]))
+        parts.append(
+            "\n".join(f"- {p[:AVOID_PROMPT_CHARS]}" for p in avoid[:MAX_AVOID_PROMPTS])
+        )
     parts.append(
         "Within this deck, every card must be distinct "
         "(different prompts, or different operands/operators for column math). "

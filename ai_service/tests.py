@@ -157,3 +157,57 @@ class AIServiceErrorClassificationTests(SimpleTestCase):
         self.assertEqual(args[2], "gemini")
         self.assertEqual(args[3], "gemini-2.5-flash")
 
+
+class StudyCoachDeckPromptTests(SimpleTestCase):
+    def test_avoid_list_includes_up_to_bank_cap(self):
+        from ai_service.runners.study_coach_deck import (
+            MAX_AVOID_PROMPTS,
+            _build_user_prompt,
+        )
+
+        self.assertEqual(MAX_AVOID_PROMPTS, 100)
+        labels = [f"Question {i} about current" for i in range(100)]
+        prompt = _build_user_prompt(
+            title="Electricity",
+            grounding="",
+            mode="auto",
+            count=10,
+            avoid_prompts=labels,
+        )
+        self.assertIn("Question 0 about current", prompt)
+        self.assertIn("Question 99 about current", prompt)
+        self.assertNotIn("Question 100 about current", prompt)
+
+
+class StudyCoachFeedbackSchemaTests(SimpleTestCase):
+    def test_feedback_schema_accepts_study_action(self):
+        from ai_service.schemas_study_coach import StudyCoachFeedbackOut
+
+        out = StudyCoachFeedbackOut(
+            headline="Study subtraction",
+            message="Open those pages, then try easy subtraction again.",
+            action="study_then_retake",
+            next_mix={"easy": 6, "intermediate": 0, "hard": 0, "order": "easy_first", "source_ids": ["abc"]},
+            study_source_ids=["abc"],
+        )
+        self.assertEqual(out.action, "study_then_retake")
+        self.assertEqual(out.next_mix.source_ids, ["abc"])
+
+
+class RunAgentSyncLoopTests(SimpleTestCase):
+    def test_two_sequential_runs_share_one_loop(self):
+        from ai_service.runners.run_helpers import run_agent_sync
+
+        class FakeAgent:
+            async def run(self, prompt: str):
+                import asyncio
+
+                await asyncio.sleep(0)
+                return type("Result", (), {"output": prompt})()
+
+        agent = FakeAgent()
+        first = run_agent_sync(agent, "one", timeout_seconds=5)
+        second = run_agent_sync(agent, "two", timeout_seconds=5)
+        self.assertEqual(first.output, "one")
+        self.assertEqual(second.output, "two")
+
