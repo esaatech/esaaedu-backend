@@ -20,6 +20,7 @@ from courses.hls_utils import (
     HLSUploadError,
     convert_to_hls,
     delete_hls_from_gcs,
+    temp_suffix_for_video,
     upload_hls_to_gcs,
 )
 from courses.models import AudioVideoMaterial, LessonVideoUpload
@@ -53,7 +54,7 @@ class InlineFfmpegConversionBackend:
         material_id = job.id  # stable HLS prefix tied to upload id
 
         try:
-            suffix = os.path.splitext(job.original_filename)[1] or '.mp4'
+            suffix = temp_suffix_for_video(job.original_filename, job.content_type)
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 temp_path = tmp.name
             download_gcs_object_to_path(job.gcs_object_name, temp_path)

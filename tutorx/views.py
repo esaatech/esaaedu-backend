@@ -56,6 +56,7 @@ from courses.hls_utils import (
     convert_to_hls,
     upload_hls_to_gcs,
     delete_hls_from_gcs,
+    temp_suffix_for_video,
     HLSConversionError,
     HLSUploadError,
 )
@@ -193,7 +194,7 @@ def create_audio_video_material_for_tutorx(
     try:
         with tempfile.NamedTemporaryFile(
             delete=False,
-            suffix=os.path.splitext(original_filename)[1] or ".mp4",
+            suffix=temp_suffix_for_video(original_filename, mime_type),
         ) as tmp:
             for chunk in file.chunks():
                 tmp.write(chunk)

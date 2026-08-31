@@ -36,6 +36,7 @@ from courses.hls_utils import (
     convert_to_hls,
     upload_hls_to_gcs,
     delete_hls_from_gcs,
+    temp_suffix_for_video,
     HLSConversionError,
     HLSUploadError,
 )
@@ -4124,7 +4125,10 @@ class AudioVideoUploadView(APIView):
                     except LessonMaterial.DoesNotExist:
                         pass
                 try:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(original_filename)[1] or '.mp4') as tmp:
+                    with tempfile.NamedTemporaryFile(
+                        delete=False,
+                        suffix=temp_suffix_for_video(original_filename, mime_type),
+                    ) as tmp:
                         for chunk in uploaded_file.chunks():
                             tmp.write(chunk)
                         temp_video_path = tmp.name

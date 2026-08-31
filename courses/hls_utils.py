@@ -43,6 +43,30 @@ class HLSUploadError(Exception):
     pass
 
 
+def temp_suffix_for_video(filename: str = "", content_type: str = "") -> str:
+    """
+    Pick a temp-file suffix so ffmpeg probes the real container.
+
+    Extensionless QuickTime uploads were saved as ``.mp4``, which can produce
+    HLS with timestamp holes that hang when the student scrubs the timeline.
+    """
+    ext = Path(filename or "").suffix
+    if ext:
+        return ext if ext.startswith(".") else f".{ext}"
+    ct = (content_type or "").split(";")[0].strip().lower()
+    if "quicktime" in ct or ct in ("video/mov", "video/x-quicktime"):
+        return ".mov"
+    if "webm" in ct:
+        return ".webm"
+    if "ogg" in ct:
+        return ".ogv"
+    if "avi" in ct:
+        return ".avi"
+    if "wmv" in ct or "ms-wmv" in ct:
+        return ".wmv"
+    return ".mp4"
+
+
 def _get_gcs_client():
     """Return a configured google.cloud.storage Client, or None if not available."""
     if not GCS_CLIENT_AVAILABLE:
@@ -75,9 +99,10 @@ def convert_to_hls(
     """
     Convert a local video file to HLS (playlist.m3u8 + segment*.ts).
 
-    Uses ffmpeg with H.264 + AAC (MPEG-TS safe) and 4-second segments.
-    Explicit audio encode keeps the volume control working in Chrome; the
-    Cloud Run Job ffmpeg otherwise often emits video-only HLS.
+    Uses ffmpeg with H.264 + AAC (MPEG-TS safe) and 4-second keyframe-aligned
+    segments. Explicit audio encode keeps volume working in Chrome. Forced
+    keyframes and ``independent_segments`` keep QuickTime/MOV (edit lists,
+    variable frame rate) seekable; MP4 usually already has regular GOPs.
 
     Args:
         local_video_path: Path to the input video file (e.g. MP4).
@@ -107,12 +132,20 @@ def convert_to_hls(
     cmd = [
         "ffmpeg",
         "-y",
+        "-fflags",
+        "+genpts",
+        "-analyzeduration",
+        "20M",
+        "-probesize",
+        "20M",
         "-i",
         str(local_video_path),
         "-map",
         "0:v:0",
         "-map",
         "0:a?",
+        "-sn",
+        "-dn",
         "-c:v",
         "libx264",
         "-profile:v",
@@ -121,6 +154,14 @@ def convert_to_hls(
         "3.0",
         "-pix_fmt",
         "yuv420p",
+        "-g",
+        "96",
+        "-keyint_min",
+        "48",
+        "-sc_threshold",
+        "0",
+        "-force_key_frames",
+        "expr:gte(t,n_forced*4)",
         "-c:a",
         "aac",
         "-ac",
@@ -129,12 +170,20 @@ def convert_to_hls(
         "44100",
         "-b:a",
         "128k",
+        "-avoid_negative_ts",
+        "make_zero",
+        "-max_muxing_queue_size",
+        "2048",
         "-start_number",
         "0",
         "-hls_time",
         "4",
         "-hls_list_size",
         "0",
+        "-hls_playlist_type",
+        "vod",
+        "-hls_flags",
+        "independent_segments",
         "-hls_segment_filename",
         segment_pattern,
         "-f",
