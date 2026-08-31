@@ -75,9 +75,9 @@ def convert_to_hls(
     """
     Convert a local video file to HLS (playlist.m3u8 + segment*.ts).
 
-    Uses ffmpeg with baseline profile and 4-second segments for broad
-    compatibility. The output directory will contain playlist.m3u8 and
-    segment000.ts, segment001.ts, etc.
+    Uses ffmpeg with H.264 + AAC (MPEG-TS safe) and 4-second segments.
+    Explicit audio encode keeps the volume control working in Chrome; the
+    Cloud Run Job ffmpeg otherwise often emits video-only HLS.
 
     Args:
         local_video_path: Path to the input video file (e.g. MP4).
@@ -106,13 +106,29 @@ def convert_to_hls(
 
     cmd = [
         "ffmpeg",
-        "-y",  # Overwrite output
+        "-y",
         "-i",
         str(local_video_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c:v",
+        "libx264",
         "-profile:v",
         "baseline",
         "-level",
         "3.0",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-ac",
+        "2",
+        "-ar",
+        "44100",
+        "-b:a",
+        "128k",
         "-start_number",
         "0",
         "-hls_time",
@@ -121,8 +137,6 @@ def convert_to_hls(
         "0",
         "-hls_segment_filename",
         segment_pattern,
-        "-hls_flags",
-        "split_by_time",
         "-f",
         "hls",
         str(playlist_path),
