@@ -365,3 +365,51 @@ class AIPromptTemplate(models.Model):
     
     def __str__(self):
         return f"{self.display_name} ({'Active' if self.is_active else 'Inactive'})"
+
+
+class CourseTeacherPrompt(models.Model):
+    """Per-course, per-teacher extra instructions for quiz/assignment AI generation."""
+
+    KIND_QUIZ = "quiz"
+    KIND_ASSIGNMENT = "assignment"
+    KIND_CHOICES = [
+        (KIND_QUIZ, "Quiz"),
+        (KIND_ASSIGNMENT, "Assignment"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    course = models.ForeignKey(
+        "courses.Course",
+        on_delete=models.CASCADE,
+        related_name="teacher_ai_prompts",
+    )
+    teacher = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="course_ai_prompts",
+        limit_choices_to={"role": "teacher"},
+    )
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    instruction = models.TextField(
+        blank=True,
+        help_text="Optional extra instructions appended to the global base prompt.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Course Teacher Prompt"
+        verbose_name_plural = "Course Teacher Prompts"
+        ordering = ["-updated_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["course", "teacher", "kind"],
+                name="unique_course_teacher_prompt_kind",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["course", "teacher", "kind"]),
+        ]
+
+    def __str__(self):
+        return f"{self.kind} prompt for {self.teacher} on {self.course_id}"

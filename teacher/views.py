@@ -56,6 +56,7 @@ from ai.video_transcription_service import VideoTranscriptionService
 from ai.gemini_quiz_service import GeminiQuizService
 from ai.gemini_assignment_service import GeminiAssignmentService
 from ai.api_errors import ai_error_response
+from ai.models import CourseTeacherPrompt
 from courses.serializers import VideoMaterialSerializer, VideoMaterialCreateSerializer, VideoMaterialTranscribeSerializer, CourseAssessmentGradingSerializer, CourseAssessmentSubmissionResponseSerializer
 from .utils import FileUploadService
 
@@ -4681,6 +4682,64 @@ class AllFileUploadView(APIView):
                 {'error': f'Error during file upload: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class CourseTeacherPromptView(APIView):
+    """GET/PUT per-course, per-teacher extra instructions for quiz/assignment AI."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    VALID_KINDS = {CourseTeacherPrompt.KIND_QUIZ, CourseTeacherPrompt.KIND_ASSIGNMENT}
+
+    def _resolve(self, request, course_id, kind):
+        if getattr(request.user, "role", None) != "teacher":
+            return None, None, Response(
+                {"error": "Only teachers can access this endpoint"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if kind not in self.VALID_KINDS:
+            return None, None, Response(
+                {"error": "kind must be quiz or assignment"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            course = courses_for_teacher(request.user).get(id=course_id)
+        except Course.DoesNotExist:
+            return None, None, Response(
+                {"error": "Course not found or you do not have permission"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return course, kind, None
+
+    def get(self, request, course_id, kind):
+        course, kind, error = self._resolve(request, course_id, kind)
+        if error:
+            return error
+        prompt = CourseTeacherPrompt.objects.filter(
+            course=course,
+            teacher=request.user,
+            kind=kind,
+        ).first()
+        return Response({"instruction": prompt.instruction if prompt else ""})
+
+    def put(self, request, course_id, kind):
+        course, kind, error = self._resolve(request, course_id, kind)
+        if error:
+            return error
+        instruction = request.data.get("instruction", "")
+        if instruction is None:
+            instruction = ""
+        if not isinstance(instruction, str):
+            return Response(
+                {"error": "instruction must be a string"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        prompt, _created = CourseTeacherPrompt.objects.update_or_create(
+            course=course,
+            teacher=request.user,
+            kind=kind,
+            defaults={"instruction": instruction},
+        )
+        return Response({"instruction": prompt.instruction})
 
 
 class AIGenerateQuizView(APIView):

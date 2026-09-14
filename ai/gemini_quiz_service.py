@@ -124,15 +124,15 @@ class GeminiQuizService:
             elif file_parts:
                 content_section = "Content: See attached document(s).\n\n"
             
-            prompt = f"""Generate a comprehensive quiz for the following lesson:
+            prompt = f"""Generate a quiz for the following lesson.
 
 Lesson Title: {lesson_title}
 {lesson_desc_section}
-{content_section}Generate exactly {total_questions} quiz questions that test understanding of the lesson content:
+{content_section}Generate exactly {total_questions} questions:
 - Exactly {multiple_choice_count} multiple choice questions
 - Exactly {true_false_count} true/false questions
 
-Each question should have clear correct answers and helpful explanations. Ensure the questions cover different aspects of the lesson content."""
+Follow the system instruction, including any teacher instructions, when choosing what the quiz assesses."""
             
             # Get schema for structured output
             response_schema = get_quiz_generation_schema()

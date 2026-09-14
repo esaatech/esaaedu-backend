@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import AIConversation, AIPrompt, AIPromptTemplate, SystemInstruction
+from .models import AIConversation, AIPrompt, AIPromptTemplate, CourseTeacherPrompt, SystemInstruction
 
 
 @admin.register(AIConversation)
@@ -126,3 +126,17 @@ class AIPromptTemplateAdmin(admin.ModelAdmin):
             obj.created_by = request.user
         obj.last_modified_by = request.user
         super().save_model(request, obj, form, change)
+
+
+@admin.register(CourseTeacherPrompt)
+class CourseTeacherPromptAdmin(admin.ModelAdmin):
+    list_display = ["course", "teacher", "kind", "updated_at"]
+    list_filter = ["kind", "updated_at"]
+    search_fields = [
+        "course__title",
+        "teacher__email",
+        "teacher__first_name",
+        "teacher__last_name",
+        "instruction",
+    ]
+    readonly_fields = ["id", "created_at", "updated_at"]
