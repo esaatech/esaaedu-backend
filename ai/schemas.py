@@ -188,20 +188,26 @@ def get_course_introduction_schema() -> Dict[str, Any]:
                 "items": {"type": "string"},
                 "description": "List of prerequisites as JSON array"
             },
+            # Vertex GenerationConfig calls type.upper(); JSON Schema unions like
+            # ["integer", "null"] crash with "'list' object has no attribute 'upper'".
             "duration_weeks": {
-                "type": ["integer", "null"],
+                "type": "integer",
+                "nullable": True,
                 "description": "Course duration in weeks (OPTIONAL - do not generate this field unless explicitly requested. These operational fields are managed separately and should not be included in course introduction generation)"
             },
             "sessions_per_week": {
-                "type": ["integer", "null"],
+                "type": "integer",
+                "nullable": True,
                 "description": "Number of sessions per week (OPTIONAL - do not generate this field unless explicitly requested. These operational fields are managed separately and should not be included in course introduction generation)"
             },
             "total_projects": {
-                "type": ["integer", "null"],
+                "type": "integer",
+                "nullable": True,
                 "description": "Number of projects students will create (OPTIONAL - do not generate this field unless explicitly requested. These operational fields are managed separately and should not be included in course introduction generation)"
             },
             "max_students": {
-                "type": ["integer", "null"],
+                "type": "integer",
+                "nullable": True,
                 "description": "Maximum number of students for the course (OPTIONAL - do not generate this field unless explicitly requested. These operational fields are managed separately and should not be included in course introduction generation)"
             },
             "value_propositions": {

@@ -17,6 +17,7 @@ from ai.gemini_service import (
     DEFAULT_RATE_LIMIT_MAX_ATTEMPTS,
     _extract_response_text,
     _extract_text_parts,
+    _normalize_vertex_response_schema,
     _parse_structured_response,
     _raise_gemini_error,
 )
@@ -158,6 +159,31 @@ class GeminiServiceResponseExtractionTests(SimpleTestCase):
     def test_parse_structured_response_raises_on_invalid_json(self):
         with self.assertRaises(Exception):
             _parse_structured_response("not json", ["also not json"])
+
+
+class VertexResponseSchemaNormalizationTests(SimpleTestCase):
+    def test_converts_json_schema_union_null_to_nullable_type(self):
+        schema = {
+            "type": "object",
+            "properties": {
+                "duration_weeks": {
+                    "type": ["integer", "null"],
+                    "description": "optional weeks",
+                },
+                "overview": {"type": "string"},
+            },
+        }
+
+        normalized = _normalize_vertex_response_schema(schema)
+
+        self.assertEqual(normalized["properties"]["duration_weeks"]["type"], "integer")
+        self.assertTrue(normalized["properties"]["duration_weeks"]["nullable"])
+        self.assertEqual(normalized["properties"]["overview"]["type"], "string")
+        self.assertNotIn("nullable", normalized["properties"]["overview"])
+
+    def test_leaves_string_types_unchanged(self):
+        schema = {"type": "array", "items": {"type": "string"}}
+        self.assertEqual(_normalize_vertex_response_schema(schema), schema)
 
 
 @override_settings(CACHES=LOC_MEM_CACHE)

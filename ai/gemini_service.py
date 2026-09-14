@@ -180,6 +180,38 @@ def _parse_json_from_text(text: str) -> Any:
     return json.loads(_strip_json_fences(text))
 
 
+def _normalize_vertex_response_schema(schema: Any) -> Any:
+    """
+    Convert JSON Schema union types into Vertex Schema format.
+
+    Vertex GenerationConfig does ``schema['type'].upper()``, so
+    ``{"type": ["integer", "null"]}`` raises
+    ``'list' object has no attribute 'upper'``. Convert that to
+    ``{"type": "integer", "nullable": True}``.
+    """
+    if isinstance(schema, list):
+        return [_normalize_vertex_response_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    normalized = {
+        key: _normalize_vertex_response_schema(value)
+        for key, value in schema.items()
+    }
+
+    schema_type = normalized.get("type")
+    if isinstance(schema_type, list):
+        non_null_types = [t for t in schema_type if t != "null"]
+        if "null" in schema_type:
+            normalized["nullable"] = True
+        if non_null_types:
+            normalized["type"] = non_null_types[0]
+        else:
+            normalized["type"] = "string"
+
+    return normalized
+
+
 def _parse_structured_response(raw_text: str, text_parts: List[str]) -> Any:
     """
     Parse structured JSON from model output.
@@ -400,7 +432,7 @@ class GeminiService:
                 config_kwargs: Dict[str, Any] = {
                     "temperature": temperature,
                     "response_mime_type": "application/json",
-                    "response_schema": response_schema,
+                    "response_schema": _normalize_vertex_response_schema(response_schema),
                 }
                 if max_tokens:
                     config_kwargs["max_output_tokens"] = max_tokens
