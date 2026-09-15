@@ -16,36 +16,46 @@ from courses.permissions import (
 User = get_user_model()
 
 
+def _make_user(*, email: str, firebase_uid: str, role: str, first_name: str, last_name: str) -> User:
+    user = User(
+        email=email,
+        username=email,
+        firebase_uid=firebase_uid,
+        role=role,
+        first_name=first_name,
+        last_name=last_name,
+    )
+    user.set_password('pass')
+    user.save()
+    return user
+
+
 class CourseMembershipPermissionsTests(TestCase):
     def setUp(self):
-        self.owner = User.objects.create_user(
-            username='owner@example.com',
+        self.owner = _make_user(
             email='owner@example.com',
-            password='pass',
+            firebase_uid='membership_owner_uid',
             role='teacher',
             first_name='Own',
             last_name='Er',
         )
-        self.co_teacher = User.objects.create_user(
-            username='co@example.com',
+        self.co_teacher = _make_user(
             email='co@example.com',
-            password='pass',
+            firebase_uid='membership_co_uid',
             role='teacher',
             first_name='Co',
             last_name='Teacher',
         )
-        self.other = User.objects.create_user(
-            username='other@example.com',
+        self.other = _make_user(
             email='other@example.com',
-            password='pass',
+            firebase_uid='membership_other_uid',
             role='teacher',
             first_name='Other',
             last_name='Teacher',
         )
-        self.student = User.objects.create_user(
-            username='student@example.com',
+        self.student = _make_user(
             email='student@example.com',
-            password='pass',
+            firebase_uid='membership_student_uid',
             role='student',
             first_name='Stu',
             last_name='Dent',

@@ -2366,11 +2366,16 @@ def teacher_class_detail(request, class_id):
     
     try:
         class_instance = get_object_or_404(
-            Class.objects.select_related('course', 'teacher').prefetch_related('students', 'sessions'), 
-            id=class_id, 
-            teacher=request.user
+            Class.objects.select_related('course', 'teacher').prefetch_related('students', 'sessions'),
+            id=class_id,
         )
     except Exception:
+        return Response(
+            {'error': 'Class not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    if not user_can_access_class(request.user, class_instance):
         return Response(
             {'error': 'Class not found'},
             status=status.HTTP_404_NOT_FOUND
@@ -2442,8 +2447,12 @@ def remove_student_from_class(request, class_id, student_id):
     class_instance = get_object_or_404(
         Class.objects.select_related('course'),
         id=class_id,
-        teacher=request.user
     )
+    if not user_can_access_class(request.user, class_instance):
+        return Response(
+            {'error': 'Class not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
 
     # Look up the student through the class roster: this both finds the user
     # and confirms they are actually enrolled in this class.
@@ -2492,7 +2501,15 @@ def teacher_class_attendance(request, class_id):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    class_instance = get_object_or_404(Class, id=class_id, teacher=request.user)
+    class_instance = get_object_or_404(
+        Class.objects.select_related('course'),
+        id=class_id,
+    )
+    if not user_can_access_class(request.user, class_instance):
+        return Response(
+            {'error': 'Class not found'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
 
     if request.method == 'GET':
         try:
@@ -3054,8 +3071,16 @@ def class_events(request, class_id):
         from .models import ClassEvent, Project, ProjectPlatform, Lesson, SubmissionType
         from .serializers import ClassEventListSerializer, ClassEventCreateUpdateSerializer, ClassEventDetailSerializer, ProjectListSerializer, ProjectPlatformSerializer, LessonListSerializer
         
-        # Verify the class belongs to the teacher
-        class_instance = get_object_or_404(Class, id=class_id, teacher=request.user)
+        # Owner or co-teacher on the course can manage schedule events
+        class_instance = get_object_or_404(
+            Class.objects.select_related('course'),
+            id=class_id,
+        )
+        if not user_can_access_class(request.user, class_instance):
+            return Response(
+                {'error': 'Class not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
         
         if request.method == 'GET':
             events = ClassEvent.objects.filter(class_instance=class_instance).select_related(
@@ -3127,8 +3152,16 @@ def class_event_detail(request, class_id, event_id):
         from .models import ClassEvent
         from .serializers import ClassEventDetailSerializer, ClassEventCreateUpdateSerializer
         
-        # Verify the class belongs to the teacher
-        class_instance = get_object_or_404(Class, id=class_id, teacher=request.user)
+        # Owner or co-teacher on the course can manage schedule events
+        class_instance = get_object_or_404(
+            Class.objects.select_related('course'),
+            id=class_id,
+        )
+        if not user_can_access_class(request.user, class_instance):
+            return Response(
+                {'error': 'Class not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
         
         # Get the specific event
         event = get_object_or_404(ClassEvent, id=event_id, class_instance=class_instance)
