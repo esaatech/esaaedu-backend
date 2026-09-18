@@ -2,7 +2,7 @@ import logging
 import uuid
 
 from django.conf import settings
-from django.http import HttpResponse, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.decorators import method_decorator
@@ -28,6 +28,7 @@ from communication.services.twilio_sms import (
     validate_inbound_webhook_signature,
 )
 from courses.models import Class, Course
+from courses.permissions import user_can_access_class, user_is_course_member
 from users.models import User
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,25 @@ logger = logging.getLogger(__name__)
 def communication_health(request):
     """Lightweight check that the communication app URLConf is mounted."""
     return JsonResponse({"app": "communication", "status": "ok"})
+
+
+def _course_for_teacher_or_404(user, course_id) -> Course:
+    """Owner or co-teacher may use the course for SMS; outsiders get 404."""
+    course = get_object_or_404(Course, id=course_id)
+    if not user_is_course_member(user, course):
+        raise Http404("No Course matches the given query.")
+    return course
+
+
+def _class_for_teacher_or_404(user, class_id) -> Class:
+    """Owner or co-teacher may use the class for SMS; outsiders get 404."""
+    class_instance = get_object_or_404(
+        Class.objects.select_related("course"),
+        id=class_id,
+    )
+    if not user_can_access_class(user, class_instance):
+        raise Http404("No Class matches the given query.")
+    return class_instance
 
 
 class TeacherMessageTemplateListView(APIView):
@@ -131,8 +151,8 @@ class TeacherSmsSendView(APIView):
                     {"error": "course_id and class_id must be UUIDs"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            course_arg = get_object_or_404(Course, id=cuid, teacher=user)
-            course_class = get_object_or_404(Class, id=clid, teacher=user)
+            course_arg = _course_for_teacher_or_404(user, cuid)
+            course_class = _class_for_teacher_or_404(user, clid)
             if course_class.course_id != course_arg.id:
                 return Response(
                     {"error": "class_id does not belong to the given course_id"},
@@ -146,7 +166,7 @@ class TeacherSmsSendView(APIView):
                     {"error": "class_id must be a UUID"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            course_class = get_object_or_404(Class, id=clid, teacher=user)
+            course_class = _class_for_teacher_or_404(user, clid)
             course_arg = course_class.course
         elif has_course:
             try:
@@ -156,7 +176,7 @@ class TeacherSmsSendView(APIView):
                     {"error": "course_id must be a UUID"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            course_arg = get_object_or_404(Course, id=cuid, teacher=user)
+            course_arg = _course_for_teacher_or_404(user, cuid)
 
         try:
             log = send_teacher_sms_to_student(
@@ -306,8 +326,8 @@ def _parse_teacher_student_sms_context(
             clid = uuid.UUID(str(raw_class_id))
         except (ValueError, TypeError) as e:
             raise ValueError("course_id and class_id must be UUIDs") from e
-        course_arg = get_object_or_404(Course, id=cuid, teacher=user)
-        course_class = get_object_or_404(Class, id=clid, teacher=user)
+        course_arg = _course_for_teacher_or_404(user, cuid)
+        course_class = _class_for_teacher_or_404(user, clid)
         if course_class.course_id != course_arg.id:
             raise ValueError("class_id does not belong to the given course_id")
     elif has_class:
@@ -315,14 +335,14 @@ def _parse_teacher_student_sms_context(
             clid = uuid.UUID(str(raw_class_id))
         except (ValueError, TypeError) as e:
             raise ValueError("class_id must be a UUID") from e
-        course_class = get_object_or_404(Class, id=clid, teacher=user)
+        course_class = _class_for_teacher_or_404(user, clid)
         course_arg = course_class.course
     elif has_course:
         try:
             cuid = uuid.UUID(str(raw_course_id))
         except (ValueError, TypeError) as e:
             raise ValueError("course_id must be a UUID") from e
-        course_arg = get_object_or_404(Course, id=cuid, teacher=user)
+        course_arg = _course_for_teacher_or_404(user, cuid)
 
     recipient_type = (_get("recipient_type") or "student").lower()
     if recipient_type not in ("parent", "student"):

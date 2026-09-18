@@ -17,6 +17,7 @@ from communication.services.phone import normalize_to_e164
 from communication.services.staff_sms_ui import conversation_match_q
 from communication.services.twilio_sms import get_twilio_credentials
 from courses.models import Class, Course
+from courses.permissions import classes_for_teacher, user_can_access_class, user_is_course_member
 from users.models import StudentProfile
 
 User = get_user_model()
@@ -48,7 +49,7 @@ def _resolve_course_class(
     resolved_course: Course | None = course
 
     if course_class is not None:
-        if course_class.teacher_id != teacher.id:
+        if not user_can_access_class(teacher, course_class):
             raise PermissionError("You do not teach this class")
         if not course_class.students.filter(pk=student.pk).exists():
             raise PermissionError("Student is not in this class")
@@ -57,9 +58,9 @@ def _resolve_course_class(
         resolved_course = course_class.course
 
     elif course is not None:
-        if course.teacher_id != teacher.id:
+        if not user_is_course_member(teacher, course):
             raise PermissionError("You do not teach this course")
-        matches = Class.objects.filter(teacher=teacher, course=course, students=student)
+        matches = classes_for_teacher(teacher).filter(course=course, students=student)
         n = matches.count()
         if n == 0:
             raise PermissionError("Student is not in your class for this course")
@@ -70,7 +71,7 @@ def _resolve_course_class(
         resolved_class = matches.first()
 
     else:
-        shared = Class.objects.filter(teacher=teacher, students=student).order_by("id")
+        shared = classes_for_teacher(teacher).filter(students=student).order_by("id")
         if not shared.exists():
             raise PermissionError("You have no shared class with this student")
         resolved_class = shared.first()

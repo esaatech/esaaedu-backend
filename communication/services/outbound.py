@@ -41,6 +41,7 @@ def send_teacher_sms_to_student(
     """
     from courses.models import Class as ClassModel
     from courses.models import Course as CourseModel
+    from courses.permissions import classes_for_teacher, user_can_access_class, user_is_course_member
     from users.models import StudentProfile
 
     if not teacher.is_teacher:
@@ -52,7 +53,7 @@ def send_teacher_sms_to_student(
     resolved_course: CourseModel | None = course
 
     if course_class is not None:
-        if course_class.teacher_id != teacher.id:
+        if not user_can_access_class(teacher, course_class):
             raise PermissionError("You do not teach this class")
         if not course_class.students.filter(pk=student.pk).exists():
             raise PermissionError("Student is not in this class")
@@ -61,10 +62,9 @@ def send_teacher_sms_to_student(
         resolved_course = course_class.course
 
     elif course is not None:
-        if course.teacher_id != teacher.id:
+        if not user_is_course_member(teacher, course):
             raise PermissionError("You do not teach this course")
-        matches = ClassModel.objects.filter(
-            teacher=teacher,
+        matches = classes_for_teacher(teacher).filter(
             course=course,
             students=student,
         )
@@ -78,7 +78,7 @@ def send_teacher_sms_to_student(
         resolved_class = matches.first()
 
     else:
-        shared = ClassModel.objects.filter(teacher=teacher, students=student).order_by("id")
+        shared = classes_for_teacher(teacher).filter(students=student).order_by("id")
         if not shared.exists():
             raise PermissionError("You have no shared class with this student")
         resolved_class = shared.first()
