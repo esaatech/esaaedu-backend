@@ -45,6 +45,9 @@ def owned_or_member_q(user, prefix: str = '') -> Q:
     prefix=''           → filter Course queryset
     prefix='course__'   → filter related objects with a course FK
     prefix='lesson__course__' etc. for deeper relations
+
+    Callers that filter related models (e.g. EnrolledCourse) MUST use
+    ``.distinct()`` — the memberships join can multiply rows per co-teacher.
     """
     teacher_key = f'{prefix}teacher' if prefix else 'teacher'
     membership_key = f'{prefix}memberships__user' if prefix else 'memberships__user'

@@ -96,7 +96,9 @@ def enrolled_courses(request):
                     student_profile__user=request.user
                 ).order_by('-enrollment_date')
             elif request.user.role == 'teacher':
-                enrollments = EnrolledCourse.objects.filter(owned_or_member_q(request.user, 'course__')).order_by('-enrollment_date')
+                enrollments = EnrolledCourse.objects.filter(
+                    owned_or_member_q(request.user, 'course__')
+                ).order_by('-enrollment_date').distinct()
             else:
                 enrollments = EnrolledCourse.objects.all().order_by('-enrollment_date')
             

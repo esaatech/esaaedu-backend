@@ -2728,13 +2728,16 @@ def teacher_students(request):
         page_size = min(int(request.GET.get('page_size', 20)), 100)
         
         # Base queryset - all enrollments for teacher's courses
-        enrollments = EnrolledCourse.objects.filter(owned_or_member_q(request.user, 'course__')).select_related(
+        # distinct(): owned_or_member_q joins CourseMembership and multiplies rows
+        enrollments = EnrolledCourse.objects.filter(
+            owned_or_member_q(request.user, 'course__')
+        ).select_related(
             'student_profile__user',
             'course',
             'current_lesson'
         ).prefetch_related(
             Prefetch('student_profile')
-        )
+        ).distinct()
         
         # Apply filters
         if course_filter:
@@ -2875,12 +2878,17 @@ def teacher_students_master(request):
         ).order_by('-created_at')
         
         # Get all enrollments for teacher's courses
-        enrollments = EnrolledCourse.objects.filter(owned_or_member_q(request.user, 'course__')).select_related(
+        # distinct(): owned_or_member_q joins CourseMembership and multiplies rows
+        enrollments = EnrolledCourse.objects.filter(
+            owned_or_member_q(request.user, 'course__')
+        ).select_related(
             'student_profile',
             'student_profile__user',
             'course',
             'current_lesson'
-        ).order_by('-enrollment_date', 'student_profile__user__first_name')
+        ).order_by(
+            '-enrollment_date', 'student_profile__user__first_name'
+        ).distinct()
         
         # Prepare courses data
         courses_data = []
@@ -5982,7 +5990,9 @@ class TeacherDashboardAPIView(APIView):
         """Count total enrollments across all teacher's courses"""
         from student.models import EnrolledCourse, StudentAttendance
         
-        enrollments = EnrolledCourse.objects.filter(owned_or_member_q(teacher, 'course__'))
+        enrollments = EnrolledCourse.objects.filter(
+            owned_or_member_q(teacher, 'course__')
+        ).distinct()
         return enrollments.count()
 
     def get_monthly_revenue(self, teacher):

@@ -101,3 +101,28 @@ class CourseMembershipPermissionsTests(TestCase):
         self.assertIn(self.course.id, owned_ids)
         self.assertIn(self.course.id, co_ids)
         self.assertNotIn(self.course.id, other_ids)
+
+    def test_enrollment_query_needs_distinct_with_memberships(self):
+        """Membership join multiplies enrollments unless distinct() is applied."""
+        from student.models import EnrolledCourse
+        from users.models import StudentProfile
+        from courses.permissions import owned_or_member_q
+
+        CourseMembership.objects.create(
+            course=self.course,
+            user=self.other,
+            role=CourseMembership.ROLE_TEACHER,
+            invited_by=self.owner,
+        )
+        profile = StudentProfile.objects.create(user=self.student)
+        EnrolledCourse.objects.create(
+            student_profile=profile,
+            course=self.course,
+            status='active',
+        )
+        duplicated = EnrolledCourse.objects.filter(
+            owned_or_member_q(self.owner, 'course__')
+        )
+        deduped = duplicated.distinct()
+        self.assertGreater(duplicated.count(), 1)
+        self.assertEqual(deduped.count(), 1)
