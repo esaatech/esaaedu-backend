@@ -8,7 +8,7 @@ from rest_framework.authentication import SessionAuthentication
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
 from django.utils import timezone
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q, Count, Avg, Prefetch
 from django.contrib.auth import get_user_model
 from datetime import datetime, timedelta
@@ -3558,48 +3558,97 @@ class AssignmentSubmissionView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            # Get or create submission
-            submission, created = AssignmentSubmission.objects.get_or_create(
-                student=request.user,
-                assignment=assignment,
-                defaults={
-                    'attempt_number': 1,
-                    'status': 'draft' if is_draft else 'submitted',
-                    'answers': validated_data.get('answers', {}),
-                    'enrollment': enrollment,
-                    'submitted_at': timezone.now()
-                }
-            )
-            
-            # Update existing submission if not created
-            if not created:
-                print(f"🔄 Updating existing submission. Current answers: {submission.answers}")
-                print(f"🔄 New answers received: {validated_data.get('answers', {})}")
-                
-                # Merge answers instead of replacing them completely
-                existing_answers = submission.answers or {}
-                new_answers = validated_data.get('answers', {})
-                
-                # Merge the answers (new answers override existing ones for same questions)
-                merged_answers = {**existing_answers, **new_answers}
-                
-                print(f"🔄 Merged answers: {merged_answers}")
-                
-                submission.answers = merged_answers
-                submission.status = 'draft' if is_draft else 'submitted'
-                submission.submitted_at = timezone.now()
-                if not is_draft:
-                    submission.return_feedback = None  # clear return feedback when student resubmits
-                submission.save()
-            
-            # Assignment submission completed successfully
-            # Note: Assignment completion tracking has been removed from UI
-            # The fields remain in the model for potential future use
-
-            # If this assignment is linked to a TutorX lesson, delegate to TutorX (Phase 2: no-op; Phase 3/4: autograde / return for revision)
             has_tutorx_lesson = assignment.lessons.filter(type='tutorx').exists()
-            print(f"[TutorX] Assignment submit: assignment_id={assignment.id} submission_id={submission.id} is_draft={is_draft} has_tutorx_lesson={has_tutorx_lesson}")
+            use_queue = False
             if not is_draft and has_tutorx_lesson:
+                from tutorx.services.grading_queue import (
+                    CloudTaskConfigError,
+                    tutorx_grading_uses_queue,
+                )
+                try:
+                    use_queue = tutorx_grading_uses_queue()
+                except CloudTaskConfigError as exc:
+                    return Response({'error': str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            # Get or create submission. Lock the row so a second submit cannot
+            # overwrite answers while a TutorX grade is still running.
+            with transaction.atomic():
+                submission, created = AssignmentSubmission.objects.select_for_update().get_or_create(
+                    student=request.user,
+                    assignment=assignment,
+                    defaults={
+                        'attempt_number': 1,
+                        'status': 'draft' if is_draft else 'submitted',
+                        'answers': validated_data.get('answers', {}),
+                        'enrollment': enrollment,
+                        'submitted_at': timezone.now()
+                    }
+                )
+
+                if not created and has_tutorx_lesson and submission.status == 'grading':
+                    response_serializer = AssignmentSubmissionResponseSerializer(submission)
+                    return Response(
+                        {
+                            'error': 'This assignment is already being graded.',
+                            'submission': response_serializer.data,
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+                if not created:
+                    print(f"🔄 Updating existing submission. Current answers: {submission.answers}")
+                    print(f"🔄 New answers received: {validated_data.get('answers', {})}")
+
+                    existing_answers = submission.answers or {}
+                    new_answers = validated_data.get('answers', {})
+                    merged_answers = {**existing_answers, **new_answers}
+                    print(f"🔄 Merged answers: {merged_answers}")
+
+                    submission.answers = merged_answers
+                    submission.status = 'draft' if is_draft else 'submitted'
+                    submission.submitted_at = timezone.now()
+                    if not is_draft:
+                        submission.return_feedback = None
+                    submission.save()
+
+                # Queue path: status passes through submitted (so submit metrics still run),
+                # then becomes grading before the response. Already-graded rows stay as they are.
+                should_autograde = (
+                    not is_draft and has_tutorx_lesson and not submission.is_graded
+                )
+                if should_autograde and use_queue:
+                    submission.status = 'grading'
+                    submission.is_graded = False
+                    submission.save(update_fields=['status', 'is_graded'])
+
+            print(f"[TutorX] Assignment submit: assignment_id={assignment.id} submission_id={submission.id} is_draft={is_draft} has_tutorx_lesson={has_tutorx_lesson} use_queue={use_queue}")
+            if should_autograde and use_queue:
+                from tutorx.services.grading_queue import (
+                    CloudTaskAlreadyExists,
+                    CloudTaskEnqueueError,
+                    enqueue_tutorx_grade,
+                )
+                submission.refresh_from_db()
+                try:
+                    enqueue_tutorx_grade(submission)
+                except CloudTaskAlreadyExists:
+                    print(f"[TutorX] grade task already queued submission_id={submission.id}")
+                except CloudTaskEnqueueError as exc:
+                    print(f"[TutorX] enqueue FAILED submission_id={submission.id}: {exc}")
+                    AssignmentSubmission.objects.filter(
+                        pk=submission.pk,
+                        status='grading',
+                    ).update(status='grading_failed')
+                    submission.refresh_from_db()
+                    response_serializer = AssignmentSubmissionResponseSerializer(submission)
+                    return Response(
+                        {
+                            'error': 'Grading could not be started. Please submit again.',
+                            'submission': response_serializer.data,
+                        },
+                        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    )
+            elif should_autograde:
                 try:
                     print(f"[TutorX] Delegating to handle_assignment_submission submission_id={submission.id}")
                     from tutorx.services.assignment_submission import handle_assignment_submission
@@ -3617,9 +3666,15 @@ class AssignmentSubmissionView(APIView):
 
             # Return response
             response_serializer = AssignmentSubmissionResponseSerializer(submission)
+            if submission.status == 'grading':
+                message = 'Assignment submitted. Grading has started.'
+            elif is_draft:
+                message = 'Draft saved successfully'
+            else:
+                message = 'Assignment submitted successfully'
             response_data = {
                 'submission': response_serializer.data,
-                'message': 'Draft saved successfully' if is_draft else 'Assignment submitted successfully'
+                'message': message,
             }
 
             return Response(response_data, status=status.HTTP_200_OK)

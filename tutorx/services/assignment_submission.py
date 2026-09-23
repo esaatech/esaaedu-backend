@@ -6,11 +6,24 @@ submission view delegates here. Phase 2: no-op. Phase 3: autograde via GeminiGra
 Phase 4: if score >= passing_score mark graded; else return for revision (draft + return_feedback).
 
 Contract:
-- Input: submission (AssignmentSubmission, saved with status='submitted').
+- Input: submission (AssignmentSubmission). Inline submits are status='submitted'.
+  Queued submits are status='grading' and pass raise_on_grader_error=True.
 - Return: None.
 """
 from decimal import Decimal
+
+from django.db import transaction
 from django.utils import timezone
+
+from tutorx.services.grading_queue import grading_run_token
+
+
+class TutorXGradingRetryableError(Exception):
+    """Gemini or an unexpected failure. Cloud Tasks should retry."""
+
+
+class TutorXGradingPermanentError(Exception):
+    """This submission cannot be graded. Do not retry."""
 
 
 def _normalize_student_answer(value):
@@ -101,18 +114,47 @@ def _build_assignment_context(assignment):
     return context
 
 
-def handle_assignment_submission(submission):
+def _save_if_current(submission, update_fields, *, queued, run_token):
+    """
+    Persist a grade only if this run still owns the submission.
+    A Cloud Tasks retry that overlaps a finished grade must not overwrite it.
+    """
+    with transaction.atomic():
+        locked = submission.__class__.objects.select_for_update().get(pk=submission.pk)
+        if locked.is_graded or locked.status == 'graded':
+            print(f"[TutorX] skip save, already graded submission_id={submission.id}")
+            return False
+        if queued and (locked.status != 'grading' or grading_run_token(locked) != run_token):
+            print(f"[TutorX] skip save, stale grade run submission_id={submission.id} status={locked.status}")
+            return False
+        for field in update_fields:
+            setattr(locked, field, getattr(submission, field))
+        locked.save(update_fields=update_fields)
+    for field in update_fields:
+        setattr(submission, field, getattr(locked, field))
+    return True
+
+
+def handle_assignment_submission(submission, *, raise_on_grader_error=False):
     """
     Process a TutorX assignment submission.
 
     Phase 3: Grade via GeminiGrader (AI questions) + local scoring (MC/TF/short_answer with key).
     Phase 4: If percentage >= assignment.passing_score -> graded; else -> return for revision (draft + return_feedback).
+
+    raise_on_grader_error: Cloud Tasks path. Gemini failures propagate so the task can retry,
+    and the save is skipped unless this submit is still the active grading run.
     """
     print(f"[TutorX] ENTER submission_id={submission.id} assignment_id={submission.assignment_id} is_graded={submission.is_graded} status={submission.status}")
+    queued = raise_on_grader_error
+    run_token = grading_run_token(submission) if queued else None
 
     # Idempotency: do not re-grade if already graded
-    if submission.is_graded:
+    if submission.is_graded or submission.status == 'graded':
         print("[TutorX] submission already graded, skipping EXIT")
+        return
+    if queued and submission.status != 'grading':
+        print(f"[TutorX] queued grade is not active status={submission.status}, skipping EXIT")
         return
 
     assignment = submission.assignment
@@ -121,6 +163,8 @@ def handle_assignment_submission(submission):
     print(f"[TutorX] assignment questions count={len(questions_list)} answer keys={list(answers.keys()) if answers else []}")
     if not questions_list:
         print("[TutorX] assignment has no questions, skipping EXIT")
+        if raise_on_grader_error:
+            raise TutorXGradingPermanentError('Assignment has no questions.')
         return
 
     # 1) Build and run AI grading for essay / fill_blank / short_answer (no key)
@@ -159,7 +203,9 @@ def handle_assignment_submission(submission):
             print(f"[TutorX] GeminiGrader FAILED: {e}")
             import traceback
             traceback.print_exc()
-            # Fall back to 0 for AI questions so we still apply return/graded logic
+            if raise_on_grader_error:
+                raise TutorXGradingRetryableError(str(e)) from e
+            # Inline path: fall back to 0 for AI questions so we still apply return/graded logic
             for q in ai_questions:
                 qid = q.get("question_id")
                 pts = q.get("points_possible", 0)
@@ -190,6 +236,8 @@ def handle_assignment_submission(submission):
 
     if total_possible <= 0:
         print("[TutorX] total_possible is 0, skipping EXIT")
+        if raise_on_grader_error:
+            raise TutorXGradingPermanentError('Assignment has no points to grade.')
         return
 
     percentage = float(Decimal(total_score) / Decimal(total_possible) * 100)
@@ -238,11 +286,14 @@ def handle_assignment_submission(submission):
         submission.graded_questions = graded_questions
         submission.return_feedback = None
         print(f"[TutorX] saving submission as graded (update_fields) submission_id={submission.id}")
-        submission.save(update_fields=[
+        graded_fields = [
             "status", "is_graded", "is_teacher_draft", "points_earned", "points_possible",
             "percentage", "passed", "graded_at", "graded_by", "instructor_feedback",
             "graded_questions", "return_feedback",
-        ])
+        ]
+        if not _save_if_current(submission, graded_fields, queued=queued, run_token=run_token):
+            print(f"[TutorX] graded save skipped submission_id={submission.id}")
+            return
         try:
             enrollment = submission.enrollment
             enrollment.update_assignment_performance(float(percentage), is_graded=True)
@@ -286,7 +337,7 @@ def handle_assignment_submission(submission):
         submission.graded_questions = []
         submission.return_feedback = return_feedback
         print(f"[TutorX] saving submission as return for revision (update_fields) submission_id={submission.id}")
-        submission.save(update_fields=[
+        return_fields = [
             "status",
             "is_graded",
             "is_teacher_draft",
@@ -300,7 +351,10 @@ def handle_assignment_submission(submission):
             "graded_questions",
             "return_feedback",
             "return_for_revision_count",
-        ])
+        ]
+        if not _save_if_current(submission, return_fields, queued=queued, run_token=run_token):
+            print(f"[TutorX] return save skipped submission_id={submission.id}")
+            return
         print(f"[TutorX] submission saved as RETURN FOR REVISION submission_id={submission.id} percentage={percentage} passing_score={passing_score}")
 
     print(f"[TutorX] EXIT submission_id={submission.id}")

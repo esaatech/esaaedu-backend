@@ -508,6 +508,21 @@ COMMUNICATION_SMS_REPLY_MAX_AGE_SECONDS = config(
     cast=int,
 )
 
+# TutorX assignment auto-grade. Empty CLOUD_TASKS_QUEUE keeps grading inline (local dev).
+# Production sets the queue and the worker URL, then Cloud Tasks calls that URL.
+CLOUD_TASKS_PROJECT = config('CLOUD_TASKS_PROJECT', default='')
+CLOUD_TASKS_LOCATION = config('CLOUD_TASKS_LOCATION', default='us-central1')
+CLOUD_TASKS_QUEUE = config('CLOUD_TASKS_QUEUE', default='')
+CLOUD_TASKS_TARGET_URL = config('CLOUD_TASKS_TARGET_URL', default='')
+CLOUD_TASKS_SERVICE_ACCOUNT = config('CLOUD_TASKS_SERVICE_ACCOUNT', default='')
+CLOUD_TASKS_OIDC_AUDIENCE = config('CLOUD_TASKS_OIDC_AUDIENCE', default='')
+CLOUD_TASKS_MAX_ATTEMPTS = config('CLOUD_TASKS_MAX_ATTEMPTS', default=3, cast=int)
+CLOUD_TASKS_DISPATCH_DEADLINE_SECONDS = config(
+    'CLOUD_TASKS_DISPATCH_DEADLINE_SECONDS',
+    default=1200,
+    cast=int,
+)
+
 # Custom User Model
 AUTH_USER_MODEL = 'users.User'
 

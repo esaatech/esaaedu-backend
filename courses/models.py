@@ -1550,6 +1550,8 @@ class AssignmentSubmission(models.Model):
     STATUS_CHOICES = [
         ('draft', 'Draft'),
         ('submitted', 'Submitted'),
+        ('grading', 'Grading'),
+        ('grading_failed', 'Grading Failed'),
         ('graded', 'Graded'),
     ]
     
@@ -1565,7 +1567,7 @@ class AssignmentSubmission(models.Model):
         max_length=20,
         choices=STATUS_CHOICES,
         default='draft',
-        help_text="Submission status: draft, submitted, or graded"
+        help_text="Submission status: draft, submitted, grading, grading_failed, or graded"
     )
     submitted_at = models.DateTimeField(auto_now_add=True)
     
@@ -1694,14 +1696,12 @@ class AssignmentSubmission(models.Model):
             else:
                 self.passed = False
         
-        # Backward compatibility: auto-set status based on is_graded
-        # Only auto-set status if it's not explicitly provided or is invalid
+        # Backward compatibility: auto-set status based on is_graded.
+        # grading / grading_failed are explicit TutorX queue states and must be kept.
         if hasattr(self, 'status'):
             if self.is_graded and self.status not in ['graded', 'draft', 'submitted']:
-                # Only auto-set to 'graded' if status is not explicitly set
                 self.status = 'graded'
-            elif not self.is_graded and self.status not in ['draft', 'submitted']:
-                # If no status is set, default to 'submitted' for existing records
+            elif not self.is_graded and self.status not in ['draft', 'submitted', 'grading', 'grading_failed']:
                 self.status = 'submitted'
         
         super().save(*args, **kwargs)
