@@ -7,11 +7,16 @@ can be used by async tasks or other callers.
 
 Requires ffmpeg to be installed and on the server PATH.
 """
+import json
 import logging
+import math
+import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Optional, Union
+from urllib.parse import unquote, urlparse
 
 from django.conf import settings
 
@@ -20,6 +25,12 @@ logger = logging.getLogger(__name__)
 # Content types for HLS files (for correct playback and CDN behavior)
 HLS_PLAYLIST_CONTENT_TYPE = "application/vnd.apple.mpegurl"
 HLS_SEGMENT_CONTENT_TYPE = "video/MP2T"
+HLS_ENCODE_PROFILE_VERSION = "seekable-hls-v1"
+REQUIRED_VOD_TAGS = (
+    "#EXT-X-PLAYLIST-TYPE:VOD",
+    "#EXT-X-ENDLIST",
+    "#EXT-X-INDEPENDENT-SEGMENTS",
+)
 
 # GCS client for listing/deleting by prefix and uploading with content-type
 try:
@@ -41,6 +52,14 @@ class HLSUploadError(Exception):
     """Raised when uploading HLS files to GCS fails."""
 
     pass
+
+
+class HLSValidationError(Exception):
+    """Raised when an HLS package does not satisfy the playback contract."""
+
+    def __init__(self, message: str, report: Optional[dict[str, Any]] = None):
+        super().__init__(message)
+        self.report = report or {"valid": False, "errors": [message]}
 
 
 def temp_suffix_for_video(filename: str = "", content_type: str = "") -> str:
@@ -221,6 +240,185 @@ def convert_to_hls(
     return output_dir
 
 
+def _run_media_command(cmd: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        raise HLSValidationError(f"{cmd[0]} is not installed.") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HLSValidationError(f"{cmd[0]} validation timed out.") from exc
+
+
+def _probe_duration(path: Union[str, Path]) -> float:
+    result = _run_media_command(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "json",
+            str(path),
+        ]
+    )
+    if result.returncode != 0:
+        raise HLSValidationError(
+            f"ffprobe failed for {Path(path).name}: {(result.stderr or '')[:300]}"
+        )
+    try:
+        duration = float(json.loads(result.stdout)["format"]["duration"])
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HLSValidationError(f"Could not read duration for {Path(path).name}.") from exc
+    if not math.isfinite(duration) or duration <= 0:
+        raise HLSValidationError(f"Invalid duration for {Path(path).name}: {duration}")
+    return duration
+
+
+def _playlist_segment_paths(playlist_path: Path) -> list[Path]:
+    lines = playlist_path.read_text(encoding="utf-8").splitlines()
+    paths = []
+    for line in lines:
+        value = line.strip()
+        if not value or value.startswith("#"):
+            continue
+        parsed = urlparse(value)
+        if parsed.scheme or parsed.netloc:
+            raise HLSValidationError("Generated playlists must use relative segment URLs.")
+        segment_path = (playlist_path.parent / unquote(parsed.path)).resolve()
+        if playlist_path.parent.resolve() not in segment_path.parents:
+            raise HLSValidationError(f"Segment escapes HLS directory: {value}")
+        paths.append(segment_path)
+    if not paths:
+        raise HLSValidationError("Playlist contains no media segments.")
+    return paths
+
+
+def validate_hls_package(
+    local_hls_dir: Union[str, Path],
+    *,
+    source_path: Optional[Union[str, Path]] = None,
+) -> dict[str, Any]:
+    """
+    Enforce the canonical VOD seekability contract before publication.
+
+    Every segment is opened independently by ffprobe. Beginning, middle, and
+    near-end positions are then decoded through the playlist with ffmpeg.
+    """
+    hls_dir = Path(local_hls_dir)
+    playlist_path = hls_dir / "playlist.m3u8"
+    report: dict[str, Any] = {
+        "valid": False,
+        "profile_version": HLS_ENCODE_PROFILE_VERSION,
+        "errors": [],
+        "segment_count": 0,
+        "segment_probe_failures": [],
+        "representative_decode_failures": [],
+    }
+    try:
+        if not playlist_path.exists():
+            raise HLSValidationError("playlist.m3u8 was not generated.")
+        manifest = playlist_path.read_text(encoding="utf-8")
+        missing_tags = [tag for tag in REQUIRED_VOD_TAGS if tag not in manifest]
+        if missing_tags:
+            raise HLSValidationError(
+                f"Playlist is missing required tags: {', '.join(missing_tags)}"
+            )
+
+        segments = _playlist_segment_paths(playlist_path)
+        report["segment_count"] = len(segments)
+        for segment in segments:
+            if not segment.is_file():
+                report["segment_probe_failures"].append(
+                    {"segment": segment.name, "error": "missing"}
+                )
+                continue
+            result = _run_media_command(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=codec_name,width,height",
+                    "-of",
+                    "json",
+                    str(segment),
+                ]
+            )
+            if result.returncode != 0:
+                report["segment_probe_failures"].append(
+                    {
+                        "segment": segment.name,
+                        "error": (result.stderr or "ffprobe failed")[:500],
+                    }
+                )
+        if report["segment_probe_failures"]:
+            raise HLSValidationError(
+                f"{len(report['segment_probe_failures'])} segment(s) failed isolated probing."
+            )
+
+        duration = _probe_duration(playlist_path)
+        report["duration_seconds"] = duration
+        if source_path:
+            source_duration = _probe_duration(source_path)
+            report["source_duration_seconds"] = source_duration
+            tolerance = max(2.0, source_duration * 0.03)
+            if abs(duration - source_duration) > tolerance:
+                raise HLSValidationError(
+                    "HLS duration differs from source beyond tolerance."
+                )
+
+        sample_times = sorted(
+            {
+                0.0,
+                max(0.0, duration * 0.5),
+                max(0.0, duration - min(2.0, duration * 0.1)),
+            }
+        )
+        for sample_time in sample_times:
+            result = _run_media_command(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-ss",
+                    f"{sample_time:.3f}",
+                    "-i",
+                    str(playlist_path),
+                    "-t",
+                    "1",
+                    "-map",
+                    "0:v:0",
+                    "-f",
+                    "null",
+                    "-",
+                ]
+            )
+            if result.returncode != 0:
+                report["representative_decode_failures"].append(
+                    {
+                        "time_seconds": sample_time,
+                        "error": (result.stderr or "ffmpeg decode failed")[:500],
+                    }
+                )
+        if report["representative_decode_failures"]:
+            raise HLSValidationError("Representative HLS decode checks failed.")
+
+        report["valid"] = True
+        return report
+    except HLSValidationError as exc:
+        report["errors"].append(str(exc))
+        exc.report = report
+        raise
+
+
 def upload_hls_to_gcs(
     local_hls_dir: Union[str, Path],
     gcs_prefix: str,
@@ -263,18 +461,8 @@ def upload_hls_to_gcs(
         try:
             bucket = client.bucket(bucket_name)
 
-            # Upload playlist
-            blob_name = prefix + "playlist.m3u8"
-            blob = bucket.blob(blob_name)
-            blob.content_type = HLS_PLAYLIST_CONTENT_TYPE
-            blob.upload_from_filename(
-                str(playlist_path), content_type=HLS_PLAYLIST_CONTENT_TYPE
-            )
-            blob.make_public()
-            playlist_url = blob.public_url
-            logger.info("Uploaded HLS playlist to %s", blob_name)
-
-            # Upload segments (ffmpeg may name them playlist0.ts, segment000.ts, etc.)
+            # Publish every immutable segment before the playlist. A client can
+            # never observe a manifest that references an object not uploaded yet.
             for seg_path in sorted(local_hls_dir.glob("*.ts")):
                 blob_name_seg = prefix + seg_path.name
                 blob_seg = bucket.blob(blob_name_seg)
@@ -283,6 +471,16 @@ def upload_hls_to_gcs(
                     str(seg_path), content_type=HLS_SEGMENT_CONTENT_TYPE
                 )
                 blob_seg.make_public()
+
+            blob_name = prefix + "playlist.m3u8"
+            blob = bucket.blob(blob_name)
+            blob.content_type = HLS_PLAYLIST_CONTENT_TYPE
+            blob.upload_from_filename(
+                str(playlist_path), content_type=HLS_PLAYLIST_CONTENT_TYPE
+            )
+            blob.make_public()
+            playlist_url = blob.public_url
+            logger.info("Published HLS playlist last to %s", blob_name)
 
             logger.info(
                 "Uploaded HLS segments from %s to gs://%s/%s",
@@ -299,6 +497,10 @@ def upload_hls_to_gcs(
     from django.core.files.storage import default_storage
 
     try:
+        for seg_path in sorted(local_hls_dir.glob("*.ts")):
+            with open(seg_path, "rb") as f:
+                default_storage.save(prefix + seg_path.name, f)
+
         with open(playlist_path, "rb") as f:
             saved_playlist = default_storage.save(prefix + "playlist.m3u8", f)
         playlist_url = default_storage.url(saved_playlist)
@@ -307,15 +509,97 @@ def upload_hls_to_gcs(
                 f"https://storage.googleapis.com/{bucket_name}/{saved_playlist}"
             )
 
-        for seg_path in sorted(local_hls_dir.glob("*.ts")):
-            with open(seg_path, "rb") as f:
-                default_storage.save(prefix + seg_path.name, f)
-
         logger.info("Uploaded HLS via default_storage to %s", prefix)
         return playlist_url
     except Exception as e:
         logger.exception("Failed to upload HLS via default_storage: %s", e)
         raise HLSUploadError(f"Failed to upload HLS: {e}") from e
+
+
+def archive_gcs_source(source_object_name: str, archive_object_name: str) -> str:
+    """Copy a pending source to durable cold storage without deleting it."""
+    client = _get_gcs_client()
+    bucket_name = getattr(settings, "GS_BUCKET_NAME", None)
+    if not client or not bucket_name:
+        raise HLSUploadError("GCS client is required to archive video sources.")
+    try:
+        bucket = client.bucket(bucket_name)
+        source = bucket.blob(source_object_name)
+        if not source.exists(client=client):
+            raise HLSUploadError(f"Source object does not exist: {source_object_name}")
+        archived = bucket.copy_blob(source, bucket, archive_object_name)
+        try:
+            archived.update_storage_class("COLDLINE")
+        except Exception as exc:
+            logger.warning("Could not set COLDLINE on %s: %s", archive_object_name, exc)
+        return archive_object_name
+    except HLSUploadError:
+        raise
+    except Exception as exc:
+        raise HLSUploadError(f"Failed to archive video source: {exc}") from exc
+
+
+def download_hls_from_gcs(gcs_prefix: str, output_dir: Union[str, Path]) -> Path:
+    """Download a playlist and its referenced segments for validation/repair."""
+    client = _get_gcs_client()
+    bucket_name = getattr(settings, "GS_BUCKET_NAME", None)
+    if not client or not bucket_name:
+        raise HLSUploadError("GCS client is required to download legacy HLS.")
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    prefix = gcs_prefix.rstrip("/") + "/"
+    bucket = client.bucket(bucket_name)
+    playlist_blob = bucket.blob(prefix + "playlist.m3u8")
+    if not playlist_blob.exists(client=client):
+        raise HLSUploadError(f"Legacy playlist missing: {prefix}playlist.m3u8")
+    playlist_path = output / "playlist.m3u8"
+    playlist_blob.download_to_filename(str(playlist_path))
+    for segment_path in _playlist_segment_paths(playlist_path):
+        segment_path.parent.mkdir(parents=True, exist_ok=True)
+        relative = segment_path.relative_to(output.resolve()).as_posix()
+        blob = bucket.blob(prefix + relative)
+        if not blob.exists(client=client):
+            raise HLSUploadError(f"Legacy segment missing: {prefix}{relative}")
+        blob.download_to_filename(str(segment_path))
+    return output
+
+
+def reconstruct_hls_source(
+    local_hls_dir: Union[str, Path],
+    output_path: Union[str, Path],
+) -> Path:
+    """Decode a legacy playlist sequentially into a normalized surrogate MP4."""
+    playlist = Path(local_hls_dir) / "playlist.m3u8"
+    output = Path(output_path)
+    result = _run_media_command(
+        [
+            "ffmpeg",
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(playlist),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-movflags",
+            "+faststart",
+            str(output),
+        ],
+        timeout=3600,
+    )
+    if result.returncode != 0 or not output.exists():
+        raise HLSConversionError(
+            f"Could not reconstruct legacy HLS: {(result.stderr or '')[:500]}"
+        )
+    return output
 
 
 def delete_hls_from_gcs(gcs_prefix: str) -> None:
