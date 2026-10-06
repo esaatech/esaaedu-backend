@@ -88,7 +88,7 @@ Runner used by Admin (and Phase 4 product):
 
 `ai_service.runners.study_coach_deck.generate_study_coach_deck(...)`
 
-Gemini local tip: with `GEMINI_API_KEY` set, the gateway uses the Developer API (not Vertex) unless `AI_SERVICE_GEMINI_USE_VERTEX=true`.
+Gemini local tip: with `GEMINI_API_KEY` set, the gateway uses the Developer API (not Vertex) unless `AI_SERVICE_GEMINI_USE_VERTEX=true`. On Cloud Run (no API key, `GCP_PROJECT_ID` set), Gemini uses `GoogleCloudProvider` (Vertex / ADC). Do not pass `vertexai=` to `GoogleProvider` — that kwarg was removed in pydantic-ai 2.x.
 
 ## Logging & Slack alerts (ops)
 

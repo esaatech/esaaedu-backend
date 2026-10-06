@@ -293,36 +293,18 @@ def grade_tutorx_questions_batch(
         model_id = run.get("model_id") or model_id
 
         if not run.get("success"):
+            # Never write gateway/model errors into student feedback. Abort so
+            # Cloud Tasks can retry (or mark grading_failed on the last attempt).
             error_code = run.get("error_code") or "generation_failed"
-            # Abort so Cloud Tasks can retry the whole submission.
-            if error_code in (
-                "ai_not_configured",
-                "rate_limited",
-                "service_unavailable",
-                "permission_denied",
-            ):
-                return {
-                    "success": False,
-                    "error": run.get("error") or "Grading failed",
-                    "error_code": error_code,
-                    "grades": grades,
-                    "total_score": total_score,
-                    "total_possible": total_possible,
-                    "provider": provider,
-                    "model_id": model_id,
-                }
-
-            grade_result = {
-                "question_id": str(question_id),
-                "points_earned": 0,
-                "points_possible": points_possible,
-                "feedback": (
-                    run.get("error")
-                    or "Grading temporarily unavailable. Please try again."
-                ),
-                "correct_answer": "",
-                "confidence": 0.0,
-                "error": run.get("error") or "",
+            return {
+                "success": False,
+                "error": run.get("error") or "Grading failed",
+                "error_code": error_code,
+                "grades": grades,
+                "total_score": total_score,
+                "total_possible": total_possible,
+                "provider": provider,
+                "model_id": model_id,
             }
         else:
             payload = run.get("result") or {}

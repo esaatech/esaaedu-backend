@@ -104,16 +104,17 @@ def _build_gemini_model(model_id: str, http_client) -> Any:
             raise AIServiceGatewayError(
                 "GCP_PROJECT_ID is required when AI_SERVICE_GEMINI_USE_VERTEX is enabled"
             )
+        # pydantic-ai 2.x: Vertex / Google Cloud is GoogleCloudProvider.
+        # GoogleProvider(vertexai=...) was removed and raises TypeError.
         try:
-            from pydantic_ai.providers.google import GoogleProvider
+            from pydantic_ai.providers.google_cloud import GoogleCloudProvider
         except ImportError as exc:
             raise AIServiceGatewayError(
-                "Google provider extras missing for pydantic-ai"
+                "Google Cloud provider extras missing for pydantic-ai "
+                '(install pydantic-ai with the "google" extra).'
             ) from exc
 
-        # Vertex AI via ADC / service account (same as existing GeminiService)
-        provider = GoogleProvider(
-            vertexai=True,
+        provider = GoogleCloudProvider(
             project=project,
             location=vertex_location(),
             http_client=http_client,
@@ -125,7 +126,12 @@ def _build_gemini_model(model_id: str, http_client) -> Any:
         raise AIServiceGatewayError(
             "GEMINI_API_KEY (or GOOGLE_API_KEY) is required when not using Vertex"
         )
-    from pydantic_ai.providers.google import GoogleProvider
+    try:
+        from pydantic_ai.providers.google import GoogleProvider
+    except ImportError as exc:
+        raise AIServiceGatewayError(
+            "Google provider extras missing for pydantic-ai"
+        ) from exc
 
     provider = GoogleProvider(api_key=key, http_client=http_client)
     return GoogleModel(model_id, provider=provider)
