@@ -2,7 +2,7 @@
 Hybrid grading for course assessments (tests/exams) only.
 
 - Deterministic scoring for objective / structured types when `content` supports it.
-- Falls back to Gemini (assessment_grading template) for essay, code, and ambiguous cases.
+- Falls back to the assessment_grade AI Service for essay, code, and ambiguous cases.
 
 Does not modify assignment AI grading (see teacher.ai_grading_helper / AssignmentAIGradingView).
 """
@@ -318,7 +318,7 @@ def _coerce_content(raw: Any) -> Dict[str, Any]:
 
 
 def _build_llm_question_payload(q: Dict[str, Any], content: Dict[str, Any]) -> Dict[str, Any]:
-    """Shape expected by GeminiGrader.grade_questions_batch."""
+    """Shape expected by assessment_grade / GeminiGrader.grade_questions_batch."""
     qtype = (q.get("question_type") or "").strip().lower()
     text = q.get("question_text") or ""
     student = q.get("student_answer", "")
@@ -361,8 +361,7 @@ def run_assessment_hybrid_grading(
 
     Returns the same keys as GeminiGrader.grade_questions_batch.
     """
-    from teacher.ai_grading_helper import ASSESSMENT_GRADING_TEMPLATE
-    from ai.gemini_grader import GeminiGrader
+    from ai_service.runners.assessment_grade import grade_assessment_questions_batch
 
     slot_count = len(questions_data)
     deterministic_slots: List[Optional[Dict[str, Any]]] = [None] * slot_count
@@ -401,8 +400,25 @@ def run_assessment_hybrid_grading(
 
     llm_results: List[Dict[str, Any]] = []
     if llm_queue:
-        grader = GeminiGrader(prompt_template_name=ASSESSMENT_GRADING_TEMPLATE)
-        batch = grader.grade_questions_batch(questions=llm_queue, assignment_context=context)
+        batch = grade_assessment_questions_batch(
+            questions=llm_queue,
+            assignment_context=context,
+        )
+        if not batch.get("success"):
+            message = batch.get("error") or "Assessment AI grading failed"
+            error_code = batch.get("error_code") or "generation_failed"
+            logger.error(
+                "Assessment AI grading failed error_code=%s message=%s",
+                error_code,
+                message,
+            )
+            raise RuntimeError(f"{error_code}: {message}")
+        logger.info(
+            "Assessment AI grading ok provider=%s model=%s llm_grades=%s",
+            batch.get("provider"),
+            batch.get("model_id"),
+            len(batch.get("grades") or []),
+        )
         llm_results = list(batch.get("grades") or [])
 
     if len(llm_results) != len(llm_indices):

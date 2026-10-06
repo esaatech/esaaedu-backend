@@ -330,3 +330,124 @@ class TutorXAssignmentGradePlayground(models.Model):
 
     def __str__(self) -> str:
         return self.title or f"TutorX grade playground #{self.pk}"
+
+
+class TeacherAssignmentGradePlayground(models.Model):
+    """Admin playground for the teacher_assignment_grade AI Service."""
+
+    QUESTION_TYPE_CHOICES = [
+        ("essay", "Essay"),
+        ("fill_blank", "Fill blank"),
+        ("short_answer", "Short answer"),
+        ("code", "Code"),
+    ]
+
+    title = models.CharField(max_length=200, default="Teacher assignment grade probe")
+    prompt_config = models.ForeignKey(
+        AIPromptConfiguration,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="teacher_assignment_grade_playground_runs",
+        help_text="Blank uses the default prompt for slug teacher_assignment_grade.",
+    )
+    question_text = models.TextField(default="Explain photosynthesis in your own words.")
+    question_type = models.CharField(
+        max_length=32,
+        choices=QUESTION_TYPE_CHOICES,
+        default="essay",
+    )
+    student_answer = models.TextField(
+        default="Plants use sunlight to make food from carbon dioxide and water.",
+    )
+    points_possible = models.PositiveSmallIntegerField(default=5)
+    explanation = models.TextField(blank=True)
+    rubric = models.TextField(blank=True)
+    assignment_title = models.CharField(max_length=300, blank=True, default="Sample Assignment")
+    lesson_title = models.CharField(max_length=300, blank=True, default="Sample Lesson")
+    notes = models.TextField(blank=True)
+
+    succeeded = models.BooleanField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    result_json = models.JSONField(null=True, blank=True)
+    provider = models.CharField(max_length=32, blank=True)
+    model_id = models.CharField(max_length=128, blank=True)
+    temperature = models.DecimalField(
+        max_digits=3, decimal_places=2, null=True, blank=True
+    )
+    instruction_slug = models.CharField(max_length=80, blank=True)
+    raw_response_text = models.TextField(blank=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        verbose_name = "Teacher Assignment Grade Playground"
+        verbose_name_plural = "Teacher Assignment Grade Playgrounds"
+
+    def __str__(self) -> str:
+        return self.title or f"Teacher assignment grade playground #{self.pk}"
+
+
+class AssessmentGradePlayground(models.Model):
+    """Admin playground for the assessment_grade AI Service."""
+
+    QUESTION_TYPE_CHOICES = [
+        ("essay", "Essay"),
+        ("fill_blank", "Fill blank"),
+        ("short_answer", "Short answer"),
+        ("code", "Code"),
+    ]
+
+    title = models.CharField(max_length=200, default="Assessment grade probe")
+    prompt_config = models.ForeignKey(
+        AIPromptConfiguration,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="assessment_grade_playground_runs",
+        help_text="Blank uses the default prompt for slug assessment_grade.",
+    )
+    question_text = models.TextField(default="Explain photosynthesis in your own words.")
+    question_type = models.CharField(
+        max_length=32,
+        choices=QUESTION_TYPE_CHOICES,
+        default="essay",
+    )
+    student_answer = models.TextField(
+        default="Plants use sunlight to make food from carbon dioxide and water.",
+    )
+    points_possible = models.PositiveSmallIntegerField(default=5)
+    explanation = models.TextField(blank=True)
+    rubric = models.TextField(blank=True)
+    assignment_title = models.CharField(
+        max_length=300,
+        blank=True,
+        default="Sample Assessment",
+        help_text="Shown to the model as assessment/assignment title context.",
+    )
+    lesson_title = models.CharField(max_length=300, blank=True, default="Sample Course Topic")
+    notes = models.TextField(blank=True)
+
+    succeeded = models.BooleanField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    result_json = models.JSONField(null=True, blank=True)
+    provider = models.CharField(max_length=32, blank=True)
+    model_id = models.CharField(max_length=128, blank=True)
+    temperature = models.DecimalField(
+        max_digits=3, decimal_places=2, null=True, blank=True
+    )
+    instruction_slug = models.CharField(max_length=80, blank=True)
+    raw_response_text = models.TextField(blank=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        verbose_name = "Assessment Grade Playground"
+        verbose_name_plural = "Assessment Grade Playgrounds"
+
+    def __str__(self) -> str:
+        return self.title or f"Assessment grade playground #{self.pk}"

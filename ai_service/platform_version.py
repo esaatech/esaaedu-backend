@@ -1,1 +1,1 @@
-AI_PLATFORM_BUILD = "tutorx-assignment-grade"
+AI_PLATFORM_BUILD = "teacher-assessment-grade"

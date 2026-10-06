@@ -228,7 +228,10 @@ class TutorXAssignmentGradeSchemaTests(SimpleTestCase):
 
 
 class TutorXAssignmentGradeRunnerTests(SimpleTestCase):
-    @patch("ai_service.runners.tutorx_assignment_grade.get_default_prompt_config", return_value=None)
+    @patch(
+        "ai_service.runners.question_grade_base.get_default_prompt_config",
+        return_value=None,
+    )
     @patch("error_alerts.notify_ai_failure")
     def test_missing_default_prompt_alerts_slack(self, mock_notify, _mock_prompt):
         from ai_service.runners.tutorx_assignment_grade import grade_tutorx_questions_batch
@@ -249,4 +252,56 @@ class TutorXAssignmentGradeRunnerTests(SimpleTestCase):
         self.assertIn("setup_tutorx_assignment_grade", result["error"])
         mock_notify.assert_called_once()
         self.assertEqual(mock_notify.call_args.kwargs["error_code"], "ai_not_configured")
+
+
+class TeacherAndAssessmentGradeRunnerTests(SimpleTestCase):
+    @patch(
+        "ai_service.runners.question_grade_base.get_default_prompt_config",
+        return_value=None,
+    )
+    @patch("error_alerts.notify_ai_failure")
+    def test_teacher_missing_default_alerts_slack(self, mock_notify, _mock_prompt):
+        from ai_service.runners.teacher_assignment_grade import (
+            grade_teacher_assignment_questions_batch,
+        )
+
+        result = grade_teacher_assignment_questions_batch(
+            [
+                {
+                    "question_id": "q1",
+                    "question_text": "Explain photosynthesis.",
+                    "question_type": "essay",
+                    "student_answer": "Plants make food.",
+                    "points_possible": 5,
+                }
+            ]
+        )
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_code"], "ai_not_configured")
+        self.assertIn("setup_teacher_assignment_grade", result["error"])
+        mock_notify.assert_called_once()
+
+    @patch(
+        "ai_service.runners.question_grade_base.get_default_prompt_config",
+        return_value=None,
+    )
+    @patch("error_alerts.notify_ai_failure")
+    def test_assessment_missing_default_alerts_slack(self, mock_notify, _mock_prompt):
+        from ai_service.runners.assessment_grade import grade_assessment_questions_batch
+
+        result = grade_assessment_questions_batch(
+            [
+                {
+                    "question_id": "q1",
+                    "question_text": "Explain photosynthesis.",
+                    "question_type": "essay",
+                    "student_answer": "Plants make food.",
+                    "points_possible": 5,
+                }
+            ]
+        )
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_code"], "ai_not_configured")
+        self.assertIn("setup_assessment_grade", result["error"])
+        mock_notify.assert_called_once()
 

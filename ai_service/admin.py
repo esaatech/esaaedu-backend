@@ -8,7 +8,9 @@ from ai_service.models import (
     AIModel,
     AIPromptConfiguration,
     AIService,
+    AssessmentGradePlayground,
     StudyCoachDeckPlayground,
+    TeacherAssignmentGradePlayground,
     TutorXAssignmentGradePlayground,
 )
 from ai_service.platform_version import AI_PLATFORM_BUILD
@@ -531,3 +533,93 @@ class TutorXAssignmentGradePlaygroundAdmin(AIPlaygroundAdminMixin, admin.ModelAd
         else:
             extra_context["ai_playground_persist_url"] = ""
         return super().changeform_view(request, object_id, form_url, extra_context)
+
+
+def _teacher_assignment_grade_runner(
+    *,
+    question_text: str = "",
+    question_type: str = "essay",
+    student_answer: str = "",
+    points_possible: str = "5",
+    explanation: str = "",
+    rubric: str = "",
+    assignment_title: str = "",
+    lesson_title: str = "",
+    prompt_config=None,
+    **_kwargs,
+):
+    from ai_service.runners.teacher_assignment_grade import grade_teacher_assignment_question
+
+    try:
+        points = int(points_possible or 5)
+    except (TypeError, ValueError):
+        points = 5
+    assignment_context = {}
+    if assignment_title:
+        assignment_context["assignment_title"] = assignment_title
+    if lesson_title:
+        assignment_context["lesson_title"] = lesson_title
+    return grade_teacher_assignment_question(
+        question_text=question_text,
+        question_type=question_type or "essay",
+        student_answer=student_answer,
+        points_possible=points,
+        explanation=explanation or None,
+        rubric=rubric or None,
+        assignment_context=assignment_context or None,
+        prompt_config=prompt_config,
+    )
+
+
+def _assessment_grade_runner(
+    *,
+    question_text: str = "",
+    question_type: str = "essay",
+    student_answer: str = "",
+    points_possible: str = "5",
+    explanation: str = "",
+    rubric: str = "",
+    assignment_title: str = "",
+    lesson_title: str = "",
+    prompt_config=None,
+    **_kwargs,
+):
+    from ai_service.runners.assessment_grade import grade_assessment_question
+
+    try:
+        points = int(points_possible or 5)
+    except (TypeError, ValueError):
+        points = 5
+    assignment_context = {}
+    if assignment_title:
+        assignment_context["assessment_title"] = assignment_title
+        assignment_context["assignment_title"] = assignment_title
+    if lesson_title:
+        assignment_context["lesson_title"] = lesson_title
+        assignment_context["course_title"] = lesson_title
+    return grade_assessment_question(
+        question_text=question_text,
+        question_type=question_type or "essay",
+        student_answer=student_answer,
+        points_possible=points,
+        explanation=explanation or None,
+        rubric=rubric or None,
+        assignment_context=assignment_context or None,
+        prompt_config=prompt_config,
+    )
+
+
+@admin.register(TeacherAssignmentGradePlayground)
+class TeacherAssignmentGradePlaygroundAdmin(TutorXAssignmentGradePlaygroundAdmin):
+    change_form_template = (
+        "admin/ai_service/tutorxassignmentgradeplayground/change_form.html"
+    )
+    playground_runner = staticmethod(_teacher_assignment_grade_runner)
+
+
+@admin.register(AssessmentGradePlayground)
+class AssessmentGradePlaygroundAdmin(TutorXAssignmentGradePlaygroundAdmin):
+    change_form_template = (
+        "admin/ai_service/tutorxassignmentgradeplayground/change_form.html"
+    )
+    playground_runner = staticmethod(_assessment_grade_runner)

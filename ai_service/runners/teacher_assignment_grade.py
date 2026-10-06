@@ -1,5 +1,5 @@
 """
-TutorX assignment grading runner — shared by Admin playground and TutorX auto-grade.
+Teacher assignment AI grading runner — AssignmentAIGradingView / ai_grading_helper.
 """
 
 from __future__ import annotations
@@ -12,19 +12,13 @@ from ai_service.runners.question_grade_base import (
     grade_questions_batch,
 )
 
-SERVICE_SLUG = "tutorx_assignment_grade"
+SERVICE_SLUG = "teacher_assignment_grade"
 PROMPT_SLUG_DEFAULT = "default"
-SETUP_COMMAND = "setup_tutorx_assignment_grade"
+SETUP_COMMAND = "setup_teacher_assignment_grade"
 DEFAULT_INSTRUCTIONS = DEFAULT_GRADING_INSTRUCTIONS
 
 
-def require_default_prompt_config(service_slug: str = SERVICE_SLUG):
-    from ai_service.runners.question_grade_base import require_default_prompt_config as _require
-
-    return _require(service_slug, setup_command=SETUP_COMMAND)
-
-
-def grade_tutorx_assignment_question(
+def grade_teacher_assignment_question(
     *,
     question_text: str,
     question_type: str,
@@ -50,7 +44,7 @@ def grade_tutorx_assignment_question(
     )
 
 
-def grade_tutorx_questions_batch(
+def grade_teacher_assignment_questions_batch(
     questions: list[dict[str, Any]],
     assignment_context: Optional[dict[str, Any]] = None,
     *,

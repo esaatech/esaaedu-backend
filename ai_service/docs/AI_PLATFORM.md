@@ -137,9 +137,27 @@ python manage.py migrate ai_service
 - **No silent GeminiGrader fallback.** If there is no active default prompt, the runner raises `ai_not_configured`, Slack-alerts via `notify_and_classify`, and Cloud Tasks marks the submission `grading_failed`.
 - One question per model call (same pacing as the old batch grader). MC / TF / keyed short answers stay local.
 - Admin → **TutorX Assignment Grade Playgrounds** (one sample question).
-- Teacher / assessment AI grade still use `GeminiGrader` until they get their own services later.
 
 Runner: `ai_service.runners.tutorx_assignment_grade.grade_tutorx_questions_batch`
+
+## Phase 6b — Teacher assignment + assessment grade AI Services
+
+Same shared question-grade runner base as TutorX (`ai_service.runners.question_grade_base`).
+
+```bash
+python manage.py setup_ai_models
+python manage.py setup_teacher_assignment_grade
+python manage.py setup_assessment_grade
+```
+
+| Service slug | Used by | Notes |
+| --- | --- | --- |
+| `teacher_assignment_grade` | `teacher.ai_grading_helper` / Assignment AI Grade | Replaces `GeminiGrader` + `assignment_grading` template |
+| `assessment_grade` | `teacher.assessment_grading_helper` hybrid LLM path | Deterministic MC/TF/etc. stay local; essay/code use this service |
+
+- Default model: Gemini 2.5 Flash (switch in Admin on each service’s default prompt).
+- **No GeminiGrader fallback.** Missing default → `ai_not_configured` + Slack.
+- Admin playgrounds: **Teacher Assignment Grade Playgrounds**, **Assessment Grade Playgrounds**.
 
 ## Phase 5 — Production hardening
 
@@ -173,6 +191,8 @@ python manage.py setup_ai_models
 python manage.py setup_study_coach_deck
 python manage.py setup_study_coach_grade
 python manage.py setup_tutorx_assignment_grade
+python manage.py setup_teacher_assignment_grade
+python manage.py setup_assessment_grade
 ```
 
 Or set `AI_SERVICE_SEED_ON_STARTUP=true` so `entrypoint.sh` runs the setup commands after migrate (idempotent).

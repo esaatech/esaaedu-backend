@@ -1,12 +1,11 @@
 """
 Shared teacher AI grading entry point.
 
-Keeps assignment and course-assessment (test/exam) flows on one code path so
-prompt/template or grader changes stay in sync.
+Keeps assignment grading on one code path. Uses AI Service
+`teacher_assignment_grade` (model switchable in Admin).
 
-Uses AIPromptTemplate names:
-- assignment_grading  — lesson assignments
-- assessment_grading — course-level tests and exams
+Legacy constants ASSIGNMENT_GRADING_TEMPLATE / ASSESSMENT_GRADING_TEMPLATE are
+kept for callers; assessment hybrid grading uses assessment_grade separately.
 """
 import logging
 from typing import Any, Dict, List, Optional
@@ -25,15 +24,17 @@ def run_teacher_ai_grading_batch(
     prompt_template_name: str,
 ) -> Dict[str, Any]:
     """
-    Run Gemini batch grading for teacher flows. Does not persist to the database.
+    Run AI batch grading for teacher assignment flows. Does not persist.
 
     Args:
         questions_data: Same shape as AssignmentAIGradingView body "questions".
-        context: Optional context dict (lesson/assignment or course/assessment metadata).
-        prompt_template_name: AIPromptTemplate.name, e.g. assignment_grading or assessment_grading.
+        context: Optional context dict (lesson/assignment metadata).
+        prompt_template_name: Historical AIPromptTemplate name. Assignment
+            grading uses teacher_assignment_grade. Assessment template name
+            routes to assessment_grade for any legacy callers.
 
     Returns:
-        Dict with keys grades, total_score, total_possible (from GeminiGrader).
+        Dict with keys grades, total_score, total_possible.
     """
     if prompt_template_name not in _ALLOWED_TEMPLATES:
         logger.warning(
@@ -43,10 +44,43 @@ def run_teacher_ai_grading_batch(
         )
         prompt_template_name = ASSIGNMENT_GRADING_TEMPLATE
 
-    from ai.gemini_grader import GeminiGrader
+    if prompt_template_name == ASSESSMENT_GRADING_TEMPLATE:
+        from ai_service.runners.assessment_grade import grade_assessment_questions_batch
 
-    grader = GeminiGrader(prompt_template_name=prompt_template_name)
-    return grader.grade_questions_batch(
-        questions=questions_data,
-        assignment_context=context,
+        result = grade_assessment_questions_batch(
+            questions_data,
+            context,
+        )
+    else:
+        from ai_service.runners.teacher_assignment_grade import (
+            grade_teacher_assignment_questions_batch,
+        )
+
+        result = grade_teacher_assignment_questions_batch(
+            questions_data,
+            context,
+        )
+
+    if not result.get("success"):
+        message = result.get("error") or "AI grading failed"
+        error_code = result.get("error_code") or "generation_failed"
+        logger.error(
+            "Teacher AI grading failed template=%s error_code=%s message=%s",
+            prompt_template_name,
+            error_code,
+            message,
+        )
+        raise RuntimeError(f"{error_code}: {message}")
+
+    logger.info(
+        "Teacher AI grading ok template=%s provider=%s model=%s grades=%s",
+        prompt_template_name,
+        result.get("provider"),
+        result.get("model_id"),
+        len(result.get("grades") or []),
     )
+    return {
+        "grades": result.get("grades") or [],
+        "total_score": result.get("total_score") or 0,
+        "total_possible": result.get("total_possible") or 0,
+    }

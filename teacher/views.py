@@ -2589,7 +2589,7 @@ class CourseAssessmentAIGradingView(APIView):
     AI-powered course assessment (test/exam) grading — hybrid deterministic + LLM.
 
     POST only; does not save. Objective types use rules when `content` is present; essay/code/etc.
-    use AIPromptTemplate `assessment_grading` via GeminiGrader.
+    use AI Service `assessment_grade` (model switchable in Admin).
 
     Request body matches assignment shape, plus optional per-question `content` (full question JSON)
     for objective scoring. Response shape matches assignment AI grade: grades, total_score, total_possible.
