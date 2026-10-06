@@ -9,6 +9,7 @@ from ai_service.models import (
     AIPromptConfiguration,
     AIService,
     StudyCoachDeckPlayground,
+    TutorXAssignmentGradePlayground,
 )
 from ai_service.platform_version import AI_PLATFORM_BUILD
 from ai_service.runners.gateway_probe import run_gateway_probe
@@ -289,6 +290,182 @@ class StudyCoachDeckPlaygroundAdmin(AIPlaygroundAdminMixin, admin.ModelAdmin):
                     "temperature",
                     "instruction_slug",
                     "grounding_mode",
+                    "raw_response_text_display",
+                    "last_run_at",
+                )
+            },
+        ),
+        (
+            "Timestamps",
+            {"fields": ("created_at", "updated_at"), "classes": ("collapse",)},
+        ),
+    )
+
+    @admin.display(description="Succeeded")
+    def succeeded_display(self, obj):
+        if obj.succeeded is True:
+            return format_html('<img src="/static/admin/img/icon-yes.svg" alt="True">')
+        if obj.succeeded is False:
+            return format_html('<img src="/static/admin/img/icon-no.svg" alt="False">')
+        return "—"
+
+    @admin.display(description="Error")
+    def error_message_display(self, obj):
+        if not obj.error_message:
+            return "—"
+        return format_html(
+            '<span style="color:#ba2121;white-space:pre-wrap;">{}</span>',
+            obj.error_message,
+        )
+
+    @admin.display(description="Result JSON")
+    def result_json_display(self, obj):
+        if obj.result_json is None:
+            return "—"
+        import json
+
+        body = json.dumps(obj.result_json, indent=2, default=str)
+        return format_html(
+            '<pre id="ai-playground-ro-result" style="white-space:pre-wrap;font-size:12px;'
+            'max-height:420px;overflow:auto;background:#0d1117;color:#e6edf3;'
+            'padding:14px;border-radius:6px;margin:0;">{}</pre>',
+            body[:200000],
+        )
+
+    @admin.display(description="Raw response")
+    def raw_response_text_display(self, obj):
+        if not obj.raw_response_text:
+            return "—"
+        return format_html(
+            '<pre style="white-space:pre-wrap;font-size:12px;max-height:280px;'
+            'overflow:auto;background:#f8f9fa;padding:12px;border-radius:6px;margin:0;">{}</pre>',
+            obj.raw_response_text[:14000],
+        )
+
+    def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
+        extra_context = extra_context or {}
+        opts = self.model._meta
+        basename = f"{opts.app_label}_{opts.model_name}"
+        extra_context["ai_playground_run_url"] = reverse(f"admin:{basename}_run_preview")
+        if object_id:
+            extra_context["ai_playground_persist_url"] = reverse(
+                f"admin:{basename}_persist_run",
+                args=[object_id],
+            )
+        else:
+            extra_context["ai_playground_persist_url"] = ""
+        return super().changeform_view(request, object_id, form_url, extra_context)
+
+
+def _tutorx_assignment_grade_runner(
+    *,
+    question_text: str = "",
+    question_type: str = "essay",
+    student_answer: str = "",
+    points_possible: str = "5",
+    explanation: str = "",
+    rubric: str = "",
+    assignment_title: str = "",
+    lesson_title: str = "",
+    prompt_config=None,
+    **_kwargs,
+):
+    from ai_service.runners.tutorx_assignment_grade import grade_tutorx_assignment_question
+
+    try:
+        points = int(points_possible or 5)
+    except (TypeError, ValueError):
+        points = 5
+
+    assignment_context = {}
+    if assignment_title:
+        assignment_context["assignment_title"] = assignment_title
+    if lesson_title:
+        assignment_context["lesson_title"] = lesson_title
+
+    return grade_tutorx_assignment_question(
+        question_text=question_text,
+        question_type=question_type or "essay",
+        student_answer=student_answer,
+        points_possible=points,
+        explanation=explanation or None,
+        rubric=rubric or None,
+        assignment_context=assignment_context or None,
+        prompt_config=prompt_config,
+    )
+
+
+@admin.register(TutorXAssignmentGradePlayground)
+class TutorXAssignmentGradePlaygroundAdmin(AIPlaygroundAdminMixin, admin.ModelAdmin):
+    change_form_template = (
+        "admin/ai_service/tutorxassignmentgradeplayground/change_form.html"
+    )
+    playground_runner = staticmethod(_tutorx_assignment_grade_runner)
+    playground_input_fields = (
+        "question_text",
+        "question_type",
+        "student_answer",
+        "points_possible",
+        "explanation",
+        "rubric",
+        "assignment_title",
+        "lesson_title",
+    )
+
+    list_display = (
+        "title",
+        "question_type",
+        "succeeded",
+        "provider",
+        "model_id",
+        "last_run_at",
+    )
+    list_filter = ("succeeded", "question_type", "provider")
+    search_fields = ("title", "question_text", "notes", "error_message")
+    autocomplete_fields = ("prompt_config",)
+    readonly_fields = (
+        "succeeded_display",
+        "error_message_display",
+        "result_json_display",
+        "provider",
+        "model_id",
+        "temperature",
+        "instruction_slug",
+        "raw_response_text_display",
+        "last_run_at",
+        "created_at",
+        "updated_at",
+    )
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "title",
+                    "prompt_config",
+                    "question_text",
+                    "question_type",
+                    "student_answer",
+                    "points_possible",
+                    "explanation",
+                    "rubric",
+                    "assignment_title",
+                    "lesson_title",
+                    "notes",
+                )
+            },
+        ),
+        (
+            "Last run results",
+            {
+                "fields": (
+                    "succeeded_display",
+                    "error_message_display",
+                    "result_json_display",
+                    "provider",
+                    "model_id",
+                    "temperature",
+                    "instruction_slug",
                     "raw_response_text_display",
                     "last_run_at",
                 )

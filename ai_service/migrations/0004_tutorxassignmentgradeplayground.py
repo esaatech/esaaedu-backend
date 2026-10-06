@@ -1,0 +1,117 @@
+# Generated manually for TutorXAssignmentGradePlayground
+
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+    dependencies = [
+        ("ai_service", "0003_studycoachdeckplayground"),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="TutorXAssignmentGradePlayground",
+            fields=[
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "title",
+                    models.CharField(
+                        default="TutorX assignment grade probe", max_length=200
+                    ),
+                ),
+                (
+                    "question_text",
+                    models.TextField(
+                        default="Explain photosynthesis in your own words."
+                    ),
+                ),
+                (
+                    "question_type",
+                    models.CharField(
+                        choices=[
+                            ("essay", "Essay"),
+                            ("fill_blank", "Fill blank"),
+                            ("short_answer", "Short answer"),
+                            ("code", "Code"),
+                        ],
+                        default="essay",
+                        max_length=32,
+                    ),
+                ),
+                (
+                    "student_answer",
+                    models.TextField(
+                        default=(
+                            "Plants use sunlight to make food from carbon dioxide and water."
+                        )
+                    ),
+                ),
+                ("points_possible", models.PositiveSmallIntegerField(default=5)),
+                (
+                    "explanation",
+                    models.TextField(
+                        blank=True,
+                        help_text="Optional grading guidance (same role as question explanation).",
+                    ),
+                ),
+                (
+                    "rubric",
+                    models.TextField(blank=True, help_text="Optional essay rubric."),
+                ),
+                (
+                    "assignment_title",
+                    models.CharField(
+                        blank=True, default="Sample Assignment", max_length=300
+                    ),
+                ),
+                (
+                    "lesson_title",
+                    models.CharField(
+                        blank=True, default="Sample Lesson", max_length=300
+                    ),
+                ),
+                ("notes", models.TextField(blank=True)),
+                ("succeeded", models.BooleanField(blank=True, null=True)),
+                ("error_message", models.TextField(blank=True)),
+                ("result_json", models.JSONField(blank=True, null=True)),
+                ("provider", models.CharField(blank=True, max_length=32)),
+                ("model_id", models.CharField(blank=True, max_length=128)),
+                (
+                    "temperature",
+                    models.DecimalField(
+                        blank=True, decimal_places=2, max_digits=3, null=True
+                    ),
+                ),
+                ("instruction_slug", models.CharField(blank=True, max_length=80)),
+                ("raw_response_text", models.TextField(blank=True)),
+                ("last_run_at", models.DateTimeField(blank=True, null=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                (
+                    "prompt_config",
+                    models.ForeignKey(
+                        blank=True,
+                        help_text="Blank uses the default prompt for slug tutorx_assignment_grade.",
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="tutorx_assignment_grade_playground_runs",
+                        to="ai_service.aipromptconfiguration",
+                    ),
+                ),
+            ],
+            options={
+                "verbose_name": "TutorX Assignment Grade Playground",
+                "verbose_name_plural": "TutorX Assignment Grade Playgrounds",
+                "ordering": ["-updated_at"],
+            },
+        ),
+    ]

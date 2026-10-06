@@ -2,8 +2,10 @@
 TutorX assignment submission handler.
 
 When a student submits an assignment whose lesson type is TutorX, the student
-submission view delegates here. Phase 2: no-op. Phase 3: autograde via GeminiGrader.
-Phase 4: if score >= passing_score mark graded; else return for revision (draft + return_feedback).
+submission view delegates here. Phase 2: no-op. Phase 3: autograde via the
+ai_service runner tutorx_assignment_grade (Pydantic AI; model from AI Prompt
+Configuration). Phase 4: if score >= passing_score mark graded; else return for
+revision (draft + return_feedback).
 
 Contract:
 - Input: submission (AssignmentSubmission). Inline submits are status='submitted'.
@@ -39,7 +41,7 @@ def _normalize_student_answer(value):
 
 def _build_questions_for_ai(assignment, submission):
     """
-    Build list of question dicts for GeminiGrader (same shape as teacher AI-grade).
+    Build list of question dicts for tutorx_assignment_grade (same shape as teacher AI-grade).
     Only essay, fill_blank, short_answer (without correct_answer); only questions with an answer.
     """
     answers = submission.answers or {}
@@ -139,7 +141,8 @@ def handle_assignment_submission(submission, *, raise_on_grader_error=False):
     """
     Process a TutorX assignment submission.
 
-    Phase 3: Grade via GeminiGrader (AI questions) + local scoring (MC/TF/short_answer with key).
+    Phase 3: Grade via ai_service tutorx_assignment_grade (AI questions) + local
+    scoring (MC/TF/short_answer with key).
     Phase 4: If percentage >= assignment.passing_score -> graded; else -> return for revision (draft + return_feedback).
 
     raise_on_grader_error: Cloud Tasks path. Gemini failures propagate so the task can retry,
@@ -179,12 +182,34 @@ def handle_assignment_submission(submission, *, raise_on_grader_error=False):
 
     if ai_questions:
         try:
-            print(f"[TutorX] calling GeminiGrader.grade_questions_batch with {len(ai_questions)} questions")
-            from ai.gemini_grader import GeminiGrader
-            grader = GeminiGrader()
+            print(
+                f"[TutorX] calling tutorx_assignment_grade batch with "
+                f"{len(ai_questions)} questions"
+            )
+            from ai_service.runners.tutorx_assignment_grade import (
+                grade_tutorx_questions_batch,
+            )
+
             assignment_context = _build_assignment_context(assignment)
-            result = grader.grade_questions_batch(ai_questions, assignment_context)
-            print(f"[TutorX] GeminiGrader returned grades count={len(result.get('grades', []))} total_score={result.get('total_score')} total_possible={result.get('total_possible')}")
+            result = grade_tutorx_questions_batch(ai_questions, assignment_context)
+            if not result.get("success"):
+                error_code = result.get("error_code") or "generation_failed"
+                message = result.get("error") or "TutorX AI grading failed"
+                print(
+                    f"[TutorX] tutorx_assignment_grade FAILED "
+                    f"error_code={error_code} message={message}"
+                )
+                if error_code == "ai_not_configured":
+                    raise TutorXGradingPermanentError(message)
+                raise TutorXGradingRetryableError(message)
+
+            print(
+                f"[TutorX] tutorx_assignment_grade returned grades "
+                f"count={len(result.get('grades', []))} "
+                f"total_score={result.get('total_score')} "
+                f"total_possible={result.get('total_possible')} "
+                f"provider={result.get('provider')} model={result.get('model_id')}"
+            )
             for g in result.get("grades", []):
                 qid = str(g.get("question_id", ""))
                 if not qid:
@@ -199,23 +224,15 @@ def handle_assignment_submission(submission, *, raise_on_grader_error=False):
                 }
                 total_score += points_earned
                 total_possible += points_possible
+        except (TutorXGradingPermanentError, TutorXGradingRetryableError):
+            raise
         except Exception as e:
-            print(f"[TutorX] GeminiGrader FAILED: {e}")
+            print(f"[TutorX] tutorx_assignment_grade FAILED: {e}")
             import traceback
             traceback.print_exc()
             if raise_on_grader_error:
                 raise TutorXGradingRetryableError(str(e)) from e
-            # Inline path: fall back to 0 for AI questions so we still apply return/graded logic
-            for q in ai_questions:
-                qid = q.get("question_id")
-                pts = q.get("points_possible", 0)
-                grade_by_qid[qid] = {
-                    "points_earned": 0,
-                    "points_possible": pts,
-                    "feedback": f"Grading unavailable: {e}.",
-                    "correct_answer": None,
-                }
-                total_possible += pts
+            raise TutorXGradingRetryableError(str(e)) from e
 
     # 2) Score non-AI questions (multiple_choice, true_false, short_answer with correct_answer)
     for q in questions_list:

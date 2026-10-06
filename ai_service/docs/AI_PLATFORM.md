@@ -122,6 +122,25 @@ Student Tools → Study Coach → **Generate quiz** calls:
   `{"error": "We couldn't complete that AI request right now. Please try again.", "error_code": "..."}`
   with HTTP 429 (rate limited) or 503.
 
+## Phase 6 — `tutorx_assignment_grade` AI Service
+
+Replaces hard-coded `GeminiGrader` inside TutorX auto-grade (`handle_assignment_submission`).
+
+```bash
+python manage.py setup_ai_models
+python manage.py setup_tutorx_assignment_grade
+python manage.py migrate ai_service
+```
+
+- Service slug: `tutorx_assignment_grade`
+- Default prompt uses **Gemini 2.5 Flash** from the shared `AIModel` catalog (switch provider in Admin by pointing the prompt at OpenAI / DeepSeek).
+- **No silent GeminiGrader fallback.** If there is no active default prompt, the runner raises `ai_not_configured`, Slack-alerts via `notify_and_classify`, and Cloud Tasks marks the submission `grading_failed`.
+- One question per model call (same pacing as the old batch grader). MC / TF / keyed short answers stay local.
+- Admin → **TutorX Assignment Grade Playgrounds** (one sample question).
+- Teacher / assessment AI grade still use `GeminiGrader` until they get their own services later.
+
+Runner: `ai_service.runners.tutorx_assignment_grade.grade_tutorx_questions_batch`
+
 ## Phase 5 — Production hardening
 
 ### Retries & timeouts
@@ -153,6 +172,7 @@ python manage.py migrate
 python manage.py setup_ai_models
 python manage.py setup_study_coach_deck
 python manage.py setup_study_coach_grade
+python manage.py setup_tutorx_assignment_grade
 ```
 
 Or set `AI_SERVICE_SEED_ON_STARTUP=true` so `entrypoint.sh` runs the setup commands after migrate (idempotent).

@@ -1,1 +1,1 @@
-AI_PLATFORM_BUILD = "phase3-study-coach-deck"
+AI_PLATFORM_BUILD = "tutorx-assignment-grade"

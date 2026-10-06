@@ -211,3 +211,42 @@ class RunAgentSyncLoopTests(SimpleTestCase):
         self.assertEqual(first.output, "one")
         self.assertEqual(second.output, "two")
 
+
+class TutorXAssignmentGradeSchemaTests(SimpleTestCase):
+    def test_grade_schema_fields(self):
+        from ai_service.schemas_tutorx_grade import TutorXQuestionGradeOut
+
+        grade = TutorXQuestionGradeOut(
+            points_earned=3.5,
+            feedback="  You explained the main idea.  ",
+            correct_answer=" Plants use light to make food. ",
+            confidence=0.9,
+        )
+        self.assertEqual(grade.points_earned, 3.5)
+        self.assertEqual(grade.feedback, "You explained the main idea.")
+        self.assertEqual(grade.correct_answer, "Plants use light to make food.")
+
+
+class TutorXAssignmentGradeRunnerTests(SimpleTestCase):
+    @patch("ai_service.runners.tutorx_assignment_grade.get_default_prompt_config", return_value=None)
+    @patch("error_alerts.notify_ai_failure")
+    def test_missing_default_prompt_alerts_slack(self, mock_notify, _mock_prompt):
+        from ai_service.runners.tutorx_assignment_grade import grade_tutorx_questions_batch
+
+        result = grade_tutorx_questions_batch(
+            [
+                {
+                    "question_id": "q1",
+                    "question_text": "Explain photosynthesis.",
+                    "question_type": "essay",
+                    "student_answer": "Plants make food.",
+                    "points_possible": 5,
+                }
+            ]
+        )
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_code"], "ai_not_configured")
+        self.assertIn("setup_tutorx_assignment_grade", result["error"])
+        mock_notify.assert_called_once()
+        self.assertEqual(mock_notify.call_args.kwargs["error_code"], "ai_not_configured")
+
