@@ -17,7 +17,11 @@ from ai_service.gateway import AIServiceGatewayError, resolve_model
 from ai_service.prompt_utils import get_default_prompt_config
 from ai_service.runners.document_parts import user_prompt_with_documents
 from ai_service.runners.run_helpers import request_model_settings, run_agent_sync
-from ai_service.schemas_quiz_generate import QuizGenerateOut, QuizQuestionOut
+from ai_service.schemas_quiz_generate import (
+    QuizGenerateOut,
+    QuizQuestionOut,
+    _option_texts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +40,10 @@ Guidelines:
 - Include helpful explanations for each question
 - Ensure questions cover different aspects of the lesson content
 - Questions should be appropriate for the target age group
-- Put options and correct_answer inside the content object for each question"""
+- For every multiple_choice question you MUST put at least 4 options in content.options
+  as plain strings, and set content.correct_answer to the exact matching option text
+- Example: content={"options": ["Red","Blue","Green","Yellow"], "correct_answer": "Blue"}
+- Never leave content.options empty"""
 
 
 def require_default_prompt_config():
@@ -169,7 +176,7 @@ def generate_quiz(
         model,
         output_type=QuizGenerateOut,
         instructions=instructions,
-        retries={"output": 2},
+        retries={"output": 3},
         model_settings=request_model_settings(temperature=run_temperature),
     )
 
@@ -286,6 +293,9 @@ def _build_user_prompt(
         f"Generate exactly {total_questions} questions:\n"
         f"- Exactly {multiple_choice_count} multiple choice questions\n"
         f"- Exactly {true_false_count} true/false questions\n\n"
+        f"For each multiple_choice question, content.options MUST be an array of "
+        f"at least 2 plain strings (prefer 4), and content.correct_answer MUST "
+        f"exactly match one of those option strings.\n\n"
         f"Follow the system instruction, including any teacher instructions, "
         f"when choosing what the quiz assesses."
     )
@@ -299,6 +309,11 @@ def _normalize_quiz(quiz: QuizGenerateOut, *, fallback_title: str) -> dict[str, 
             validated.append(item)
 
     if not validated and quiz.questions:
+        sample = quiz.questions[0].model_dump()
+        logger.error(
+            "quiz_generate: all questions failed validation sample=%s",
+            str(sample)[:2000],
+        )
         raise ValueError(
             "AI generated quiz questions but none passed validation "
             "(multiple choice questions need at least 2 options)"
@@ -324,18 +339,15 @@ def _normalize_question(q: QuizQuestionOut) -> Optional[dict[str, Any]]:
     }
 
     if qtype == "multiple_choice":
-        options = content.get("options")
-        if not isinstance(options, list) or len(options) < 2:
-            if isinstance(q.options, list) and len(q.options) >= 2:
-                options = q.options
-        if not isinstance(options, list):
-            options = []
-        normalized_options = []
-        for opt in options:
-            if isinstance(opt, str) and opt.strip():
-                normalized_options.append(opt.strip())
-            elif isinstance(opt, dict) and opt.get("text"):
-                normalized_options.append(str(opt["text"]).strip())
+        normalized_options = _option_texts(content.get("options"))
+        if len(normalized_options) < 2:
+            # Alternate keys some models use
+            for key in ("choices", "answers", "answer_choices"):
+                normalized_options = _option_texts(content.get(key))
+                if len(normalized_options) >= 2:
+                    break
+        if len(normalized_options) < 2:
+            normalized_options = _option_texts(q.options)
         content["options"] = normalized_options
 
         correct = content.get("correct_answer") or q.correct_answer or ""
@@ -345,8 +357,9 @@ def _normalize_question(q: QuizQuestionOut) -> Optional[dict[str, Any]]:
         item["content"] = content
         if len(normalized_options) < 2:
             logger.warning(
-                "Skipping multiple_choice question with fewer than 2 options: %s",
+                "Skipping multiple_choice question with fewer than 2 options: %s raw=%s",
                 item["question_text"][:80],
+                str(q.model_dump())[:800],
             )
             return None
 

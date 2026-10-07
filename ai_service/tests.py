@@ -395,3 +395,32 @@ class QuizAssignmentGenerateConfigTests(SimpleTestCase):
         self.assertEqual(payload["questions"][0]["content"]["correct_answer"], "4")
         self.assertEqual(payload["questions"][1]["content"]["correct_answer"], "true")
 
+    def test_quiz_schema_rejects_mc_without_options(self):
+        from ai_service.schemas_quiz_generate import QuizQuestionOut
+
+        with self.assertRaises(Exception):
+            QuizQuestionOut(
+                question_text="What is 2+2?",
+                type="multiple_choice",
+                points=1,
+                content={},
+                explanation="Add them.",
+            )
+
+    def test_normalize_accepts_choice_objects(self):
+        from ai_service.schemas_quiz_generate import QuizQuestionOut
+        from ai_service.runners.quiz_generate import _normalize_question
+
+        q = QuizQuestionOut(
+            question_text="Pick one",
+            type="multiple_choice",
+            content={
+                "options": [{"label": "A"}, {"text": "B"}, {"value": "C"}],
+                "correct_answer": "B",
+            },
+            explanation="B is right.",
+        )
+        item = _normalize_question(q)
+        self.assertIsNotNone(item)
+        self.assertEqual(item["content"]["options"], ["A", "B", "C"])
+
