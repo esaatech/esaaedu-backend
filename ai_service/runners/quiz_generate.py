@@ -40,10 +40,9 @@ Guidelines:
 - Include helpful explanations for each question
 - Ensure questions cover different aspects of the lesson content
 - Questions should be appropriate for the target age group
-- For every multiple_choice question you MUST put at least 4 options in content.options
-  as plain strings, and set content.correct_answer to the exact matching option text
-- Example: content={"options": ["Red","Blue","Green","Yellow"], "correct_answer": "Blue"}
-- Never leave content.options empty"""
+- For every multiple_choice question put at least 4 plain-string options and set
+  correct_answer to the exact matching option text
+- Example: options=["Red","Blue","Green","Yellow"], correct_answer="Blue" """
 
 
 def require_default_prompt_config():
@@ -176,7 +175,7 @@ def generate_quiz(
         model,
         output_type=QuizGenerateOut,
         instructions=instructions,
-        retries={"output": 3},
+        retries={"output": 2},
         model_settings=request_model_settings(temperature=run_temperature),
     )
 
@@ -293,9 +292,9 @@ def _build_user_prompt(
         f"Generate exactly {total_questions} questions:\n"
         f"- Exactly {multiple_choice_count} multiple choice questions\n"
         f"- Exactly {true_false_count} true/false questions\n\n"
-        f"For each multiple_choice question, content.options MUST be an array of "
-        f"at least 2 plain strings (prefer 4), and content.correct_answer MUST "
-        f"exactly match one of those option strings.\n\n"
+        f"For each multiple_choice question, options MUST be an array of at least "
+        f"2 plain strings (prefer 4), and correct_answer MUST exactly match one "
+        f"of those option strings.\n\n"
         f"Follow the system instruction, including any teacher instructions, "
         f"when choosing what the quiz assesses."
     )
@@ -339,18 +338,17 @@ def _normalize_question(q: QuizQuestionOut) -> Optional[dict[str, Any]]:
     }
 
     if qtype == "multiple_choice":
-        normalized_options = _option_texts(content.get("options"))
+        normalized_options = _option_texts(q.options)
         if len(normalized_options) < 2:
-            # Alternate keys some models use
+            normalized_options = _option_texts(content.get("options"))
+        if len(normalized_options) < 2:
             for key in ("choices", "answers", "answer_choices"):
                 normalized_options = _option_texts(content.get(key))
                 if len(normalized_options) >= 2:
                     break
-        if len(normalized_options) < 2:
-            normalized_options = _option_texts(q.options)
         content["options"] = normalized_options
 
-        correct = content.get("correct_answer") or q.correct_answer or ""
+        correct = q.correct_answer or content.get("correct_answer") or ""
         content["correct_answer"] = (
             correct.strip() if isinstance(correct, str) else str(correct)
         )
@@ -364,7 +362,7 @@ def _normalize_question(q: QuizQuestionOut) -> Optional[dict[str, Any]]:
             return None
 
     elif qtype == "true_false":
-        correct = content.get("correct_answer") or q.correct_answer or "true"
+        correct = q.correct_answer or content.get("correct_answer") or "true"
         content["correct_answer"] = str(correct).lower()
         item["content"] = content
 

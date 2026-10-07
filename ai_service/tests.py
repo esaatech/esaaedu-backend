@@ -375,7 +375,6 @@ class QuizAssignmentGenerateConfigTests(SimpleTestCase):
                     question_text="What is 2+2?",
                     type="multiple_choice",
                     points=1,
-                    content={},
                     options=["3", "4", "5"],
                     correct_answer="4",
                     explanation="Add them.",
@@ -384,7 +383,7 @@ class QuizAssignmentGenerateConfigTests(SimpleTestCase):
                     question_text="Python is a language.",
                     type="true_false",
                     points=1,
-                    content={"correct_answer": "True"},
+                    correct_answer="True",
                     explanation="Yes.",
                 ),
             ],
@@ -403,7 +402,6 @@ class QuizAssignmentGenerateConfigTests(SimpleTestCase):
                 question_text="What is 2+2?",
                 type="multiple_choice",
                 points=1,
-                content={},
                 explanation="Add them.",
             )
 
@@ -414,10 +412,8 @@ class QuizAssignmentGenerateConfigTests(SimpleTestCase):
         q = QuizQuestionOut(
             question_text="Pick one",
             type="multiple_choice",
-            content={
-                "options": [{"label": "A"}, {"text": "B"}, {"value": "C"}],
-                "correct_answer": "B",
-            },
+            options=[{"label": "A"}, {"text": "B"}, {"value": "C"}],
+            correct_answer="B",
             explanation="B is right.",
         )
         item = _normalize_question(q)
