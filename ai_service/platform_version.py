@@ -1,1 +1,1 @@
-AI_PLATFORM_BUILD = "quiz-assignment-generate"
+AI_PLATFORM_BUILD = "quiz-assignment-generate-docs"

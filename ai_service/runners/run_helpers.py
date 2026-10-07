@@ -68,12 +68,15 @@ def _ensure_ai_loop() -> asyncio.AbstractEventLoop:
 
 def run_agent_sync(
     agent: Any,
-    user_prompt: str,
+    user_prompt: Any,
     *,
     timeout_seconds: Optional[float] = None,
 ) -> Any:
     """
     Run ``agent.run`` on the shared AI event loop with a wall-clock deadline.
+
+    ``user_prompt`` may be a string or a multimodal sequence
+    (e.g. ``[text, DocumentUrl(...)]``).
 
     Raises AIServiceRunTimeout when the overall run exceeds the budget
     (covers multi-step / output retries that a single HTTP timeout wouldn't).

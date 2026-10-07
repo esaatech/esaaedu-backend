@@ -176,8 +176,8 @@ python manage.py migrate ai_service
 | `assignment_generate` | `teacher.views.AIGenerateAssignmentView` | Essay / fill-blank / short-answer |
 
 - Default model: Gemini 2.5 Flash (switch in Admin on each service’s default prompt).
-- **No silent Gemini*Service fallback for text.** Missing default → `ai_not_configured` + Slack.
-- **PDF / document Parts** still use Vertex `GeminiQuizService` / `GeminiAssignmentService` until DocumentUrl is wired for all providers.
+- **No silent Gemini*Service fallback.** Missing default → `ai_not_configured` + Slack.
+- **Text and PDF/documents** both use the AI Service runners. Documents are attached as pydantic-ai `DocumentUrl` (GCS `https://storage.googleapis.com/...` normalized to `gs://` for Vertex).
 - Admin playgrounds: **Quiz Generate Playgrounds**, **Assignment Generate Playgrounds**.
 
 Runners: `ai_service.runners.quiz_generate.generate_quiz`, `ai_service.runners.assignment_generate.generate_assignment`

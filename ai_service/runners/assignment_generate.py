@@ -1,9 +1,8 @@
 """
 Assignment generation runner — Admin playground + teacher AIGenerateAssignmentView.
 
-Text content path uses pydantic-ai via the AI Service catalog (switchable model).
-Document-only PDF Parts still use GeminiAssignmentService in the view until
-DocumentUrl is wired for all providers.
+All assignment generation (text + PDF/document URLs) goes through the AI Service
+catalog via pydantic-ai (switchable model). Documents are attached as DocumentUrl.
 """
 
 from __future__ import annotations
@@ -16,6 +15,7 @@ from ai_service.alerts import log_run_finished, log_run_model, notify_and_classi
 from ai_service.exceptions import AIServiceError, configuration_error
 from ai_service.gateway import AIServiceGatewayError, resolve_model
 from ai_service.prompt_utils import get_default_prompt_config
+from ai_service.runners.document_parts import user_prompt_with_documents
 from ai_service.runners.run_helpers import request_model_settings, run_agent_sync
 from ai_service.schemas_assignment_generate import (
     AssignmentGenerateOut,
@@ -56,6 +56,7 @@ def generate_assignment(
     lesson_title: str,
     lesson_description: str = "",
     content: str = "",
+    documents: Optional[list[dict[str, Any]]] = None,
     total_questions: int = 5,
     essay_count: int = 2,
     fill_blank_count: int = 3,
@@ -65,7 +66,9 @@ def generate_assignment(
     prompt_config=None,
 ) -> dict[str, Any]:
     """
-    Generate an assignment from lesson text content.
+    Generate an assignment from lesson text and/or document URLs (PDF, etc.).
+
+    ``documents`` items: {uri|url, mime_type?, title?}
 
     Returns:
       { success, error, error_code, result: {title, description, questions},
@@ -77,9 +80,10 @@ def generate_assignment(
         return _fail("lesson_title is required", error_code="validation_error")
 
     text = (content or "").strip()
-    if not text:
+    docs = [d for d in (documents or []) if isinstance(d, dict) and (d.get("uri") or d.get("url"))]
+    if not text and not docs:
         return _fail(
-            "content is required (use document PDF path for file-only materials)",
+            "content or documents is required",
             error_code="validation_error",
         )
 
@@ -128,7 +132,7 @@ def generate_assignment(
         provider=settings.provider,
         model_id=settings.model_id,
         temperature=run_temperature,
-        extra=f"total={total} essay={essay} fill={fill} short={short}",
+        extra=f"total={total} essay={essay} fill={fill} short={short} docs={len(docs)}",
     )
 
     instructions = (
@@ -140,15 +144,17 @@ def generate_assignment(
     if type_requirement and type_requirement.lower() not in instructions.lower():
         instructions = f"{instructions}\n{type_requirement}"
 
-    user_prompt = _build_user_prompt(
+    text_prompt = _build_user_prompt(
         lesson_title=title,
         lesson_description=lesson_description or "",
         content=text,
+        documents=docs,
         total_questions=total,
         essay_count=essay,
         fill_blank_count=fill,
         short_answer_count=short,
     )
+    user_prompt = user_prompt_with_documents(text_prompt, docs)
 
     try:
         from pydantic_ai import Agent
@@ -284,19 +290,32 @@ def _build_user_prompt(
     lesson_title: str,
     lesson_description: str,
     content: str,
+    documents: list[dict[str, Any]],
     total_questions: int,
     essay_count: int,
     fill_blank_count: int,
     short_answer_count: int,
 ) -> str:
     desc = f"Lesson Description: {lesson_description}\n" if lesson_description.strip() else ""
+    if content.strip():
+        content_block = f"Content:\n{content[:50000]}"
+    elif documents:
+        titles = ", ".join(
+            (d.get("title") or "document").strip() or "document" for d in documents
+        )
+        content_block = (
+            f"Content: See attached document(s): {titles}. "
+            f"Base the assignment only on the attached materials."
+        )
+    else:
+        content_block = "Content: (none)"
     lines = [
         "Generate a comprehensive assignment for the following lesson:",
         "",
         f"Lesson Title: {lesson_title}",
         desc.rstrip(),
         "",
-        f"Content:\n{content[:50000]}",
+        content_block,
         "",
         (
             f"Generate exactly {total_questions} assignment questions that require "

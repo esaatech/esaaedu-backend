@@ -306,6 +306,22 @@ class TeacherAndAssessmentGradeRunnerTests(SimpleTestCase):
         mock_notify.assert_called_once()
 
 
+class DocumentPartsTests(SimpleTestCase):
+    def test_normalize_storage_url_to_gs(self):
+        from ai_service.runners.document_parts import normalize_storage_url
+
+        self.assertEqual(
+            normalize_storage_url(
+                "https://storage.googleapis.com/my-bucket/path/file.pdf?X-Goog-Signature=abc"
+            ),
+            "gs://my-bucket/path/file.pdf",
+        )
+        self.assertEqual(
+            normalize_storage_url("gs://my-bucket/path/file.pdf"),
+            "gs://my-bucket/path/file.pdf",
+        )
+
+
 class QuizAssignmentGenerateConfigTests(SimpleTestCase):
     @patch(
         "ai_service.runners.quiz_generate.get_default_prompt_config",

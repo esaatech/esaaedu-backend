@@ -53,8 +53,6 @@ from datetime import datetime, timedelta
 from ai.gemini_course_introduction_service import GeminiCourseIntroductionService
 from ai.gemini_course_lessons_service import GeminiCourseLessonsService
 from ai.video_transcription_service import VideoTranscriptionService
-from ai.gemini_quiz_service import GeminiQuizService
-from ai.gemini_assignment_service import GeminiAssignmentService
 from ai.api_errors import ai_error_response
 from ai.models import CourseTeacherPrompt
 from ai_service.exceptions import USER_FACING_AI_SERVICE_ERROR
@@ -4820,15 +4818,14 @@ class AIGenerateQuizView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Collect content from all materials
-            # Support both text content and direct file uploads to Gemini
+            # Collect content from all materials (text + document URLs for AI Service)
             text_content_parts = []
-            file_parts = []
+            documents = []
             transcription_service = VideoTranscriptionService()
             
             for material in materials:
                 material_content = None
-                document_part = None
+                document_ref = None
                 
                 logger.info(f"Processing material {material.id}: type={material.material_type}, title={material.title}")
                 
@@ -4885,7 +4882,7 @@ class AIGenerateQuizView(APIView):
                         material_content = material.description or ''
                 
                 elif material.material_type == 'document':
-                    # For documents: try direct file upload to Gemini
+                    # Documents: pass file URL into quiz_generate as DocumentUrl
                     try:
                         document_material = DocumentMaterial.objects.filter(
                             lesson_material=material
@@ -4922,19 +4919,12 @@ class AIGenerateQuizView(APIView):
                             logger.info(f"Using LessonMaterial.file_url as fallback: {file_url}")
                         
                         if file_url:
-                            # Create Part object for direct file upload (like video transcription)
-                            from vertexai.generative_models import Part
-                            try:
-                                document_part = Part.from_uri(
-                                    uri=file_url,
-                                    mime_type=mime_type
-                                )
-                                logger.info(f"Successfully created file part for document {material.id}: {file_url}")
-                            except Exception as e:
-                                logger.error(f"Failed to create file part for document {material.id}: {e}", exc_info=True)
-                                # Fallback to description if file part creation fails
-                                material_content = material.description or ''
-                                logger.warning(f"Falling back to description for material {material.id}")
+                            document_ref = {
+                                'uri': file_url,
+                                'mime_type': mime_type or 'application/pdf',
+                                'title': material.title or 'document',
+                            }
+                            logger.info(f"Queued document for AI Service for material {material.id}: {file_url}")
                         else:
                             # No file URL found anywhere
                             logger.warning(f"No file_url found for document material {material.id}, using description")
@@ -4948,24 +4938,24 @@ class AIGenerateQuizView(APIView):
                     material_content = material.description or ''
                 
                 # Add to appropriate list
-                if document_part:
-                    file_parts.append(document_part)
-                    logger.info(f"Added document file part for: {material.title} (total file_parts: {len(file_parts)})")
+                if document_ref:
+                    documents.append(document_ref)
+                    logger.info(f"Added document for: {material.title} (total documents: {len(documents)})")
                 elif material_content and material_content.strip():
                     text_content_parts.append(f"=== {material.title} ({material.material_type}) ===\n{material_content}")
                     logger.info(f"Added text content for: {material.title} (total text parts: {len(text_content_parts)})")
                 else:
-                    logger.warning(f"No content added for material {material.id} ({material.material_type}): document_part={document_part is not None}, material_content={'empty' if not material_content else 'has content'}")
+                    logger.warning(f"No content added for material {material.id} ({material.material_type}): document_ref={document_ref is not None}, material_content={'empty' if not material_content else 'has content'}")
             
             # Combine text content
             combined_content = "\n\n".join(text_content_parts) if text_content_parts else None
             
             # Log summary before validation
-            logger.info(f"Content collection summary: text_parts={len(text_content_parts)}, file_parts={len(file_parts)}, combined_content_length={len(combined_content) if combined_content else 0}")
+            logger.info(f"Content collection summary: text_parts={len(text_content_parts)}, documents={len(documents)}, combined_content_length={len(combined_content) if combined_content else 0}")
             
             # Validate that we have at least some content
-            if not combined_content and not file_parts:
-                logger.error(f"No content found in selected materials. Materials processed: {materials.count()}, text_parts: {len(text_content_parts)}, file_parts: {len(file_parts)}")
+            if not combined_content and not documents:
+                logger.error(f"No content found in selected materials. Materials processed: {materials.count()}, text_parts: {len(text_content_parts)}, documents: {len(documents)}")
                 return Response(
                     {'error': 'No content found in selected materials'},
                     status=status.HTTP_400_BAD_REQUEST
@@ -5010,69 +5000,45 @@ Generate comprehensive quiz questions that test understanding of the lesson mate
             
             # Get template attributes from request (with fallbacks)
             temperature = float(request.data.get('temperature', 0.7))
-            model_name = request.data.get('model_name', '').strip() or None
-            max_tokens = request.data.get('max_tokens')
-            if max_tokens is not None:
-                try:
-                    max_tokens = int(max_tokens)
-                except (ValueError, TypeError):
-                    max_tokens = None
 
-            # PDF document Parts still use Vertex GeminiQuizService.
-            # Text materials use the switchable quiz_generate AI Service.
-            if file_parts:
-                service = GeminiQuizService()
-                result = service.generate(
-                    system_instruction=system_instruction,
-                    lesson_title=lesson.title,
-                    lesson_description=lesson.description or '',
-                    content=combined_content if combined_content else None,
-                    file_parts=file_parts,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    model_name=model_name,
-                    total_questions=total_questions,
-                    multiple_choice_count=multiple_choice_count,
-                    true_false_count=true_false_count,
-                )
-            else:
-                out = generate_quiz(
-                    lesson_title=lesson.title,
-                    lesson_description=lesson.description or '',
-                    content=combined_content or '',
-                    total_questions=total_questions,
-                    multiple_choice_count=multiple_choice_count,
-                    true_false_count=true_false_count,
-                    system_instruction=system_instruction,
-                    temperature=temperature,
-                )
-                if not out.get('success'):
-                    error_code = out.get('error_code') or 'generation_failed'
-                    if error_code == 'validation_error':
-                        return Response(
-                            {'error': out.get('error') or 'Invalid quiz generation request'},
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
-                    http_status = (
-                        status.HTTP_429_TOO_MANY_REQUESTS
-                        if error_code == 'rate_limited'
-                        else status.HTTP_503_SERVICE_UNAVAILABLE
-                    )
-                    if django_settings.DEBUG:
-                        return Response(
-                            {
-                                'error': out.get('error') or USER_FACING_AI_SERVICE_ERROR,
-                                'error_code': error_code,
-                            },
-                            status=http_status,
-                        )
+            # Always use quiz_generate AI Service (text + PDF documents).
+            out = generate_quiz(
+                lesson_title=lesson.title,
+                lesson_description=lesson.description or '',
+                content=combined_content or '',
+                documents=documents,
+                total_questions=total_questions,
+                multiple_choice_count=multiple_choice_count,
+                true_false_count=true_false_count,
+                system_instruction=system_instruction,
+                temperature=temperature,
+            )
+            if not out.get('success'):
+                error_code = out.get('error_code') or 'generation_failed'
+                if error_code == 'validation_error':
                     return Response(
-                        {'error': USER_FACING_AI_SERVICE_ERROR},
+                        {'error': out.get('error') or 'Invalid quiz generation request'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                http_status = (
+                    status.HTTP_429_TOO_MANY_REQUESTS
+                    if error_code == 'rate_limited'
+                    else status.HTTP_503_SERVICE_UNAVAILABLE
+                )
+                if django_settings.DEBUG:
+                    return Response(
+                        {
+                            'error': out.get('error') or USER_FACING_AI_SERVICE_ERROR,
+                            'error_code': error_code,
+                        },
                         status=http_status,
                     )
-                result = out.get('result') or {}
+                return Response(
+                    {'error': USER_FACING_AI_SERVICE_ERROR},
+                    status=http_status,
+                )
 
-            return Response(result, status=status.HTTP_200_OK)
+            return Response(out.get('result') or {}, status=status.HTTP_200_OK)
             
         except ValueError as e:
             logger.error(f"Validation error in AI quiz generation: {e}")
@@ -5163,15 +5129,14 @@ class AIGenerateAssignmentView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Collect content from all materials
-            # Support both text content and direct file uploads to Gemini
+            # Collect content from all materials (text + document URLs for AI Service)
             text_content_parts = []
-            file_parts = []
+            documents = []
             transcription_service = VideoTranscriptionService()
             
             for material in materials:
                 material_content = None
-                document_part = None
+                document_ref = None
                 
                 logger.info(f"Processing material {material.id}: type={material.material_type}, title={material.title}")
                 
@@ -5222,7 +5187,7 @@ class AIGenerateAssignmentView(APIView):
                         material_content = material.description or ''
                 
                 elif material.material_type == 'document':
-                    # For documents: try direct file upload to Gemini
+                    # Documents: pass file URL into assignment_generate as DocumentUrl
                     try:
                         document_material = DocumentMaterial.objects.filter(
                             lesson_material=material
@@ -5259,19 +5224,12 @@ class AIGenerateAssignmentView(APIView):
                             logger.info(f"Using LessonMaterial.file_url as fallback: {file_url}")
                         
                         if file_url:
-                            # Create Part object for direct file upload (like video transcription)
-                            from vertexai.generative_models import Part
-                            try:
-                                document_part = Part.from_uri(
-                                    uri=file_url,
-                                    mime_type=mime_type
-                                )
-                                logger.info(f"Successfully created file part for document {material.id}: {file_url}")
-                            except Exception as e:
-                                logger.error(f"Failed to create file part for document {material.id}: {e}", exc_info=True)
-                                # Fallback to description if file part creation fails
-                                material_content = material.description or ''
-                                logger.warning(f"Falling back to description for material {material.id}")
+                            document_ref = {
+                                'uri': file_url,
+                                'mime_type': mime_type or 'application/pdf',
+                                'title': material.title or 'document',
+                            }
+                            logger.info(f"Queued document for AI Service for material {material.id}: {file_url}")
                         else:
                             # No file URL found anywhere
                             logger.warning(f"No file_url found for document material {material.id}, using description")
@@ -5284,24 +5242,24 @@ class AIGenerateAssignmentView(APIView):
                     material_content = material.description or ''
                 
                 # Add to appropriate list
-                if document_part:
-                    file_parts.append(document_part)
-                    logger.info(f"Added document file part for: {material.title} (total file_parts: {len(file_parts)})")
+                if document_ref:
+                    documents.append(document_ref)
+                    logger.info(f"Added document for: {material.title} (total documents: {len(documents)})")
                 elif material_content and material_content.strip():
                     text_content_parts.append(f"=== {material.title} ({material.material_type}) ===\n{material_content}")
                     logger.info(f"Added text content for: {material.title} (total text parts: {len(text_content_parts)})")
                 else:
-                    logger.warning(f"No content added for material {material.id} ({material.material_type}): document_part={document_part is not None}, material_content={'empty' if not material_content else 'has content'}")
+                    logger.warning(f"No content added for material {material.id} ({material.material_type}): document_ref={document_ref is not None}, material_content={'empty' if not material_content else 'has content'}")
             
             # Combine text content
             combined_content = "\n\n".join(text_content_parts) if text_content_parts else None
             
             # Log summary before validation
-            logger.info(f"Content collection summary: text_parts={len(text_content_parts)}, file_parts={len(file_parts)}, combined_content_length={len(combined_content) if combined_content else 0}")
+            logger.info(f"Content collection summary: text_parts={len(text_content_parts)}, documents={len(documents)}, combined_content_length={len(combined_content) if combined_content else 0}")
             
             # Validate that we have at least some content
-            if not combined_content and not file_parts:
-                logger.error(f"No content found in selected materials. Materials processed: {materials.count()}, text_parts: {len(text_content_parts)}, file_parts: {len(file_parts)}")
+            if not combined_content and not documents:
+                logger.error(f"No content found in selected materials. Materials processed: {materials.count()}, text_parts: {len(text_content_parts)}, documents: {len(documents)}")
                 return Response(
                     {'error': 'No content found in selected materials'},
                     status=status.HTTP_400_BAD_REQUEST
@@ -5351,70 +5309,46 @@ Generate comprehensive assignment questions that require students to demonstrate
             
             # Get template attributes from request (with fallbacks)
             temperature = float(request.data.get('temperature', 0.7))
-            model_name = request.data.get('model_name', '').strip() or None
-            max_tokens = request.data.get('max_tokens')
-            if max_tokens is not None:
-                try:
-                    max_tokens = int(max_tokens)
-                except (ValueError, TypeError):
-                    max_tokens = None
 
-            # PDF document Parts still use Vertex GeminiAssignmentService.
-            # Text materials use the switchable assignment_generate AI Service.
-            if file_parts:
-                service = GeminiAssignmentService()
-                result = service.generate(
-                    system_instruction=system_instruction,
-                    lesson_title=lesson.title,
-                    lesson_description=lesson.description or '',
-                    content=combined_content if combined_content else None,
-                    file_parts=file_parts,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    model_name=model_name,
-                    total_questions=total_questions,
-                    essay_count=essay_count,
-                    fill_blank_count=fill_blank_count,
-                )
-            else:
-                out = generate_assignment(
-                    lesson_title=lesson.title,
-                    lesson_description=lesson.description or '',
-                    content=combined_content or '',
-                    total_questions=total_questions,
-                    essay_count=essay_count,
-                    fill_blank_count=fill_blank_count,
-                    short_answer_count=short_answer_count,
-                    system_instruction=system_instruction,
-                    temperature=temperature,
-                )
-                if not out.get('success'):
-                    error_code = out.get('error_code') or 'generation_failed'
-                    if error_code == 'validation_error':
-                        return Response(
-                            {'error': out.get('error') or 'Invalid assignment generation request'},
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
-                    http_status = (
-                        status.HTTP_429_TOO_MANY_REQUESTS
-                        if error_code == 'rate_limited'
-                        else status.HTTP_503_SERVICE_UNAVAILABLE
-                    )
-                    if django_settings.DEBUG:
-                        return Response(
-                            {
-                                'error': out.get('error') or USER_FACING_AI_SERVICE_ERROR,
-                                'error_code': error_code,
-                            },
-                            status=http_status,
-                        )
+            # Always use assignment_generate AI Service (text + PDF documents).
+            out = generate_assignment(
+                lesson_title=lesson.title,
+                lesson_description=lesson.description or '',
+                content=combined_content or '',
+                documents=documents,
+                total_questions=total_questions,
+                essay_count=essay_count,
+                fill_blank_count=fill_blank_count,
+                short_answer_count=short_answer_count,
+                system_instruction=system_instruction,
+                temperature=temperature,
+            )
+            if not out.get('success'):
+                error_code = out.get('error_code') or 'generation_failed'
+                if error_code == 'validation_error':
                     return Response(
-                        {'error': USER_FACING_AI_SERVICE_ERROR},
+                        {'error': out.get('error') or 'Invalid assignment generation request'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                http_status = (
+                    status.HTTP_429_TOO_MANY_REQUESTS
+                    if error_code == 'rate_limited'
+                    else status.HTTP_503_SERVICE_UNAVAILABLE
+                )
+                if django_settings.DEBUG:
+                    return Response(
+                        {
+                            'error': out.get('error') or USER_FACING_AI_SERVICE_ERROR,
+                            'error_code': error_code,
+                        },
                         status=http_status,
                     )
-                result = out.get('result') or {}
+                return Response(
+                    {'error': USER_FACING_AI_SERVICE_ERROR},
+                    status=http_status,
+                )
 
-            return Response(result, status=status.HTTP_200_OK)
+            return Response(out.get('result') or {}, status=status.HTTP_200_OK)
             
         except ValueError as e:
             logger.error(f"Validation error in AI assignment generation: {e}")
