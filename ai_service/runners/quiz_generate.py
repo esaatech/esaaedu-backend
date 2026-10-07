@@ -156,7 +156,9 @@ def generate_quiz(
         multiple_choice_count=mc,
         true_false_count=tf,
     )
-    user_prompt = user_prompt_with_documents(text_prompt, docs)
+    user_prompt = user_prompt_with_documents(
+        text_prompt, docs, provider=settings.provider
+    )
 
     try:
         from pydantic_ai import Agent

@@ -307,18 +307,37 @@ class TeacherAndAssessmentGradeRunnerTests(SimpleTestCase):
 
 
 class DocumentPartsTests(SimpleTestCase):
-    def test_normalize_storage_url_to_gs(self):
+    def test_normalize_storage_url_to_gs_for_gemini(self):
         from ai_service.runners.document_parts import normalize_storage_url
 
         self.assertEqual(
             normalize_storage_url(
-                "https://storage.googleapis.com/my-bucket/path/file.pdf?X-Goog-Signature=abc"
+                "https://storage.googleapis.com/my-bucket/path/file.pdf?X-Goog-Signature=abc",
+                provider="gemini",
             ),
             "gs://my-bucket/path/file.pdf",
         )
         self.assertEqual(
-            normalize_storage_url("gs://my-bucket/path/file.pdf"),
+            normalize_storage_url("gs://my-bucket/path/file.pdf", provider="gemini"),
             "gs://my-bucket/path/file.pdf",
+        )
+
+    def test_normalize_storage_url_https_for_deepseek(self):
+        from ai_service.runners.document_parts import normalize_storage_url
+
+        self.assertEqual(
+            normalize_storage_url(
+                "gs://my-bucket/path/file.pdf",
+                provider="deepseek",
+            ),
+            "https://storage.googleapis.com/my-bucket/path/file.pdf",
+        )
+        self.assertEqual(
+            normalize_storage_url(
+                "https://storage.googleapis.com/my-bucket/path/file.pdf?X-Goog-Signature=abc",
+                provider="deepseek",
+            ),
+            "https://storage.googleapis.com/my-bucket/path/file.pdf",
         )
 
 

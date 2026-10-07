@@ -154,7 +154,9 @@ def generate_assignment(
         fill_blank_count=fill,
         short_answer_count=short,
     )
-    user_prompt = user_prompt_with_documents(text_prompt, docs)
+    user_prompt = user_prompt_with_documents(
+        text_prompt, docs, provider=settings.provider
+    )
 
     try:
         from pydantic_ai import Agent
