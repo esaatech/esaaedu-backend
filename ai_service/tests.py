@@ -305,3 +305,77 @@ class TeacherAndAssessmentGradeRunnerTests(SimpleTestCase):
         self.assertIn("setup_assessment_grade", result["error"])
         mock_notify.assert_called_once()
 
+
+class QuizAssignmentGenerateConfigTests(SimpleTestCase):
+    @patch(
+        "ai_service.runners.quiz_generate.get_default_prompt_config",
+        return_value=None,
+    )
+    @patch("error_alerts.notify_ai_failure")
+    def test_quiz_missing_default_alerts_slack(self, mock_notify, _mock_prompt):
+        from ai_service.runners.quiz_generate import generate_quiz
+
+        result = generate_quiz(
+            lesson_title="Python Basics",
+            content="Variables store values.",
+            total_questions=2,
+            multiple_choice_count=1,
+            true_false_count=1,
+        )
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_code"], "ai_not_configured")
+        self.assertIn("setup_quiz_generate", result["error"])
+        mock_notify.assert_called_once()
+
+    @patch(
+        "ai_service.runners.assignment_generate.get_default_prompt_config",
+        return_value=None,
+    )
+    @patch("error_alerts.notify_ai_failure")
+    def test_assignment_missing_default_alerts_slack(self, mock_notify, _mock_prompt):
+        from ai_service.runners.assignment_generate import generate_assignment
+
+        result = generate_assignment(
+            lesson_title="Python Basics",
+            content="Variables store values.",
+            total_questions=2,
+            essay_count=1,
+            fill_blank_count=1,
+        )
+        self.assertFalse(result["success"])
+        self.assertEqual(result["error_code"], "ai_not_configured")
+        self.assertIn("setup_assignment_generate", result["error"])
+        mock_notify.assert_called_once()
+
+    def test_quiz_schema_normalizes_options(self):
+        from ai_service.schemas_quiz_generate import QuizGenerateOut, QuizQuestionOut
+        from ai_service.runners.quiz_generate import _normalize_quiz
+
+        quiz = QuizGenerateOut(
+            title="Quiz",
+            description="Desc",
+            questions=[
+                QuizQuestionOut(
+                    question_text="What is 2+2?",
+                    type="multiple_choice",
+                    points=1,
+                    content={},
+                    options=["3", "4", "5"],
+                    correct_answer="4",
+                    explanation="Add them.",
+                ),
+                QuizQuestionOut(
+                    question_text="Python is a language.",
+                    type="true_false",
+                    points=1,
+                    content={"correct_answer": "True"},
+                    explanation="Yes.",
+                ),
+            ],
+        )
+        payload = _normalize_quiz(quiz, fallback_title="Fallback")
+        self.assertEqual(len(payload["questions"]), 2)
+        self.assertEqual(payload["questions"][0]["content"]["options"], ["3", "4", "5"])
+        self.assertEqual(payload["questions"][0]["content"]["correct_answer"], "4")
+        self.assertEqual(payload["questions"][1]["content"]["correct_answer"], "true")
+

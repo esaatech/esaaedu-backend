@@ -1,1 +1,1 @@
-AI_PLATFORM_BUILD = "teacher-assessment-grade"
+AI_PLATFORM_BUILD = "quiz-assignment-generate"

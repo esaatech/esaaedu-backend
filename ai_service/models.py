@@ -451,3 +451,118 @@ class AssessmentGradePlayground(models.Model):
 
     def __str__(self) -> str:
         return self.title or f"Assessment grade playground #{self.pk}"
+
+
+class QuizGeneratePlayground(models.Model):
+    """Admin playground for the quiz_generate AI Service."""
+
+    title = models.CharField(max_length=200, default="Quiz generate probe")
+    prompt_config = models.ForeignKey(
+        AIPromptConfiguration,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="quiz_generate_playground_runs",
+        help_text="Blank uses the default prompt for slug quiz_generate.",
+    )
+    lesson_title = models.CharField(max_length=300, default="Introduction to Python")
+    lesson_description = models.TextField(
+        blank=True,
+        default="Learn Python basics including variables and data types.",
+    )
+    content = models.TextField(
+        default=(
+            "Python is a high-level programming language known for its simplicity.\n"
+            "Variables store data values. Data types include integers, floats, and strings.\n"
+            "Use print() to display output."
+        ),
+        help_text="Lesson material text used to ground the quiz.",
+    )
+    total_questions = models.PositiveSmallIntegerField(default=4)
+    multiple_choice_count = models.PositiveSmallIntegerField(default=3)
+    true_false_count = models.PositiveSmallIntegerField(default=1)
+    system_instruction = models.TextField(
+        blank=True,
+        help_text="Optional override. Blank uses the prompt config system prompt.",
+    )
+    notes = models.TextField(blank=True)
+
+    succeeded = models.BooleanField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    result_json = models.JSONField(null=True, blank=True)
+    provider = models.CharField(max_length=32, blank=True)
+    model_id = models.CharField(max_length=128, blank=True)
+    temperature = models.DecimalField(
+        max_digits=3, decimal_places=2, null=True, blank=True
+    )
+    instruction_slug = models.CharField(max_length=80, blank=True)
+    raw_response_text = models.TextField(blank=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        verbose_name = "Quiz Generate Playground"
+        verbose_name_plural = "Quiz Generate Playgrounds"
+
+    def __str__(self) -> str:
+        return self.title or f"Quiz generate playground #{self.pk}"
+
+
+class AssignmentGeneratePlayground(models.Model):
+    """Admin playground for the assignment_generate AI Service."""
+
+    title = models.CharField(max_length=200, default="Assignment generate probe")
+    prompt_config = models.ForeignKey(
+        AIPromptConfiguration,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="assignment_generate_playground_runs",
+        help_text="Blank uses the default prompt for slug assignment_generate.",
+    )
+    lesson_title = models.CharField(max_length=300, default="Introduction to Python")
+    lesson_description = models.TextField(
+        blank=True,
+        default="Learn Python basics including variables and data types.",
+    )
+    content = models.TextField(
+        default=(
+            "Python is a high-level programming language known for its simplicity.\n"
+            "Variables store data values. Data types include integers, floats, and strings.\n"
+            "Use print() to display output."
+        ),
+        help_text="Lesson material text used to ground the assignment.",
+    )
+    total_questions = models.PositiveSmallIntegerField(default=3)
+    essay_count = models.PositiveSmallIntegerField(default=1)
+    fill_blank_count = models.PositiveSmallIntegerField(default=2)
+    short_answer_count = models.PositiveSmallIntegerField(default=0)
+    system_instruction = models.TextField(
+        blank=True,
+        help_text="Optional override. Blank uses the prompt config system prompt.",
+    )
+    notes = models.TextField(blank=True)
+
+    succeeded = models.BooleanField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    result_json = models.JSONField(null=True, blank=True)
+    provider = models.CharField(max_length=32, blank=True)
+    model_id = models.CharField(max_length=128, blank=True)
+    temperature = models.DecimalField(
+        max_digits=3, decimal_places=2, null=True, blank=True
+    )
+    instruction_slug = models.CharField(max_length=80, blank=True)
+    raw_response_text = models.TextField(blank=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        verbose_name = "Assignment Generate Playground"
+        verbose_name_plural = "Assignment Generate Playgrounds"
+
+    def __str__(self) -> str:
+        return self.title or f"Assignment generate playground #{self.pk}"

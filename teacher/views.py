@@ -57,6 +57,10 @@ from ai.gemini_quiz_service import GeminiQuizService
 from ai.gemini_assignment_service import GeminiAssignmentService
 from ai.api_errors import ai_error_response
 from ai.models import CourseTeacherPrompt
+from ai_service.exceptions import USER_FACING_AI_SERVICE_ERROR
+from ai_service.runners.quiz_generate import generate_quiz
+from ai_service.runners.assignment_generate import generate_assignment
+from django.conf import settings as django_settings
 from courses.serializers import VideoMaterialSerializer, VideoMaterialCreateSerializer, VideoMaterialTranscribeSerializer, CourseAssessmentGradingSerializer, CourseAssessmentSubmissionResponseSerializer
 from .utils import FileUploadService
 
@@ -5013,23 +5017,61 @@ Generate comprehensive quiz questions that test understanding of the lesson mate
                     max_tokens = int(max_tokens)
                 except (ValueError, TypeError):
                     max_tokens = None
-            
-            # Initialize service and generate quiz
-            service = GeminiQuizService()
-            result = service.generate(
-                system_instruction=system_instruction,
-                lesson_title=lesson.title,
-                lesson_description=lesson.description or '',
-                content=combined_content if combined_content else None,
-                file_parts=file_parts if file_parts else None,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                model_name=model_name,
-                total_questions=total_questions,
-                multiple_choice_count=multiple_choice_count,
-                true_false_count=true_false_count
-            )
-            
+
+            # PDF document Parts still use Vertex GeminiQuizService.
+            # Text materials use the switchable quiz_generate AI Service.
+            if file_parts:
+                service = GeminiQuizService()
+                result = service.generate(
+                    system_instruction=system_instruction,
+                    lesson_title=lesson.title,
+                    lesson_description=lesson.description or '',
+                    content=combined_content if combined_content else None,
+                    file_parts=file_parts,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    model_name=model_name,
+                    total_questions=total_questions,
+                    multiple_choice_count=multiple_choice_count,
+                    true_false_count=true_false_count,
+                )
+            else:
+                out = generate_quiz(
+                    lesson_title=lesson.title,
+                    lesson_description=lesson.description or '',
+                    content=combined_content or '',
+                    total_questions=total_questions,
+                    multiple_choice_count=multiple_choice_count,
+                    true_false_count=true_false_count,
+                    system_instruction=system_instruction,
+                    temperature=temperature,
+                )
+                if not out.get('success'):
+                    error_code = out.get('error_code') or 'generation_failed'
+                    if error_code == 'validation_error':
+                        return Response(
+                            {'error': out.get('error') or 'Invalid quiz generation request'},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    http_status = (
+                        status.HTTP_429_TOO_MANY_REQUESTS
+                        if error_code == 'rate_limited'
+                        else status.HTTP_503_SERVICE_UNAVAILABLE
+                    )
+                    if django_settings.DEBUG:
+                        return Response(
+                            {
+                                'error': out.get('error') or USER_FACING_AI_SERVICE_ERROR,
+                                'error_code': error_code,
+                            },
+                            status=http_status,
+                        )
+                    return Response(
+                        {'error': USER_FACING_AI_SERVICE_ERROR},
+                        status=http_status,
+                    )
+                result = out.get('result') or {}
+
             return Response(result, status=status.HTTP_200_OK)
             
         except ValueError as e:
@@ -5316,23 +5358,62 @@ Generate comprehensive assignment questions that require students to demonstrate
                     max_tokens = int(max_tokens)
                 except (ValueError, TypeError):
                     max_tokens = None
-            
-            # Initialize service and generate assignment
-            service = GeminiAssignmentService()
-            result = service.generate(
-                system_instruction=system_instruction,
-                lesson_title=lesson.title,
-                lesson_description=lesson.description or '',
-                content=combined_content if combined_content else None,
-                file_parts=file_parts if file_parts else None,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                model_name=model_name,
-                total_questions=total_questions,
-                essay_count=essay_count,
-                fill_blank_count=fill_blank_count
-            )
-            
+
+            # PDF document Parts still use Vertex GeminiAssignmentService.
+            # Text materials use the switchable assignment_generate AI Service.
+            if file_parts:
+                service = GeminiAssignmentService()
+                result = service.generate(
+                    system_instruction=system_instruction,
+                    lesson_title=lesson.title,
+                    lesson_description=lesson.description or '',
+                    content=combined_content if combined_content else None,
+                    file_parts=file_parts,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    model_name=model_name,
+                    total_questions=total_questions,
+                    essay_count=essay_count,
+                    fill_blank_count=fill_blank_count,
+                )
+            else:
+                out = generate_assignment(
+                    lesson_title=lesson.title,
+                    lesson_description=lesson.description or '',
+                    content=combined_content or '',
+                    total_questions=total_questions,
+                    essay_count=essay_count,
+                    fill_blank_count=fill_blank_count,
+                    short_answer_count=short_answer_count,
+                    system_instruction=system_instruction,
+                    temperature=temperature,
+                )
+                if not out.get('success'):
+                    error_code = out.get('error_code') or 'generation_failed'
+                    if error_code == 'validation_error':
+                        return Response(
+                            {'error': out.get('error') or 'Invalid assignment generation request'},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    http_status = (
+                        status.HTTP_429_TOO_MANY_REQUESTS
+                        if error_code == 'rate_limited'
+                        else status.HTTP_503_SERVICE_UNAVAILABLE
+                    )
+                    if django_settings.DEBUG:
+                        return Response(
+                            {
+                                'error': out.get('error') or USER_FACING_AI_SERVICE_ERROR,
+                                'error_code': error_code,
+                            },
+                            status=http_status,
+                        )
+                    return Response(
+                        {'error': USER_FACING_AI_SERVICE_ERROR},
+                        status=http_status,
+                    )
+                result = out.get('result') or {}
+
             return Response(result, status=status.HTTP_200_OK)
             
         except ValueError as e:

@@ -159,6 +159,29 @@ python manage.py setup_assessment_grade
 - **No GeminiGrader fallback.** Missing default → `ai_not_configured` + Slack.
 - Admin playgrounds: **Teacher Assignment Grade Playgrounds**, **Assessment Grade Playgrounds**.
 
+## Phase 7 — Quiz + assignment generate AI Services
+
+Replaces hard-coded `GeminiQuizService` / `GeminiAssignmentService` for **text** lesson materials.
+
+```bash
+python manage.py setup_ai_models
+python manage.py setup_quiz_generate
+python manage.py setup_assignment_generate
+python manage.py migrate ai_service
+```
+
+| Service slug | Used by | Notes |
+| --- | --- | --- |
+| `quiz_generate` | `teacher.views.AIGenerateQuizView` | MC + true/false; Admin-switchable model |
+| `assignment_generate` | `teacher.views.AIGenerateAssignmentView` | Essay / fill-blank / short-answer |
+
+- Default model: Gemini 2.5 Flash (switch in Admin on each service’s default prompt).
+- **No silent Gemini*Service fallback for text.** Missing default → `ai_not_configured` + Slack.
+- **PDF / document Parts** still use Vertex `GeminiQuizService` / `GeminiAssignmentService` until DocumentUrl is wired for all providers.
+- Admin playgrounds: **Quiz Generate Playgrounds**, **Assignment Generate Playgrounds**.
+
+Runners: `ai_service.runners.quiz_generate.generate_quiz`, `ai_service.runners.assignment_generate.generate_assignment`
+
 ## Phase 5 — Production hardening
 
 ### Retries & timeouts
@@ -193,6 +216,8 @@ python manage.py setup_study_coach_grade
 python manage.py setup_tutorx_assignment_grade
 python manage.py setup_teacher_assignment_grade
 python manage.py setup_assessment_grade
+python manage.py setup_quiz_generate
+python manage.py setup_assignment_generate
 ```
 
 Or set `AI_SERVICE_SEED_ON_STARTUP=true` so `entrypoint.sh` runs the setup commands after migrate (idempotent).
