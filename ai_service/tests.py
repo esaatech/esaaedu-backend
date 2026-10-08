@@ -340,6 +340,32 @@ class DocumentPartsTests(SimpleTestCase):
             "https://storage.googleapis.com/my-bucket/path/file.pdf",
         )
 
+    @patch(
+        "ai_service.runners.document_parts._download_bytes",
+        return_value=b"%PDF",
+    )
+    @patch(
+        "ai_service.runners.document_parts._extract_pdf_text",
+        return_value="Once upon a time there were two stories.",
+    )
+    def test_deepseek_prompt_inlines_extracted_pdf_text(self, _extract, _download):
+        from ai_service.runners.document_parts import user_prompt_with_documents
+
+        prompt = user_prompt_with_documents(
+            "Generate a quiz.",
+            [
+                {
+                    "uri": "gs://bucket/lesson.pdf",
+                    "mime_type": "application/pdf",
+                    "title": "Two Stories",
+                }
+            ],
+            provider="deepseek",
+        )
+        self.assertIsInstance(prompt, str)
+        self.assertIn("Once upon a time", prompt)
+        self.assertIn("Two Stories", prompt)
+
 
 class QuizAssignmentGenerateConfigTests(SimpleTestCase):
     @patch(

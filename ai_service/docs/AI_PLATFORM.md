@@ -177,7 +177,7 @@ python manage.py migrate ai_service
 
 - Default model: Gemini 2.5 Flash (switch in Admin on each service’s default prompt).
 - **No silent Gemini*Service fallback.** Missing default → `ai_not_configured` + Slack.
-- **Text and PDF/documents** both use the AI Service runners. Documents are attached as pydantic-ai `DocumentUrl` (GCS `https://storage.googleapis.com/...` normalized to `gs://` for Vertex).
+- **Text and PDF/documents** both use the AI Service runners. Gemini receives the file as a pydantic-ai `DocumentUrl` (`gs://`). DeepSeek and OpenAI get the PDF text extracted on the server and included in the prompt (image-only PDFs still need Gemini).
 - Admin playgrounds: **Quiz Generate Playgrounds**, **Assignment Generate Playgrounds**.
 
 Runners: `ai_service.runners.quiz_generate.generate_quiz`, `ai_service.runners.assignment_generate.generate_assignment`

@@ -15,7 +15,10 @@ from ai_service.alerts import log_run_finished, log_run_model, notify_and_classi
 from ai_service.exceptions import AIServiceError, configuration_error
 from ai_service.gateway import AIServiceGatewayError, resolve_model
 from ai_service.prompt_utils import get_default_prompt_config
-from ai_service.runners.document_parts import user_prompt_with_documents
+from ai_service.runners.document_parts import (
+    DocumentGroundingError,
+    user_prompt_with_documents,
+)
 from ai_service.runners.run_helpers import request_model_settings, run_agent_sync
 from ai_service.schemas_quiz_generate import (
     QuizGenerateOut,
@@ -156,9 +159,12 @@ def generate_quiz(
         multiple_choice_count=mc,
         true_false_count=tf,
     )
-    user_prompt = user_prompt_with_documents(
-        text_prompt, docs, provider=settings.provider
-    )
+    try:
+        user_prompt = user_prompt_with_documents(
+            text_prompt, docs, provider=settings.provider
+        )
+    except DocumentGroundingError as exc:
+        return _fail(str(exc), prompt_config=prompt_config, settings=settings, error_code="validation_error")
 
     try:
         from pydantic_ai import Agent
