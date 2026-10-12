@@ -321,6 +321,13 @@ class DocumentPartsTests(SimpleTestCase):
             normalize_storage_url("gs://my-bucket/path/file.pdf", provider="gemini"),
             "gs://my-bucket/path/file.pdf",
         )
+        self.assertEqual(
+            normalize_storage_url(
+                "https://storage.googleapis.com/sbtyacademy/documents/id-The%20story%20keepers.pdf",
+                provider="gemini",
+            ),
+            "gs://sbtyacademy/documents/id-The story keepers.pdf",
+        )
 
     def test_normalize_storage_url_https_for_deepseek(self):
         from ai_service.runners.document_parts import normalize_storage_url

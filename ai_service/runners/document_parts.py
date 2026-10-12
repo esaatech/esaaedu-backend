@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from io import BytesIO
 from typing import Any, Optional
+from urllib.parse import unquote
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +36,9 @@ def normalize_storage_url(file_url: str, *, provider: str = "gemini") -> str:
     if wants_gs:
         if url.startswith(GCS_HTTPS_PREFIX):
             path = url[len(GCS_HTTPS_PREFIX) :].split("?", 1)[0].split("#", 1)[0]
-            return f"{GS_PREFIX}{path}"
-        return url.split("?", 1)[0]
+            # HTTPS stores spaces as %20. GCS object names use the decoded characters.
+            return f"{GS_PREFIX}{unquote(path)}"
+        return unquote(url.split("?", 1)[0])
 
     # Non-Gemini providers cannot fetch gs://
     if url.startswith(GS_PREFIX):
@@ -56,7 +58,7 @@ def _bucket_and_blob(file_url: str) -> Optional[tuple[str, str]]:
     bucket, _, blob = rest.partition("/")
     if not bucket or not blob:
         return None
-    return bucket, blob
+    return bucket, unquote(blob)
 
 
 def _download_bytes(file_url: str) -> bytes:
