@@ -45,7 +45,8 @@ Guidelines:
 - Questions should be appropriate for the target age group
 - For every multiple_choice question put at least 4 plain-string options and set
   correct_answer to the exact matching option text
-- Example: options=["Red","Blue","Green","Yellow"], correct_answer="Blue" """
+- Every question MUST include a non-empty correct_answer and a non-empty explanation
+- Example: options=["Red","Blue","Green","Yellow"], correct_answer="Blue", explanation="Blue is correct because..." """
 
 
 def require_default_prompt_config():
@@ -302,7 +303,8 @@ def _build_user_prompt(
         f"- Exactly {true_false_count} true/false questions\n\n"
         f"For each multiple_choice question, options MUST be an array of at least "
         f"2 plain strings (prefer 4), and correct_answer MUST exactly match one "
-        f"of those option strings.\n\n"
+        f"of those option strings. Every question MUST include a non-empty "
+        f"explanation.\n\n"
         f"Follow the system instruction, including any teacher instructions, "
         f"when choosing what the quiz assesses."
     )

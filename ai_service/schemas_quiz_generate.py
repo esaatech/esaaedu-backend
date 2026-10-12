@@ -54,8 +54,7 @@ class QuizQuestionOut(BaseModel):
         ),
     )
     explanation: str = Field(
-        default="",
-        description="Short explanation shown after answering",
+        description="Required. Short explanation of why the correct answer is right.",
     )
     # Optional legacy nested bag — accepted but not required
     content: dict[str, Any] = Field(
@@ -75,6 +74,10 @@ class QuizQuestionOut(BaseModel):
 
     @model_validator(mode="after")
     def require_mc_options(self) -> "QuizQuestionOut":
+        if not (self.explanation or "").strip():
+            raise ValueError("explanation is required for every question")
+        if not (self.correct_answer or "").strip():
+            raise ValueError("correct_answer is required for every question")
         if self.type != "multiple_choice":
             return self
         opts = list(self.options or [])

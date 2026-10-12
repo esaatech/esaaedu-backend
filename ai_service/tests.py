@@ -446,7 +446,17 @@ class QuizAssignmentGenerateConfigTests(SimpleTestCase):
         self.assertEqual(payload["questions"][0]["content"]["correct_answer"], "4")
         self.assertEqual(payload["questions"][1]["content"]["correct_answer"], "true")
 
-    def test_quiz_schema_rejects_mc_without_options(self):
+    def test_assignment_requires_explanation_and_correct_answer(self):
+        from ai_service.schemas_assignment_generate import AssignmentQuestionOut
+
+        with self.assertRaises(Exception):
+            AssignmentQuestionOut(
+                question_text="Explain variables.",
+                type="essay",
+                points=5,
+                content={"instructions": "Write a short answer."},
+                explanation="",
+            )
         from ai_service.schemas_quiz_generate import QuizQuestionOut
 
         with self.assertRaises(Exception):

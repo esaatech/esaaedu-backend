@@ -337,13 +337,16 @@ def _build_user_prompt(
     lines.extend(
         [
             "",
-            "CRITICAL INSTRUCTIONS FOR ESSAY QUESTIONS:",
-            "- Put a detailed model answer in the explanation field ONLY.",
-            "- DO NOT include a rubric field in content.",
-            "- Optionally include content.instructions for students.",
+            "Every question MUST include both:",
+            "- content.correct_answer (essay and short_answer) or content.correct_answers (fill_blank)",
+            "- explanation: why that answer is correct. Do not leave either field empty.",
             "",
-            "For fill-in-the-blank questions: provide clear blanks and correct answers.",
-            "Each question should have clear requirements and helpful explanations.",
+            "CRITICAL INSTRUCTIONS FOR ESSAY QUESTIONS:",
+            "- Put the full model answer in content.correct_answer.",
+            "- Also put a grading explanation in explanation.",
+            "- DO NOT include a rubric field in content.",
+            "",
+            "For fill-in-the-blank questions: provide blanks, correct_answers, and an explanation.",
         ]
     )
     return "\n".join(line for line in lines if line is not None)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class AssignmentQuestionOut(BaseModel):
@@ -18,16 +18,15 @@ class AssignmentQuestionOut(BaseModel):
         description=(
             "Question-specific content. "
             'For fill_blank: {"blanks": ["..."], "correct_answers": {"blank1": "..."}}. '
-            'For essay: {"instructions": "optional student instructions"} — '
-            "never include a rubric field; put model answers in explanation. "
+            'For essay: {"correct_answer": "full model answer", "instructions": "optional student instructions"}. '
+            "Never include a rubric field. "
             'For short_answer: {"correct_answer": "...", "accept_variations": true}.'
         ),
     )
     explanation: str = Field(
-        default="",
         description=(
-            "For essay: detailed model answer / grading guide. "
-            "For other types: optional explanation."
+            "Required for every question. Explain why the correct answer is right "
+            "and what a complete response should include."
         ),
     )
 
@@ -35,6 +34,28 @@ class AssignmentQuestionOut(BaseModel):
     @classmethod
     def strip_text(cls, value: str) -> str:
         return (value or "").strip()
+
+    @model_validator(mode="after")
+    def require_answer_and_explanation(self) -> "AssignmentQuestionOut":
+        if not (self.explanation or "").strip():
+            raise ValueError("explanation is required for every question")
+        content = self.content if isinstance(self.content, dict) else {}
+        if self.type == "fill_blank":
+            answers = content.get("correct_answers")
+            has_answers = (
+                isinstance(answers, dict) and any(str(v).strip() for v in answers.values())
+            ) or (isinstance(answers, list) and any(str(v).strip() for v in answers))
+            if not has_answers:
+                raise ValueError(
+                    "fill_blank requires content.correct_answers with the expected answers"
+                )
+        else:
+            answer = str(content.get("correct_answer") or "").strip()
+            if not answer:
+                raise ValueError(
+                    f"{self.type} requires content.correct_answer"
+                )
+        return self
 
 
 class AssignmentGenerateOut(BaseModel):
