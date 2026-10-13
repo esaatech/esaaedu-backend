@@ -56,8 +56,7 @@ from ai.video_transcription_service import VideoTranscriptionService
 from ai.api_errors import ai_error_response
 from ai.models import CourseTeacherPrompt
 from ai_service.exceptions import USER_FACING_AI_SERVICE_ERROR
-from ai_service.runners.quiz_generate import generate_quiz
-from ai_service.runners.assignment_generate import generate_assignment
+from ai_service.generation_jobs import start_lesson_generation
 from django.conf import settings as django_settings
 from courses.serializers import VideoMaterialSerializer, VideoMaterialCreateSerializer, VideoMaterialTranscribeSerializer, CourseAssessmentGradingSerializer, CourseAssessmentSubmissionResponseSerializer
 from .utils import FileUploadService
@@ -5001,44 +5000,23 @@ Generate comprehensive quiz questions that test understanding of the lesson mate
             # Get template attributes from request (with fallbacks)
             temperature = float(request.data.get('temperature', 0.7))
 
-            # Always use quiz_generate AI Service (text + PDF documents).
-            out = generate_quiz(
-                lesson_title=lesson.title,
-                lesson_description=lesson.description or '',
-                content=combined_content or '',
-                documents=documents,
-                total_questions=total_questions,
-                multiple_choice_count=multiple_choice_count,
-                true_false_count=true_false_count,
-                system_instruction=system_instruction,
-                temperature=temperature,
+            payload, http_status = start_lesson_generation(
+                lesson=lesson,
+                teacher=request.user,
+                kind='quiz',
+                generation_kwargs={
+                    'lesson_title': lesson.title,
+                    'lesson_description': lesson.description or '',
+                    'content': combined_content or '',
+                    'documents': documents,
+                    'total_questions': total_questions,
+                    'multiple_choice_count': multiple_choice_count,
+                    'true_false_count': true_false_count,
+                    'system_instruction': system_instruction,
+                    'temperature': temperature,
+                },
             )
-            if not out.get('success'):
-                error_code = out.get('error_code') or 'generation_failed'
-                if error_code == 'validation_error':
-                    return Response(
-                        {'error': out.get('error') or 'Invalid quiz generation request'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-                http_status = (
-                    status.HTTP_429_TOO_MANY_REQUESTS
-                    if error_code == 'rate_limited'
-                    else status.HTTP_503_SERVICE_UNAVAILABLE
-                )
-                if django_settings.DEBUG:
-                    return Response(
-                        {
-                            'error': out.get('error') or USER_FACING_AI_SERVICE_ERROR,
-                            'error_code': error_code,
-                        },
-                        status=http_status,
-                    )
-                return Response(
-                    {'error': USER_FACING_AI_SERVICE_ERROR},
-                    status=http_status,
-                )
-
-            return Response(out.get('result') or {}, status=status.HTTP_200_OK)
+            return Response(payload, status=http_status)
             
         except ValueError as e:
             logger.error(f"Validation error in AI quiz generation: {e}")
@@ -5310,45 +5288,24 @@ Generate comprehensive assignment questions that require students to demonstrate
             # Get template attributes from request (with fallbacks)
             temperature = float(request.data.get('temperature', 0.7))
 
-            # Always use assignment_generate AI Service (text + PDF documents).
-            out = generate_assignment(
-                lesson_title=lesson.title,
-                lesson_description=lesson.description or '',
-                content=combined_content or '',
-                documents=documents,
-                total_questions=total_questions,
-                essay_count=essay_count,
-                fill_blank_count=fill_blank_count,
-                short_answer_count=short_answer_count,
-                system_instruction=system_instruction,
-                temperature=temperature,
+            payload, http_status = start_lesson_generation(
+                lesson=lesson,
+                teacher=request.user,
+                kind='assignment',
+                generation_kwargs={
+                    'lesson_title': lesson.title,
+                    'lesson_description': lesson.description or '',
+                    'content': combined_content or '',
+                    'documents': documents,
+                    'total_questions': total_questions,
+                    'essay_count': essay_count,
+                    'fill_blank_count': fill_blank_count,
+                    'short_answer_count': short_answer_count,
+                    'system_instruction': system_instruction,
+                    'temperature': temperature,
+                },
             )
-            if not out.get('success'):
-                error_code = out.get('error_code') or 'generation_failed'
-                if error_code == 'validation_error':
-                    return Response(
-                        {'error': out.get('error') or 'Invalid assignment generation request'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-                http_status = (
-                    status.HTTP_429_TOO_MANY_REQUESTS
-                    if error_code == 'rate_limited'
-                    else status.HTTP_503_SERVICE_UNAVAILABLE
-                )
-                if django_settings.DEBUG:
-                    return Response(
-                        {
-                            'error': out.get('error') or USER_FACING_AI_SERVICE_ERROR,
-                            'error_code': error_code,
-                        },
-                        status=http_status,
-                    )
-                return Response(
-                    {'error': USER_FACING_AI_SERVICE_ERROR},
-                    status=http_status,
-                )
-
-            return Response(out.get('result') or {}, status=status.HTTP_200_OK)
+            return Response(payload, status=http_status)
             
         except ValueError as e:
             logger.error(f"Validation error in AI assignment generation: {e}")

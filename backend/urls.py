@@ -24,6 +24,7 @@ from communication.staff_messages_views import StaffMessagesInboxPageView
 from teacher.calendar_views import StaffCalendarWeekPageView
 from teacher.roster_views import StaffTeacherRosterPageView
 from billings.ledger_views import StaffPaymentLedgerPageView
+from ai_service.generation_views import LessonQuestionGenerationTaskView
 from tutorx.grading_views import TutorXGradeSubmissionTaskView
 
 # Create API router
@@ -51,6 +52,11 @@ urlpatterns = [
         "api/internal/tutorx/grade-submission/",
         TutorXGradeSubmissionTaskView.as_view(),
         name="tutorx-grade-submission-task",
+    ),
+    path(
+        "api/internal/ai/generate-lesson-questions/",
+        LessonQuestionGenerationTaskView.as_view(),
+        name="ai-generate-lesson-questions-task",
     ),
     path("api/studycoach/", include('studycoach.urls')),
     path("api/blog/", include('blog.urls')),

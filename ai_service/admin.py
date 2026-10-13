@@ -4,6 +4,7 @@ from django.utils.html import format_html
 
 from ai_service.admin_playground import AIPlaygroundAdminMixin
 from ai_service.models import (
+    AIGenerationJob,
     AIGatewayPlayground,
     AIModel,
     AIPromptConfiguration,
@@ -19,6 +20,22 @@ from ai_service.platform_version import AI_PLATFORM_BUILD
 from ai_service.runners.gateway_probe import run_gateway_probe
 
 admin.site.site_header = f"Little Learners Tech (AI platform {AI_PLATFORM_BUILD})"
+
+
+@admin.register(AIGenerationJob)
+class AIGenerationJobAdmin(admin.ModelAdmin):
+    list_display = ("kind", "status", "lesson", "teacher", "updated_at")
+    list_filter = ("kind", "status")
+    search_fields = ("lesson__title", "teacher__email")
+    readonly_fields = (
+        "id",
+        "run_token",
+        "request_payload",
+        "result_json",
+        "error_message",
+        "created_at",
+        "updated_at",
+    )
 
 
 @admin.register(AIModel)

@@ -1,3 +1,6 @@
+import uuid
+
+from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
@@ -566,3 +569,59 @@ class AssignmentGeneratePlayground(models.Model):
 
     def __str__(self) -> str:
         return self.title or f"Assignment generate playground #{self.pk}"
+
+
+class AIGenerationJob(models.Model):
+    """
+    One in-flight AI draft per lesson and kind (quiz or assignment).
+
+    The row exists only until the teacher saves the real quiz/assignment
+    or discards the draft. Saving and discarding delete the row.
+    """
+
+    class Kind(models.TextChoices):
+        QUIZ = "quiz", "Quiz"
+        ASSIGNMENT = "assignment", "Assignment"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        RUNNING = "running", "Running"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    lesson = models.ForeignKey(
+        "courses.Lesson",
+        on_delete=models.CASCADE,
+        related_name="ai_generation_jobs",
+    )
+    teacher = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="ai_generation_jobs",
+    )
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    run_token = models.CharField(max_length=64)
+    request_payload = models.JSONField(default=dict, blank=True)
+    result_json = models.JSONField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["lesson", "kind"],
+                name="unique_ai_generation_job_per_lesson_kind",
+            )
+        ]
+        verbose_name = "AI Generation Job"
+        verbose_name_plural = "AI Generation Jobs"
+
+    def __str__(self) -> str:
+        return f"{self.kind} {self.status} for lesson {self.lesson_id}"

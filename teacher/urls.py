@@ -8,6 +8,7 @@ from communication.views import (
     TeacherStudentOutboundThreadMarkReadView,
     TeacherStudentOutboundThreadView,
 )
+from . import generation_job_views
 from . import views
 from . import views_lesson_video_upload
 from .calendar_views import StaffCalendarWeekApiView, StaffClassDialogApiView, StaffTeacherDialogApiView
@@ -96,6 +97,11 @@ urlpatterns = [
     ),
     path('lessons/<uuid:lesson_id>/ai/generate-quiz/', views.AIGenerateQuizView.as_view(), name='ai_generate_quiz'),
     path('lessons/<uuid:lesson_id>/ai/generate-assignment/', views.AIGenerateAssignmentView.as_view(), name='ai_generate_assignment'),
+    path(
+        'lessons/<uuid:lesson_id>/ai/generation-job/',
+        generation_job_views.LessonGenerationJobView.as_view(),
+        name='lesson_generation_job',
+    ),
     
     # Video Material URLs
     path('video-materials/', views.VideoMaterialView.as_view(), name='video_material_create'),
