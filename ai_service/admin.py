@@ -5,6 +5,7 @@ from django.utils.html import format_html
 from ai_service.admin_playground import AIPlaygroundAdminMixin
 from ai_service.models import (
     AIGenerationJob,
+    AIGradingJob,
     AIGatewayPlayground,
     AIModel,
     AIPromptConfiguration,
@@ -28,6 +29,22 @@ class AIGenerationJobAdmin(admin.ModelAdmin):
     list_display = ("kind", "status", "lesson", "teacher", "updated_at")
     list_filter = ("kind", "status")
     search_fields = ("lesson__title", "teacher__email")
+    readonly_fields = (
+        "id",
+        "run_token",
+        "request_payload",
+        "result_json",
+        "error_message",
+        "created_at",
+        "updated_at",
+    )
+
+
+@admin.register(AIGradingJob)
+class AIGradingJobAdmin(admin.ModelAdmin):
+    list_display = ("kind", "status", "submission_id", "teacher", "updated_at")
+    list_filter = ("kind", "status")
+    search_fields = ("submission_id", "teacher__email")
     readonly_fields = (
         "id",
         "run_token",

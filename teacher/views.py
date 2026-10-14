@@ -2484,7 +2484,61 @@ class AssignmentAIGradingView(APIView):
     }
     """
     permission_classes = [permissions.IsAuthenticated]
-    
+
+    def get(self, request, assignment_id, submission_id):
+        submission, error = self._load_submission(request, assignment_id, submission_id)
+        if error is not None:
+            return error
+        from ai_service.models import AIGradingJob
+        from ai_service.teacher_grading_jobs import grading_job_for, serialize_grading_job
+
+        job = grading_job_for(AIGradingJob.Kind.ASSIGNMENT, submission.id)
+        if job is None:
+            return Response({"job": None}, status=status.HTTP_200_OK)
+        return Response(serialize_grading_job(job), status=status.HTTP_200_OK)
+
+    def delete(self, request, assignment_id, submission_id):
+        submission, error = self._load_submission(request, assignment_id, submission_id)
+        if error is not None:
+            return error
+        from ai_service.models import AIGradingJob
+        from ai_service.teacher_grading_jobs import delete_grading_job
+
+        deleted = delete_grading_job(AIGradingJob.Kind.ASSIGNMENT, submission.id)
+        return Response({"deleted": deleted}, status=status.HTTP_200_OK)
+
+    def _load_submission(self, request, assignment_id, submission_id):
+        if request.user.role != 'teacher':
+            return None, Response(
+                {'error': 'Only teachers can use AI grading'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            assignment = Assignment.objects.prefetch_related('lessons', 'lessons__course').get(
+                id=assignment_id
+            )
+            if not assignment.lessons.filter(owned_or_member_q(request.user, 'course__')).exists():
+                return None, Response(
+                    {'error': 'Assignment not found or you do not have permission to grade it'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        except Assignment.DoesNotExist:
+            return None, Response(
+                {'error': 'Assignment not found or you do not have permission to grade it'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            submission = AssignmentSubmission.objects.select_related('student').get(
+                id=submission_id,
+                assignment=assignment,
+            )
+        except AssignmentSubmission.DoesNotExist:
+            return None, Response(
+                {'error': 'Submission not found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return submission, None
+
     def post(self, request, assignment_id, submission_id):
         """
         POST: AI-grade assignment submission.
@@ -2559,22 +2613,17 @@ class AssignmentAIGradingView(APIView):
                 except Exception as e:
                     logger.warning(f"Failed to extract assignment context: {e}")
             
-            from teacher.ai_grading_helper import (
-                run_teacher_ai_grading_batch,
-                ASSIGNMENT_GRADING_TEMPLATE,
-            )
+            from ai_service.models import AIGradingJob
+            from ai_service.teacher_grading_jobs import start_teacher_grading
 
-            result = run_teacher_ai_grading_batch(
-                questions_data,
-                assignment_context if assignment_context else None,
-                ASSIGNMENT_GRADING_TEMPLATE,
+            payload, http_status = start_teacher_grading(
+                teacher=request.user,
+                kind=AIGradingJob.Kind.ASSIGNMENT,
+                submission_id=submission.id,
+                questions=questions_data,
+                context=assignment_context if assignment_context else None,
             )
-
-            return Response({
-                'grades': result['grades'],
-                'total_score': result['total_score'],
-                'total_possible': result['total_possible']
-            }, status=status.HTTP_200_OK)
+            return Response(payload, status=http_status)
             
         except Exception as e:
             return ai_error_response(
@@ -2593,9 +2642,62 @@ class CourseAssessmentAIGradingView(APIView):
     use AI Service `assessment_grade` (model switchable in Admin).
 
     Request body matches assignment shape, plus optional per-question `content` (full question JSON)
-    for objective scoring. Response shape matches assignment AI grade: grades, total_score, total_possible.
+    for objective scoring. POST returns a grading draft immediately. GET reads that draft.
+    DELETE removes it after the teacher saves or returns the work.
     """
     permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, assessment_id, submission_id):
+        submission, error = self._load_submission(request, assessment_id, submission_id)
+        if error is not None:
+            return error
+        from ai_service.models import AIGradingJob
+        from ai_service.teacher_grading_jobs import grading_job_for, serialize_grading_job
+
+        job = grading_job_for(AIGradingJob.Kind.ASSESSMENT, submission.id)
+        if job is None:
+            return Response({"job": None}, status=status.HTTP_200_OK)
+        return Response(serialize_grading_job(job), status=status.HTTP_200_OK)
+
+    def delete(self, request, assessment_id, submission_id):
+        submission, error = self._load_submission(request, assessment_id, submission_id)
+        if error is not None:
+            return error
+        from ai_service.models import AIGradingJob
+        from ai_service.teacher_grading_jobs import delete_grading_job
+
+        deleted = delete_grading_job(AIGradingJob.Kind.ASSESSMENT, submission.id)
+        return Response({"deleted": deleted}, status=status.HTTP_200_OK)
+
+    def _load_submission(self, request, assessment_id, submission_id):
+        if request.user.role != 'teacher':
+            return None, Response(
+                {'error': 'Only teachers can use AI grading'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            assessment = CourseAssessment.objects.select_related('course').get(id=assessment_id)
+            if not user_is_course_member(request.user, assessment.course):
+                return None, Response(
+                    {'error': 'Assessment not found or you do not have permission to grade it'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        except CourseAssessment.DoesNotExist:
+            return None, Response(
+                {'error': 'Assessment not found or you do not have permission to grade it'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            submission = CourseAssessmentSubmission.objects.select_related('student').get(
+                id=submission_id,
+                assessment=assessment,
+            )
+        except CourseAssessmentSubmission.DoesNotExist:
+            return None, Response(
+                {'error': 'Submission not found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return submission, None
 
     def post(self, request, assessment_id, submission_id):
         try:
@@ -2646,18 +2748,17 @@ class CourseAssessmentAIGradingView(APIView):
                     'assessment_type': assessment.assessment_type,
                 }
 
-            from teacher.assessment_grading_helper import run_assessment_hybrid_grading
+            from ai_service.models import AIGradingJob
+            from ai_service.teacher_grading_jobs import start_teacher_grading
 
-            result = run_assessment_hybrid_grading(
-                questions_data,
-                assignment_context if assignment_context else None,
+            payload, http_status = start_teacher_grading(
+                teacher=request.user,
+                kind=AIGradingJob.Kind.ASSESSMENT,
+                submission_id=submission.id,
+                questions=questions_data,
+                context=assignment_context if assignment_context else None,
             )
-
-            return Response({
-                'grades': result['grades'],
-                'total_score': result['total_score'],
-                'total_possible': result['total_possible'],
-            }, status=status.HTTP_200_OK)
+            return Response(payload, status=http_status)
 
         except Exception as e:
             return ai_error_response(

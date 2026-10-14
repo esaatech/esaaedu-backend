@@ -697,3 +697,56 @@ class AIGenerationJob(models.Model):
 
     def __str__(self) -> str:
         return f"{self.kind} {self.status} for lesson {self.lesson_id}"
+
+
+class AIGradingJob(models.Model):
+    """
+    One AI grade draft per student submission.
+
+    Assignment rows grade a lesson assignment. Assessment rows grade a test
+    or exam. The row lasts until the teacher saves the grade or returns the
+    work. Generation drafts stay on AIGenerationJob.
+    """
+
+    class Kind(models.TextChoices):
+        ASSIGNMENT = "assignment", "Assignment"
+        ASSESSMENT = "assessment", "Assessment"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        RUNNING = "running", "Running"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    submission_id = models.UUIDField()
+    teacher = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="ai_grading_jobs",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    run_token = models.CharField(max_length=64)
+    request_payload = models.JSONField(default=dict, blank=True)
+    result_json = models.JSONField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["kind", "submission_id"],
+                name="unique_ai_grading_job_per_submission",
+            )
+        ]
+        verbose_name = "AI Grading Job"
+        verbose_name_plural = "AI Grading Jobs"
+
+    def __str__(self) -> str:
+        return f"{self.kind} grade {self.status} for {self.submission_id}"
