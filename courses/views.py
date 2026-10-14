@@ -8885,10 +8885,18 @@ class AIGenerateAssessmentQuestionsView(APIView):
         "max_tokens": null  // Optional
     }
     
-    Response:
+    Response while lessons are still generating:
     {
-        "questions": [...]
+        "jobs": [...],
+        "status": "pending" | "running" | "completed" | "failed",
+        "finished": 0,
+        "total": 2,
+        "result": null,
+        "error": ""
     }
+
+    When every lesson has finished, ``result.questions`` holds the draft.
+    GET the same URL to poll. DELETE removes the draft.
     """
     permission_classes = [permissions.IsAuthenticated]
     
@@ -8904,7 +8912,37 @@ class AIGenerateAssessmentQuestionsView(APIView):
         
         assessment = get_object_or_404(CourseAssessment, id=assessment_id, course=course)
         return course, assessment
-    
+
+    def get(self, request, course_id, assessment_id):
+        """Current per-lesson drafts for this test or exam."""
+        try:
+            _course, assessment = self.get_assessment_and_validate(request, course_id, assessment_id)
+        except PermissionError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        from ai_service.generation_jobs import assessment_jobs_for, serialize_assessment_batch
+
+        jobs = list(assessment_jobs_for(assessment))
+        if not jobs:
+            return Response(
+                {'jobs': [], 'status': None, 'finished': 0, 'total': 0, 'result': None, 'error': ''},
+                status=status.HTTP_200_OK,
+            )
+        return Response(serialize_assessment_batch(jobs), status=status.HTTP_200_OK)
+
+    def delete(self, request, course_id, assessment_id):
+        """Discard the draft. Saved questions are not removed."""
+        try:
+            _course, assessment = self.get_assessment_and_validate(request, course_id, assessment_id)
+        except PermissionError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_403_FORBIDDEN)
+        from ai_service.models import AIGenerationJob
+
+        deleted, _ = AIGenerationJob.objects.filter(
+            assessment=assessment,
+            kind=AIGenerationJob.Kind.ASSESSMENT,
+        ).delete()
+        return Response({'deleted': deleted > 0}, status=status.HTTP_200_OK)
+
     def post(self, request, course_id, assessment_id):
         """
         POST: Generate assessment questions from selected materials using AI.
@@ -8935,7 +8973,7 @@ class AIGenerateAssessmentQuestionsView(APIView):
             lessons = Lesson.objects.filter(
                 id__in=lesson_ids,
                 course=course
-            ).select_related('course').order_by('-order', 'created_at')  # Order by most recent first
+            ).select_related('course').order_by('order', 'created_at')
             
             if lessons.count() != len(lesson_ids):
                 return Response(
@@ -8955,169 +8993,43 @@ class AIGenerateAssessmentQuestionsView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Import services
-            from ai.video_transcription_service import VideoTranscriptionService
-            from ai_service.runners.assessment_generate import generate_assessment
-            
-            # Collect content from all materials, organized by lesson
-            lesson_contents = []
-            text_content_parts = []
-            documents = []
-            transcription_service = VideoTranscriptionService()
-            
-            # Group materials by lesson
+            from ai_service.assessment_split import split_type_counts
+            from ai_service.generation_jobs import start_assessment_generation
+            from ai_service.runners.assessment_generate import _normalize_counts
+
             materials_by_lesson = {}
             for material in materials:
-                # Get the lesson this material belongs to (should be in lesson_ids)
-                material_lessons = material.lessons.filter(id__in=lesson_ids)
-                if material_lessons.exists():
-                    lesson = material_lessons.first()  # Take first matching lesson
-                    if lesson.id not in materials_by_lesson:
-                        materials_by_lesson[lesson.id] = []
-                    materials_by_lesson[lesson.id].append(material)
-            
-            # Process materials for each lesson
-            for lesson in lessons:
-                lesson_materials = materials_by_lesson.get(lesson.id, [])
-                lesson_text_content = []
-                
-                for material in lesson_materials:
-                    material_content = None
-                    document_ref = None
-                    
-                    logger.info(f"Processing material {material.id}: type={material.material_type}, title={material.title}")
-                    
-                    if material.material_type == 'note':
-                        material_content = material.description or ''
-                        
-                    elif material.material_type == 'video' or material.material_type == 'audio':
-                        try:
-                            video_material = VideoMaterial.objects.filter(
-                                lesson_material=material
-                            ).first()
-                            
-                            if not video_material and material.file_url:
-                                video_material = VideoMaterial.objects.filter(
-                                    video_url=material.file_url
-                                ).first()
-                            
-                            if video_material and video_material.has_transcript and video_material.transcript:
-                                material_content = video_material.transcript
-                                logger.info(f"Using existing transcript for video material {material.id}")
-                            elif material.file_url:
-                                logger.info(f"Transcribing video/audio material {material.id}")
-                                result = transcription_service.transcribe_video(material.file_url)
-                                if result.get('success') and result.get('transcript'):
-                                    material_content = result['transcript']
-                                    logger.info(f"Successfully transcribed material {material.id}")
-                                else:
-                                    logger.warning(f"Failed to transcribe material {material.id}: {result.get('error')}")
-                                    material_content = f"[Video/Audio URL: {material.file_url} - Transcription unavailable]"
-                            else:
-                                material_content = f"[Video/Audio material: {material.title} - No URL available]"
-                        except Exception as e:
-                            logger.error(f"Error processing video/audio material {material.id}: {e}")
-                            material_content = f"[Video/Audio material: {material.title} - Error processing]"
-                    
-                    elif material.material_type == 'book':
-                        pages = material.book_pages.all().order_by('page_number')
-                        if pages.exists():
-                            page_contents = []
-                            for page in pages:
-                                page_text = f"Page {page.page_number}"
-                                if page.title:
-                                    page_text += f": {page.title}"
-                                page_text += f"\n{page.content}"
-                                page_contents.append(page_text)
-                            material_content = "\n\n".join(page_contents)
-                        else:
-                            material_content = material.description or ''
-                    
-                    elif material.material_type == 'document':
-                        try:
-                            document_material = DocumentMaterial.objects.filter(
-                                lesson_material=material
-                            ).first()
-                            
-                            file_url = None
-                            mime_type = None
-                            
-                            if document_material and document_material.file_url:
-                                file_url = document_material.file_url
-                                mime_type = document_material.mime_type or 'application/pdf'
-                            elif material.file_url:
-                                file_url = material.file_url
-                                if material.file_extension:
-                                    mime_type_map = {
-                                        'pdf': 'application/pdf',
-                                        'doc': 'application/msword',
-                                        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                                        'txt': 'text/plain',
-                                        'rtf': 'application/rtf'
-                                    }
-                                    mime_type = mime_type_map.get(material.file_extension.lower(), 'application/pdf')
-                                else:
-                                    mime_type = 'application/pdf'
-                            
-                            if file_url:
-                                document_ref = {
-                                    'uri': file_url,
-                                    'mime_type': mime_type or 'application/pdf',
-                                    'title': material.title or 'document',
-                                }
-                                logger.info(f"Queued document for assessment generation: {file_url}")
-                            else:
-                                material_content = material.description or ''
-                        except Exception as e:
-                            logger.error(f"Error processing document material {material.id}: {e}", exc_info=True)
-                            material_content = material.description or ''
-                    
-                    else:
-                        material_content = material.description or ''
-                    
-                    # Add to appropriate list
-                    if document_ref:
-                        documents.append(document_ref)
-                        logger.info(f"Added document for: {material.title} (total documents: {len(documents)})")
-                    elif material_content and material_content.strip():
-                        lesson_text_content.append(f"=== {material.title} ({material.material_type}) ===\n{material_content}")
-                        text_content_parts.append(f"=== {material.title} ({material.material_type}) ===\n{material_content}")
-                        logger.info(f"Added text content for: {material.title}")
-                    else:
-                        logger.warning(f"No content added for material {material.id} ({material.material_type})")
-                
-                # Add lesson content to lesson_contents list
-                if lesson_materials:
-                    combined_lesson_content = "\n\n".join(lesson_text_content)
-                    lesson_contents.append({
-                        'lesson_title': lesson.title,
-                        'lesson_order': lesson.order,
-                        'content': combined_lesson_content,
-                        'material_title': ', '.join([m.title for m in lesson_materials]),
-                        'material_type': ', '.join([m.material_type for m in lesson_materials])
-                    })
-            
-            # Combine text content
-            combined_content = "\n\n".join(text_content_parts) if text_content_parts else None
-            
-            # Validate that we have at least some content
-            if not combined_content and not documents and not any((item.get('content') or '').strip() for item in lesson_contents):
-                logger.error(f"No content found in selected materials. Materials processed: {materials.count()}, text_parts={len(text_content_parts)}, documents={len(documents)}, lesson_contents={len(lesson_contents)}")
+                material_lessons = material.lessons.filter(id__in=lesson_ids).order_by('order', 'created_at')
+                lesson = material_lessons.first()
+                if lesson is None:
+                    continue
+                materials_by_lesson.setdefault(lesson.id, []).append(material)
+
+            lessons_with_materials = [lesson for lesson in lessons if lesson.id in materials_by_lesson]
+            if not lessons_with_materials:
                 return Response(
                     {'error': 'No content found in selected materials'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
-            # Get question count parameters
+
             total_questions = int(request.data.get('total_questions', 10))
-            multiple_choice_count = int(request.data.get('multiple_choice_count', 0))
-            true_false_count = int(request.data.get('true_false_count', 0))
-            fill_blank_count = int(request.data.get('fill_blank_count', 0))
-            short_answer_count = int(request.data.get('short_answer_count', 0))
-            essay_count = int(request.data.get('essay_count', 0))
-            code_count = int(request.data.get('code_count', 0))
-            
-            # Get system instruction
+            normalized = _normalize_counts(
+                total_questions,
+                int(request.data.get('multiple_choice_count', 0)),
+                int(request.data.get('true_false_count', 0)),
+                int(request.data.get('fill_blank_count', 0)),
+                int(request.data.get('short_answer_count', 0)),
+                int(request.data.get('essay_count', 0)),
+                int(request.data.get('code_count', 0)),
+            )
+            type_totals = {key: value for key, value in normalized.items() if key != 'total'}
+            plans = split_type_counts(lessons_with_materials, type_totals)
+            if not plans:
+                return Response(
+                    {'error': 'Select at least one question'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             system_instruction = request.data.get('system_instruction', '').strip()
             if not system_instruction:
                 if assessment.assessment_type == 'test':
@@ -9126,37 +9038,27 @@ Generate comprehensive test questions that evaluate student understanding and kn
                 else:
                     system_instruction = """You are an expert exam creator specializing in comprehensive educational assessment.
 Generate thorough exam questions that evaluate deep understanding, critical thinking, and comprehensive knowledge across the entire course."""
-            
-            # Get template attributes from request (with fallbacks)
+
             temperature = float(request.data.get('temperature', 0.7))
-            
-            outcome = generate_assessment(
-                lesson_contents=lesson_contents,
-                documents=documents,
-                assessment_type=assessment.assessment_type,
-                system_instruction=system_instruction,
-                temperature=temperature,
-                total_questions=total_questions,
-                multiple_choice_count=multiple_choice_count,
-                true_false_count=true_false_count,
-                fill_blank_count=fill_blank_count,
-                short_answer_count=short_answer_count,
-                essay_count=essay_count,
-                code_count=code_count,
+            lesson_plans = []
+            for plan in plans:
+                lesson = plan['lesson']
+                lesson_plans.append({
+                    'lesson': lesson,
+                    'material_ids': [str(material.id) for material in materials_by_lesson[lesson.id]],
+                    'total': plan['total'],
+                    'counts': plan['counts'],
+                    'system_instruction': system_instruction,
+                    'temperature': temperature,
+                    'assessment_type': assessment.assessment_type,
+                })
+
+            payload, http_status = start_assessment_generation(
+                assessment=assessment,
+                teacher=request.user,
+                lesson_plans=lesson_plans,
             )
-            if not outcome.get('success'):
-                error_code = outcome.get('error_code') or 'generation_failed'
-                http_status = (
-                    status.HTTP_400_BAD_REQUEST
-                    if error_code == 'validation_error'
-                    else status.HTTP_502_BAD_GATEWAY
-                )
-                return Response(
-                    {'error': outcome.get('error') or 'Assessment generation failed'},
-                    status=http_status,
-                )
-            
-            return Response(outcome.get('result') or {'questions': []}, status=status.HTTP_200_OK)
+            return Response(payload, status=http_status)
             
         except PermissionError as e:
             return Response(

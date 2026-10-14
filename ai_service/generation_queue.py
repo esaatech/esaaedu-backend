@@ -1,7 +1,8 @@
 """
-Enqueue quiz and assignment generation onto Cloud Tasks.
+Enqueue quiz, assignment, and assessment generation onto Cloud Tasks.
 
-Uses the same queue and OIDC audience as TutorX grading. The task URL is the
+Uses its own queue, ai-lesson-generation, so a generate burst does not block
+TutorX grading. The OIDC audience matches grading. The task URL is the
 generation worker. When CLOUD_TASKS_QUEUE is unset, generation stays inline.
 """
 from __future__ import annotations
@@ -22,6 +23,17 @@ from tutorx.services.grading_queue import (
 logger = logging.getLogger(__name__)
 
 GENERATION_PATH = "/api/internal/ai/generate-lesson-questions/"
+GENERATION_QUEUE_NAME = "ai-lesson-generation"
+
+
+def generation_queue_name() -> str:
+    """Queue for lesson question generation. Empty means run inline."""
+    explicit = (getattr(settings, "CLOUD_TASKS_GENERATION_QUEUE", "") or "").strip()
+    if explicit:
+        return explicit
+    if (getattr(settings, "CLOUD_TASKS_QUEUE", "") or "").strip():
+        return GENERATION_QUEUE_NAME
+    return ""
 
 
 def generation_target_url() -> str:
@@ -59,7 +71,7 @@ def enqueue_generation_job(job) -> str:
         or (getattr(settings, "GCS_PROJECT_ID", "") or "").strip()
     )
     location = (settings.CLOUD_TASKS_LOCATION or "us-central1").strip()
-    queue = settings.CLOUD_TASKS_QUEUE.strip()
+    queue = generation_queue_name()
     target = generation_target_url()
     service_account = settings.CLOUD_TASKS_SERVICE_ACCOUNT.strip()
     audience = (settings.CLOUD_TASKS_OIDC_AUDIENCE or settings.CLOUD_TASKS_TARGET_URL or target).strip()

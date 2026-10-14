@@ -629,15 +629,18 @@ class AssessmentGeneratePlayground(models.Model):
 
 class AIGenerationJob(models.Model):
     """
-    One in-flight AI draft per lesson and kind (quiz or assignment).
+    One in-flight AI draft per lesson and kind.
 
-    The row exists only until the teacher saves the real quiz/assignment
-    or discards the draft. Saving and discarding delete the row.
+    Quiz and assignment drafts are unique per lesson. Assessment drafts are
+    unique per test/exam and lesson, so one generate click creates one row
+    per selected lesson. The rows exist only until the teacher saves or
+    discards the draft.
     """
 
     class Kind(models.TextChoices):
         QUIZ = "quiz", "Quiz"
         ASSIGNMENT = "assignment", "Assignment"
+        ASSESSMENT = "assessment", "Assessment"
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
@@ -648,6 +651,13 @@ class AIGenerationJob(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     lesson = models.ForeignKey(
         "courses.Lesson",
+        on_delete=models.CASCADE,
+        related_name="ai_generation_jobs",
+    )
+    assessment = models.ForeignKey(
+        "courses.CourseAssessment",
+        null=True,
+        blank=True,
         on_delete=models.CASCADE,
         related_name="ai_generation_jobs",
     )
@@ -673,8 +683,14 @@ class AIGenerationJob(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["lesson", "kind"],
+                condition=models.Q(assessment__isnull=True),
                 name="unique_ai_generation_job_per_lesson_kind",
-            )
+            ),
+            models.UniqueConstraint(
+                fields=["assessment", "lesson"],
+                condition=models.Q(kind="assessment"),
+                name="unique_assessment_generation_job_per_lesson",
+            ),
         ]
         verbose_name = "AI Generation Job"
         verbose_name_plural = "AI Generation Jobs"
