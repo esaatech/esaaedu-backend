@@ -8957,12 +8957,12 @@ class AIGenerateAssessmentQuestionsView(APIView):
             
             # Import services
             from ai.video_transcription_service import VideoTranscriptionService
-            from ai.gemini_assessment_service import GeminiAssessmentService
+            from ai_service.runners.assessment_generate import generate_assessment
             
             # Collect content from all materials, organized by lesson
             lesson_contents = []
             text_content_parts = []
-            file_parts = []
+            documents = []
             transcription_service = VideoTranscriptionService()
             
             # Group materials by lesson
@@ -8983,7 +8983,7 @@ class AIGenerateAssessmentQuestionsView(APIView):
                 
                 for material in lesson_materials:
                     material_content = None
-                    document_part = None
+                    document_ref = None
                     
                     logger.info(f"Processing material {material.id}: type={material.material_type}, title={material.title}")
                     
@@ -9034,7 +9034,6 @@ class AIGenerateAssessmentQuestionsView(APIView):
                             material_content = material.description or ''
                     
                     elif material.material_type == 'document':
-                        # For documents: try direct file upload to Gemini
                         try:
                             document_material = DocumentMaterial.objects.filter(
                                 lesson_material=material
@@ -9061,16 +9060,12 @@ class AIGenerateAssessmentQuestionsView(APIView):
                                     mime_type = 'application/pdf'
                             
                             if file_url:
-                                from vertexai.generative_models import Part
-                                try:
-                                    document_part = Part.from_uri(
-                                        uri=file_url,
-                                        mime_type=mime_type
-                                    )
-                                    logger.info(f"Successfully created file part for document {material.id}: {file_url}")
-                                except Exception as e:
-                                    logger.error(f"Failed to create file part for document {material.id}: {e}", exc_info=True)
-                                    material_content = material.description or ''
+                                document_ref = {
+                                    'uri': file_url,
+                                    'mime_type': mime_type or 'application/pdf',
+                                    'title': material.title or 'document',
+                                }
+                                logger.info(f"Queued document for assessment generation: {file_url}")
                             else:
                                 material_content = material.description or ''
                         except Exception as e:
@@ -9081,9 +9076,9 @@ class AIGenerateAssessmentQuestionsView(APIView):
                         material_content = material.description or ''
                     
                     # Add to appropriate list
-                    if document_part:
-                        file_parts.append(document_part)
-                        logger.info(f"Added document file part for: {material.title} (total file_parts: {len(file_parts)})")
+                    if document_ref:
+                        documents.append(document_ref)
+                        logger.info(f"Added document for: {material.title} (total documents: {len(documents)})")
                     elif material_content and material_content.strip():
                         lesson_text_content.append(f"=== {material.title} ({material.material_type}) ===\n{material_content}")
                         text_content_parts.append(f"=== {material.title} ({material.material_type}) ===\n{material_content}")
@@ -9092,7 +9087,7 @@ class AIGenerateAssessmentQuestionsView(APIView):
                         logger.warning(f"No content added for material {material.id} ({material.material_type})")
                 
                 # Add lesson content to lesson_contents list
-                if lesson_materials and lesson_text_content:
+                if lesson_materials:
                     combined_lesson_content = "\n\n".join(lesson_text_content)
                     lesson_contents.append({
                         'lesson_title': lesson.title,
@@ -9106,8 +9101,8 @@ class AIGenerateAssessmentQuestionsView(APIView):
             combined_content = "\n\n".join(text_content_parts) if text_content_parts else None
             
             # Validate that we have at least some content
-            if not combined_content and not file_parts and not lesson_contents:
-                logger.error(f"No content found in selected materials. Materials processed: {materials.count()}, text_parts: {len(text_content_parts)}, file_parts: {len(file_parts)}, lesson_contents: {len(lesson_contents)}")
+            if not combined_content and not documents and not any((item.get('content') or '').strip() for item in lesson_contents):
+                logger.error(f"No content found in selected materials. Materials processed: {materials.count()}, text_parts={len(text_content_parts)}, documents={len(documents)}, lesson_contents={len(lesson_contents)}")
                 return Response(
                     {'error': 'No content found in selected materials'},
                     status=status.HTTP_400_BAD_REQUEST
@@ -9134,35 +9129,34 @@ Generate thorough exam questions that evaluate deep understanding, critical thin
             
             # Get template attributes from request (with fallbacks)
             temperature = float(request.data.get('temperature', 0.7))
-            model_name = request.data.get('model_name', '').strip() or None
-            max_tokens = request.data.get('max_tokens')
-            if max_tokens is not None:
-                try:
-                    max_tokens = int(max_tokens)
-                except (ValueError, TypeError):
-                    max_tokens = None
             
-            # Initialize service and generate questions
-            service = GeminiAssessmentService()
-            result = service.generate(
-                system_instruction=system_instruction,
+            outcome = generate_assessment(
                 lesson_contents=lesson_contents,
+                documents=documents,
                 assessment_type=assessment.assessment_type,
-                content=combined_content if combined_content else None,
-                file_parts=file_parts if file_parts else None,
+                system_instruction=system_instruction,
                 temperature=temperature,
-                max_tokens=max_tokens,
-                model_name=model_name,
                 total_questions=total_questions,
                 multiple_choice_count=multiple_choice_count,
                 true_false_count=true_false_count,
                 fill_blank_count=fill_blank_count,
                 short_answer_count=short_answer_count,
                 essay_count=essay_count,
-                code_count=code_count
+                code_count=code_count,
             )
+            if not outcome.get('success'):
+                error_code = outcome.get('error_code') or 'generation_failed'
+                http_status = (
+                    status.HTTP_400_BAD_REQUEST
+                    if error_code == 'validation_error'
+                    else status.HTTP_502_BAD_GATEWAY
+                )
+                return Response(
+                    {'error': outcome.get('error') or 'Assessment generation failed'},
+                    status=http_status,
+                )
             
-            return Response(result, status=status.HTTP_200_OK)
+            return Response(outcome.get('result') or {'questions': []}, status=status.HTTP_200_OK)
             
         except PermissionError as e:
             return Response(

@@ -571,6 +571,62 @@ class AssignmentGeneratePlayground(models.Model):
         return self.title or f"Assignment generate playground #{self.pk}"
 
 
+class AssessmentGeneratePlayground(models.Model):
+    """Admin playground for the assessment_generate AI Service."""
+
+    title = models.CharField(max_length=200, default="Assessment generate probe")
+    prompt_config = models.ForeignKey(
+        AIPromptConfiguration,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="assessment_generate_playground_runs",
+        help_text="Blank uses the default prompt for slug assessment_generate.",
+    )
+    lesson_title = models.CharField(max_length=300, default="Introduction to Python")
+    content = models.TextField(
+        default=(
+            "Python is a high-level programming language known for its simplicity.\n"
+            "Variables store data values. Use print() to display output."
+        ),
+        help_text="Lesson material text used to ground the assessment.",
+    )
+    total_questions = models.PositiveSmallIntegerField(default=4)
+    multiple_choice_count = models.PositiveSmallIntegerField(default=2)
+    true_false_count = models.PositiveSmallIntegerField(default=1)
+    fill_blank_count = models.PositiveSmallIntegerField(default=0)
+    short_answer_count = models.PositiveSmallIntegerField(default=0)
+    essay_count = models.PositiveSmallIntegerField(default=1)
+    code_count = models.PositiveSmallIntegerField(default=0)
+    system_instruction = models.TextField(
+        blank=True,
+        help_text="Optional override. Blank uses the prompt config system prompt.",
+    )
+    notes = models.TextField(blank=True)
+
+    succeeded = models.BooleanField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    result_json = models.JSONField(null=True, blank=True)
+    provider = models.CharField(max_length=32, blank=True)
+    model_id = models.CharField(max_length=128, blank=True)
+    temperature = models.DecimalField(
+        max_digits=3, decimal_places=2, null=True, blank=True
+    )
+    instruction_slug = models.CharField(max_length=80, blank=True)
+    raw_response_text = models.TextField(blank=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        verbose_name = "Assessment Generate Playground"
+        verbose_name_plural = "Assessment Generate Playgrounds"
+
+    def __str__(self) -> str:
+        return self.title or f"Assessment generate playground #{self.pk}"
+
+
 class AIGenerationJob(models.Model):
     """
     One in-flight AI draft per lesson and kind (quiz or assignment).

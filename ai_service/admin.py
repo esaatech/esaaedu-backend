@@ -11,6 +11,7 @@ from ai_service.models import (
     AIService,
     AssessmentGradePlayground,
     AssignmentGeneratePlayground,
+    AssessmentGeneratePlayground,
     QuizGeneratePlayground,
     StudyCoachDeckPlayground,
     TeacherAssignmentGradePlayground,
@@ -873,6 +874,112 @@ class AssignmentGeneratePlaygroundAdmin(QuizGeneratePlaygroundAdmin):
                     "essay_count",
                     "fill_blank_count",
                     "short_answer_count",
+                    "system_instruction",
+                    "notes",
+                )
+            },
+        ),
+        (
+            "Last run results",
+            {
+                "fields": (
+                    "succeeded_display",
+                    "error_message_display",
+                    "result_json_display",
+                    "provider",
+                    "model_id",
+                    "temperature",
+                    "instruction_slug",
+                    "raw_response_text_display",
+                    "last_run_at",
+                )
+            },
+        ),
+        (
+            "Timestamps",
+            {"fields": ("created_at", "updated_at"), "classes": ("collapse",)},
+        ),
+    )
+
+
+def _assessment_generate_runner(
+    *,
+    lesson_title: str = "",
+    content: str = "",
+    total_questions: str = "4",
+    multiple_choice_count: str = "2",
+    true_false_count: str = "1",
+    fill_blank_count: str = "0",
+    short_answer_count: str = "0",
+    essay_count: str = "1",
+    code_count: str = "0",
+    system_instruction: str = "",
+    prompt_config=None,
+    **_kwargs,
+):
+    from ai_service.runners.assessment_generate import generate_assessment
+
+    def _int(raw, default):
+        try:
+            return int(raw or default)
+        except (TypeError, ValueError):
+            return default
+
+    return generate_assessment(
+        lesson_contents=[
+            {
+                "lesson_title": lesson_title or "Sample Lesson",
+                "lesson_order": 1,
+                "content": content or "",
+            }
+        ],
+        assessment_type="test",
+        total_questions=_int(total_questions, 4),
+        multiple_choice_count=_int(multiple_choice_count, 2),
+        true_false_count=_int(true_false_count, 1),
+        fill_blank_count=_int(fill_blank_count, 0),
+        short_answer_count=_int(short_answer_count, 0),
+        essay_count=_int(essay_count, 1),
+        code_count=_int(code_count, 0),
+        system_instruction=system_instruction or None,
+        prompt_config=prompt_config,
+    )
+
+
+@admin.register(AssessmentGeneratePlayground)
+class AssessmentGeneratePlaygroundAdmin(QuizGeneratePlaygroundAdmin):
+    change_form_template = (
+        "admin/ai_service/assessmentgenerateplayground/change_form.html"
+    )
+    playground_runner = staticmethod(_assessment_generate_runner)
+    playground_input_fields = (
+        "lesson_title",
+        "content",
+        "total_questions",
+        "multiple_choice_count",
+        "true_false_count",
+        "fill_blank_count",
+        "short_answer_count",
+        "essay_count",
+        "code_count",
+        "system_instruction",
+    )
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "title",
+                    "prompt_config",
+                    "lesson_title",
+                    "content",
+                    "total_questions",
+                    "multiple_choice_count",
+                    "true_false_count",
+                    "fill_blank_count",
+                    "short_answer_count",
+                    "essay_count",
+                    "code_count",
                     "system_instruction",
                     "notes",
                 )
