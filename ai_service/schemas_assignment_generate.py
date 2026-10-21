@@ -1,4 +1,4 @@
-"""Structured output for assignment generation (essay / fill_blank / short_answer)."""
+"""Structured output for assignment generation (essay / fill_blank)."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 class AssignmentQuestionOut(BaseModel):
     question_text: str = Field(description="The question text shown to the student")
-    type: Literal["essay", "fill_blank", "short_answer"] = Field(
-        description="Question type: essay, fill_blank, or short_answer"
+    type: Literal["essay", "fill_blank"] = Field(
+        description="Question type: essay or fill_blank. A brief written response is an essay."
     )
     points: int = Field(default=10, ge=1, description="Points awarded for this question")
     content: dict[str, Any] = Field(
@@ -20,7 +20,7 @@ class AssignmentQuestionOut(BaseModel):
             'For fill_blank: {"blanks": ["..."], "correct_answers": {"blank1": "..."}}. '
             'For essay: {"correct_answer": "full model answer", "instructions": "optional student instructions"}. '
             "Never include a rubric field. "
-            'For short_answer: {"correct_answer": "...", "accept_variations": true}.'
+            "Do not use a short_answer type."
         ),
     )
     explanation: str = Field(

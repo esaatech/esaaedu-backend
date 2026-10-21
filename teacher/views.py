@@ -5375,11 +5375,6 @@ Generate comprehensive assignment questions that require students to demonstrate
             if fill_blank_count > 0:
                 question_type_info.append(f"{fill_blank_count} fill-in-the-blank question{'s' if fill_blank_count != 1 else ''}")
             
-            # Check for other question types that might be in the request
-            short_answer_count = int(request.data.get('short_answer_count', 0))
-            if short_answer_count > 0:
-                question_type_info.append(f"{short_answer_count} short answer question{'s' if short_answer_count != 1 else ''}")
-            
             if question_type_info:
                 type_requirement = f"Create {', and '.join(question_type_info)} with clear requirements, helpful explanations, and grading rubrics where applicable."
                 # Append to system instruction if not already present
@@ -5401,7 +5396,7 @@ Generate comprehensive assignment questions that require students to demonstrate
                     'total_questions': total_questions,
                     'essay_count': essay_count,
                     'fill_blank_count': fill_blank_count,
-                    'short_answer_count': short_answer_count,
+                    'short_answer_count': 0,
                     'system_instruction': system_instruction,
                     'temperature': temperature,
                 },

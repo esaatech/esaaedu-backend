@@ -566,6 +566,17 @@ else:
         else:
             db_port = config('DB_PORT', default='5432')
 
+        # Cloud SQL Auth Proxy (local TCP) and the Cloud Run unix socket already
+        # encrypt the hop to Cloud SQL. Client TLS to 127.0.0.1 is not needed.
+        uses_cloud_sql_proxy = (
+            str(db_host).startswith('/cloudsql/')
+            or str(db_host) in ('127.0.0.1', 'localhost')
+        )
+        sslmode = config(
+            'DB_SSLMODE',
+            default='disable' if uses_cloud_sql_proxy else 'require',
+        )
+
         database_config = {
             'ENGINE': 'django.db.backends.postgresql',
             'NAME': db_name,
@@ -573,8 +584,7 @@ else:
             'PASSWORD': config('DB_PASSWORD', default=''),
             'HOST': db_host,
             'OPTIONS': {
-                # Unix socket to Cloud SQL does not use TLS the same way as public IP.
-                'sslmode': 'disable' if str(db_host).startswith('/cloudsql/') else 'require',
+                'sslmode': sslmode,
             },
         }
 

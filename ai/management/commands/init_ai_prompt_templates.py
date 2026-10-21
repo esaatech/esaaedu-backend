@@ -104,12 +104,12 @@ Guidelines:
                 'description': 'Generate assignment questions from lesson materials',
                 'default_system_instruction': """You are an expert assignment creator specializing in educational content.
 Generate comprehensive assignment questions that require students to demonstrate understanding and application of lesson material.
-Create a mix of essay questions, fill-in-the-blank, and short answer questions with clear requirements.
+Create a mix of essay questions and fill-in-the-blank questions with clear requirements.
+Use essay for every open written response, including brief ones.
 
 Guidelines:
 - Essay questions should require critical thinking and application
 - Fill-in-the-blank questions should test key concepts
-- Short answer questions should be specific and answerable
 - Provide clear requirements and rubrics where appropriate
 - Ensure questions align with learning objectives
 - Questions should be appropriate for the target age group""",

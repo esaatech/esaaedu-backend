@@ -34,7 +34,7 @@ class Command(BaseCommand):
             defaults={
                 "name": "Assignment Generate",
                 "description": (
-                    "Generate assignment questions (essay / fill-blank / short-answer) "
+                    "Generate assignment questions (essay / fill-blank) "
                     "from lesson materials. Model is switchable in Admin."
                 ),
                 "is_active": True,

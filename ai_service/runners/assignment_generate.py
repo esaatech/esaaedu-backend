@@ -33,15 +33,21 @@ SETUP_COMMAND = "setup_assignment_generate"
 
 DEFAULT_INSTRUCTIONS = """You are an expert assignment creator specializing in educational content.
 Generate comprehensive assignment questions that require students to demonstrate understanding and application of lesson material.
-Create a mix of essay questions, fill-in-the-blank, and short answer questions with clear requirements.
+Create a mix of essay questions and fill-in-the-blank questions with clear requirements.
+Use essay for every open written response, including brief ones.
 
 Guidelines:
 - Essay questions should require critical thinking and application
 - Fill-in-the-blank questions should test key concepts
-- Short answer questions should be specific and answerable
 - For essay questions: put the detailed model answer in the explanation field ONLY; do not include a rubric field in content
 - Ensure questions align with learning objectives
 - Questions should be appropriate for the target age group"""
+
+ESSAY_ONLY_CONSTRAINT = (
+    "Allowed question types are essay and fill_blank only. "
+    "Do not create short_answer questions. "
+    "A brief written response must be an essay."
+)
 
 
 def require_default_prompt_config():
@@ -90,9 +96,13 @@ def generate_assignment(
             error_code="validation_error",
         )
 
-    essay, fill, short, total = _normalize_counts(
-        total_questions, essay_count, fill_blank_count, short_answer_count
+    # short_answer_count is accepted for older clients and ignored.
+    # Brief written responses are essays.
+    _ = short_answer_count
+    essay, fill, _short, total = _normalize_counts(
+        total_questions, essay_count, fill_blank_count, 0
     )
+    short = 0
 
     try:
         if prompt_config is None:
@@ -138,11 +148,13 @@ def generate_assignment(
         extra=f"total={total} essay={essay} fill={fill} short={short} docs={len(docs)}",
     )
 
-    instructions = (
+    instructions = _without_short_answer_instruction(
         (system_instruction or "").strip()
         or (getattr(prompt_config, "system_prompt", None) or "").strip()
         or DEFAULT_INSTRUCTIONS
     )
+    if ESSAY_ONLY_CONSTRAINT.lower() not in instructions.lower():
+        instructions = f"{instructions.rstrip()}\n\n{ESSAY_ONLY_CONSTRAINT}"
     type_requirement = _type_requirement(essay, fill, short)
     if type_requirement and type_requirement.lower() not in instructions.lower():
         instructions = f"{instructions}\n{type_requirement}"
@@ -155,7 +167,6 @@ def generate_assignment(
         total_questions=total,
         essay_count=essay,
         fill_blank_count=fill,
-        short_answer_count=short,
     )
     try:
         user_prompt = user_prompt_with_documents(
@@ -242,6 +253,20 @@ def generate_assignment(
         )
 
 
+def _without_short_answer_instruction(text: str) -> str:
+    """Drop the old default lines that asked for a separate short-answer type."""
+    updated = (text or "").replace(
+        "Create a mix of essay questions, fill-in-the-blank, and short answer questions with clear requirements.",
+        "Create a mix of essay questions and fill-in-the-blank questions with clear requirements.\n"
+        "Use essay for every open written response, including brief ones.",
+    )
+    updated = updated.replace(
+        "- Short answer questions should be specific and answerable\n",
+        "",
+    )
+    return updated.strip()
+
+
 def _normalize_counts(
     total: int, essay: int, fill: int, short: int
 ) -> tuple[int, int, int, int]:
@@ -302,7 +327,6 @@ def _build_user_prompt(
     total_questions: int,
     essay_count: int,
     fill_blank_count: int,
-    short_answer_count: int,
 ) -> str:
     desc = f"Lesson Description: {lesson_description}\n" if lesson_description.strip() else ""
     if content.strip():
@@ -331,14 +355,13 @@ def _build_user_prompt(
         ),
         f"- Exactly {essay_count} essay questions",
         f"- Exactly {fill_blank_count} fill-in-the-blank questions",
+        "- Do not create short_answer questions. A brief written response is an essay.",
     ]
-    if short_answer_count > 0:
-        lines.append(f"- Exactly {short_answer_count} short answer questions")
     lines.extend(
         [
             "",
             "Every question MUST include both:",
-            "- content.correct_answer (essay and short_answer) or content.correct_answers (fill_blank)",
+            "- content.correct_answer (essay) or content.correct_answers (fill_blank)",
             "- explanation: why that answer is correct. Do not leave either field empty.",
             "",
             "CRITICAL INSTRUCTIONS FOR ESSAY QUESTIONS:",
@@ -384,9 +407,6 @@ def _normalize_question(q: AssignmentQuestionOut) -> dict[str, Any]:
             )
             del content["rubric"]
         content.setdefault("instructions", "")
-    elif qtype == "short_answer":
-        content.setdefault("correct_answer", "")
-        content.setdefault("accept_variations", True)
 
     item["content"] = content
     return item
