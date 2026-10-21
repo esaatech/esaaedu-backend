@@ -41,7 +41,8 @@ Guidelines:
 - Fill-in-the-blank questions should test key concepts
 - For essay questions: put the detailed model answer in the explanation field ONLY; do not include a rubric field in content
 - Ensure questions align with learning objectives
-- Questions should be appropriate for the target age group"""
+- Questions should be appropriate for the target age group
+- Students answer on a computer: do NOT tell them to write in CAPS/uppercase, or to underline, circle, highlight, or mark text"""
 
 ESSAY_ONLY_CONSTRAINT = (
     "Allowed question types are essay and fill_blank only. "

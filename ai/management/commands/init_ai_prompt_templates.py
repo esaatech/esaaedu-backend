@@ -112,7 +112,8 @@ Guidelines:
 - Fill-in-the-blank questions should test key concepts
 - Provide clear requirements and rubrics where appropriate
 - Ensure questions align with learning objectives
-- Questions should be appropriate for the target age group""",
+- Questions should be appropriate for the target age group
+- Students answer on a computer: do NOT tell them to write in CAPS/uppercase, or to underline, circle, highlight, or mark text""",
                 'model_name': '',
                 'temperature': 0.7,
                 'max_tokens': None
