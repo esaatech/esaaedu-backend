@@ -768,6 +768,24 @@ def build_public_projects_outline(course):
     }
 
 
+class StudioLessonSerializer(serializers.ModelSerializer):
+    """Lesson title and description for the studio course list."""
+
+    class Meta:
+        model = Lesson
+        fields = ['id', 'title', 'description', 'order']
+
+
+class StudioCourseSerializer(serializers.ModelSerializer):
+    """One teacher course, including the long description and its lessons."""
+
+    lessons = StudioLessonSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Course
+        fields = ['id', 'title', 'description', 'long_description', 'age_range', 'level', 'lessons']
+
+
 class CourseListSerializer(serializers.ModelSerializer):
     """
     Serializer for course list view (minimal data for performance).

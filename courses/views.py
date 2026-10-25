@@ -37,7 +37,7 @@ from .serializers import (
     ModuleSerializer,
     ClassListSerializer, ClassDetailSerializer, ClassCreateUpdateSerializer,
     StudentBasicSerializer, TeacherStudentDetailSerializer, TeacherStudentSummarySerializer,
-    CourseWithLessonsSerializer, LessonMaterialSerializer,
+    CourseWithLessonsSerializer, LessonMaterialSerializer, StudioCourseSerializer,
     ClassroomSerializer, ClassroomCreateSerializer, ClassroomUpdateSerializer,
     TeacherClassAttendanceBulkSerializer,
     CourseAssessmentListSerializer, CourseAssessmentDetailSerializer, CourseAssessmentCreateUpdateSerializer,
@@ -614,6 +614,31 @@ def teacher_courses(request):
                 {'error': 'Failed to create course', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def teacher_studio_catalog(request):
+    """Courses for Studio, with the long description and each lesson's title and description."""
+    if request.user.role != 'teacher':
+        return Response(
+            {'error': 'Only teachers can access this endpoint'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    try:
+        from django.db.models import Prefetch
+
+        courses = courses_for_teacher(request.user).prefetch_related(
+            Prefetch('lessons', queryset=Lesson.objects.order_by('order'))
+        ).order_by('-created_at')
+        serializer = StudioCourseSerializer(courses, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.exception("teacher_studio_catalog failed")
+        return Response(
+            {'error': 'Failed to fetch studio courses', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 class CourseCreationView(APIView):

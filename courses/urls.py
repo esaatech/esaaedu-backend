@@ -12,6 +12,7 @@ urlpatterns = [
     
     # Teacher endpoints
     path('teacher/', views.teacher_courses, name='teacher_courses'),
+    path('teacher/studio/', views.teacher_studio_catalog, name='teacher_studio_catalog'),
     path('teacher/dashboard/', views.TeacherDashboardAPIView.as_view(), name='teacher_dashboard'),
     path('teacher/search/', membership_views.search_teachers, name='search_teachers'),
     path('teacher/<uuid:course_id>/teachers/', membership_views.course_teachers, name='course_teachers'),
