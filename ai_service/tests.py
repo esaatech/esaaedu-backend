@@ -482,3 +482,64 @@ class QuizAssignmentGenerateConfigTests(SimpleTestCase):
         self.assertIsNotNone(item)
         self.assertEqual(item["content"]["options"], ["A", "B", "C"])
 
+
+class StudioSystemInstructionSchemaTests(SimpleTestCase):
+    def test_requires_full_prompt(self):
+        from ai_service.schemas_studio import StudioSystemInstructionOut
+
+        out = StudioSystemInstructionOut(
+            system_prompt="You draft a lesson as beats for a teacher. Keep lines short.",
+            summary="Kept one-breath lines.",
+        )
+        self.assertIn("beats", out.system_prompt)
+
+    def test_rejects_short_prompt(self):
+        from ai_service.schemas_studio import StudioSystemInstructionOut
+
+        with self.assertRaises(Exception):
+            StudioSystemInstructionOut(system_prompt="too short", summary="no")
+
+
+class StudioSettingsTests(SimpleTestCase):
+    def test_prompt_model_wins_over_env(self):
+        from ai_service.studio_settings import settings_patch_for_prompt
+
+        class Model:
+            provider = "openai"
+            model_id = "gpt-4o-mini"
+            default_temperature = None
+
+        class Prompt:
+            system_prompt = "Draft beats."
+            temperature = 0.4
+            ai_model = Model()
+
+        patch = settings_patch_for_prompt(Prompt())
+        self.assertEqual(patch["provider"], "openai")
+        self.assertEqual(patch["model_id"], "gpt-4o-mini")
+        self.assertEqual(patch["temperature"], 0.4)
+        self.assertEqual(patch["system_prompt"], "Draft beats.")
+
+    def test_push_skips_when_studio_env_missing(self):
+        from unittest.mock import patch
+
+        from ai_service.studio_settings import push_studio_settings
+
+        with patch("ai_service.studio_settings.studio_base_url", return_value=""):
+            result = push_studio_settings()
+        self.assertTrue(result.skipped)
+        self.assertTrue(result.ok)
+
+    def test_rewrite_requires_a_change_request(self):
+        from ai_service.runners.studio_system_instruction import (
+            rewrite_studio_system_instruction,
+        )
+
+        result = rewrite_studio_system_instruction(
+            target_service="studio_script_drafter",
+            current_prompt="You draft a lesson as beats for a teacher.",
+            change_request="",
+        )
+        self.assertFalse(result["success"])
+        self.assertIn("change", result["error"].lower())
+

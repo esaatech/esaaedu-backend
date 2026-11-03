@@ -13,6 +13,22 @@ from ai_service.models import AIModel
 DEFAULT_MODELS = [
     {
         "provider": AIModel.Provider.GEMINI,
+        "model_id": "gemini-3.5-flash-lite",
+        "display_name": "Gemini 3.5 Flash Lite",
+        "description": "Current Gemini for new API keys. Use this when 2.5 Flash returns 404.",
+        "sort_order": 1,
+        "default_temperature": 0.20,
+    },
+    {
+        "provider": AIModel.Provider.GEMINI,
+        "model_id": "gemini-3.8-flash",
+        "display_name": "Gemini 3.8 Flash",
+        "description": "Current Gemini Flash for new API keys and Studio script drafts.",
+        "sort_order": 2,
+        "default_temperature": 0.40,
+    },
+    {
+        "provider": AIModel.Provider.GEMINI,
         "model_id": "gemini-2.5-flash-lite",
         "display_name": "Gemini 2.5 Flash Lite",
         "description": "Fastest Gemini for single-question grading and other low-latency checks.",

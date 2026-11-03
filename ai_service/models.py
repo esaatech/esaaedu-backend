@@ -750,3 +750,59 @@ class AIGradingJob(models.Model):
 
     def __str__(self) -> str:
         return f"{self.kind} grade {self.status} for {self.submission_id}"
+
+
+class StudioSystemInstructionPlayground(models.Model):
+    """Admin playground for rewriting a Studio script or visual system prompt."""
+
+    TARGET_CHOICES = [
+        ("studio_script_drafter", "Studio script drafter"),
+        ("studio_visual_generator", "Studio visual generator"),
+    ]
+
+    title = models.CharField(max_length=200, default="Studio system instruction")
+    prompt_config = models.ForeignKey(
+        AIPromptConfiguration,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="studio_system_instruction_playground_runs",
+        help_text="Blank uses the default prompt for slug studio_system_instruction.",
+    )
+    target_service = models.CharField(
+        max_length=50,
+        choices=TARGET_CHOICES,
+        default="studio_script_drafter",
+        help_text="Which Studio system prompt to rewrite.",
+    )
+    current_prompt = models.TextField(
+        blank=True,
+        help_text="Leave blank to load the target service's current Admin prompt.",
+    )
+    change_request = models.TextField(
+        help_text="What to change in that system instruction.",
+    )
+    notes = models.TextField(blank=True)
+
+    succeeded = models.BooleanField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    result_json = models.JSONField(null=True, blank=True)
+    provider = models.CharField(max_length=32, blank=True)
+    model_id = models.CharField(max_length=128, blank=True)
+    temperature = models.DecimalField(
+        max_digits=3, decimal_places=2, null=True, blank=True
+    )
+    instruction_slug = models.CharField(max_length=80, blank=True)
+    raw_response_text = models.TextField(blank=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        verbose_name = "Studio System Instruction Playground"
+        verbose_name_plural = "Studio System Instruction Playgrounds"
+
+    def __str__(self) -> str:
+        return self.title or f"Studio instruction playground #{self.pk}"

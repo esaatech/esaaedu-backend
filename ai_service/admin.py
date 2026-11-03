@@ -1,4 +1,4 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.urls import reverse
 from django.utils.html import format_html
 
@@ -15,6 +15,7 @@ from ai_service.models import (
     AssessmentGeneratePlayground,
     QuizGeneratePlayground,
     StudyCoachDeckPlayground,
+    StudioSystemInstructionPlayground,
     TeacherAssignmentGradePlayground,
     TutorXAssignmentGradePlayground,
 )
@@ -111,6 +112,44 @@ class AIPromptConfigurationAdmin(admin.ModelAdmin):
     search_fields = ("name", "slug", "system_prompt", "service__slug")
     autocomplete_fields = ("service", "ai_model")
     readonly_fields = ("created_at", "updated_at")
+    actions = ("push_studio_settings_action",)
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        from ai_service.studio_prompts import STUDIO_TASK_SLUGS
+        from ai_service.studio_settings import push_studio_settings
+
+        slug = getattr(getattr(obj, "service", None), "slug", "")
+        if slug not in STUDIO_TASK_SLUGS:
+            return
+        result = push_studio_settings()
+        if result.skipped:
+            self.message_user(
+                request,
+                "Saved. Studio was not updated: set LESSON_STUDIO_URL and "
+                "LESSON_STUDIO_SETTINGS_TOKEN, then use Push Studio settings.",
+                level=messages.WARNING,
+            )
+        elif result.ok:
+            self.message_user(request, "Saved and pushed to Lesson Studio.")
+        else:
+            self.message_user(
+                request,
+                f"Saved, but Studio push failed: {result.error}",
+                level=messages.ERROR,
+            )
+
+    @admin.action(description="Push Studio settings to lesson-studio")
+    def push_studio_settings_action(self, request, queryset):
+        from ai_service.studio_settings import push_studio_settings
+
+        result = push_studio_settings()
+        if result.skipped:
+            self.message_user(request, result.error, level=messages.WARNING)
+        elif result.ok:
+            self.message_user(request, "Pushed Studio script and visual prompts.")
+        else:
+            self.message_user(request, result.error, level=messages.ERROR)
 
 
 def _gateway_probe_runner(*, user_message: str, prompt_config=None, **_kwargs):
@@ -1023,3 +1062,196 @@ class AssessmentGeneratePlaygroundAdmin(QuizGeneratePlaygroundAdmin):
             {"fields": ("created_at", "updated_at"), "classes": ("collapse",)},
         ),
     )
+
+
+def _studio_system_instruction_runner(
+    *,
+    target_service: str = "studio_script_drafter",
+    current_prompt: str = "",
+    change_request: str = "",
+    prompt_config=None,
+    **_kwargs,
+):
+    from ai_service.runners.studio_system_instruction import (
+        rewrite_studio_system_instruction,
+    )
+
+    return rewrite_studio_system_instruction(
+        target_service=target_service,
+        current_prompt=current_prompt,
+        change_request=change_request,
+        prompt_config=prompt_config,
+    )
+
+
+@admin.register(StudioSystemInstructionPlayground)
+class StudioSystemInstructionPlaygroundAdmin(AIPlaygroundAdminMixin, admin.ModelAdmin):
+    change_form_template = (
+        "admin/ai_service/studiosysteminstructionplayground/change_form.html"
+    )
+    playground_runner = staticmethod(_studio_system_instruction_runner)
+    playground_input_fields = (
+        "target_service",
+        "current_prompt",
+        "change_request",
+    )
+    actions = ("apply_rewrite_to_target",)
+
+    list_display = (
+        "title",
+        "target_service",
+        "succeeded",
+        "provider",
+        "model_id",
+        "last_run_at",
+        "updated_at",
+    )
+    list_filter = ("succeeded", "target_service", "provider")
+    search_fields = ("title", "change_request", "notes", "error_message")
+    autocomplete_fields = ("prompt_config",)
+    readonly_fields = (
+        "succeeded_display",
+        "error_message_display",
+        "result_json_display",
+        "provider",
+        "model_id",
+        "temperature",
+        "instruction_slug",
+        "raw_response_text_display",
+        "last_run_at",
+        "created_at",
+        "updated_at",
+    )
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "title",
+                    "prompt_config",
+                    "target_service",
+                    "current_prompt",
+                    "change_request",
+                    "notes",
+                )
+            },
+        ),
+        (
+            "Last run results",
+            {
+                "fields": (
+                    "succeeded_display",
+                    "error_message_display",
+                    "result_json_display",
+                    "provider",
+                    "model_id",
+                    "temperature",
+                    "instruction_slug",
+                    "raw_response_text_display",
+                    "last_run_at",
+                )
+            },
+        ),
+        (
+            "Timestamps",
+            {"fields": ("created_at", "updated_at"), "classes": ("collapse",)},
+        ),
+    )
+
+    @admin.display(description="Succeeded")
+    def succeeded_display(self, obj):
+        if obj.succeeded is True:
+            return format_html('<img src="/static/admin/img/icon-yes.svg" alt="True">')
+        if obj.succeeded is False:
+            return format_html('<img src="/static/admin/img/icon-no.svg" alt="False">')
+        return "—"
+
+    @admin.display(description="Error")
+    def error_message_display(self, obj):
+        if not obj.error_message:
+            return "—"
+        return format_html(
+            '<span style="color:#ba2121;white-space:pre-wrap;">{}</span>',
+            obj.error_message,
+        )
+
+    @admin.display(description="Result JSON")
+    def result_json_display(self, obj):
+        if obj.result_json is None:
+            return "—"
+        import json
+
+        body = json.dumps(obj.result_json, indent=2, default=str)
+        return format_html(
+            '<pre id="ai-playground-ro-result" style="white-space:pre-wrap;font-size:12px;'
+            'max-height:420px;overflow:auto;background:#0d1117;color:#e6edf3;'
+            'padding:14px;border-radius:6px;margin:0;">{}</pre>',
+            body[:200000],
+        )
+
+    @admin.display(description="Raw response")
+    def raw_response_text_display(self, obj):
+        if not obj.raw_response_text:
+            return "—"
+        return format_html(
+            '<pre style="white-space:pre-wrap;font-size:12px;max-height:280px;'
+            'overflow:auto;background:#f8f9fa;padding:12px;border-radius:6px;margin:0;">{}</pre>',
+            obj.raw_response_text[:14000],
+        )
+
+    def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
+        extra_context = extra_context or {}
+        opts = self.model._meta
+        basename = f"{opts.app_label}_{opts.model_name}"
+        extra_context["ai_playground_run_url"] = reverse(
+            f"admin:{basename}_run_preview"
+        )
+        if object_id:
+            extra_context["ai_playground_persist_url"] = reverse(
+                f"admin:{basename}_persist_run",
+                args=[object_id],
+            )
+        else:
+            extra_context["ai_playground_persist_url"] = ""
+        return super().changeform_view(request, object_id, form_url, extra_context)
+
+    @admin.action(description="Apply last rewrite to the target Studio prompt")
+    def apply_rewrite_to_target(self, request, queryset):
+        from ai_service.studio_settings import apply_rewritten_prompt, push_studio_settings
+
+        applied = 0
+        for obj in queryset:
+            result = obj.result_json or {}
+            prompt = (result.get("system_prompt") or "").strip()
+            if not obj.succeeded or not prompt:
+                continue
+            error = apply_rewritten_prompt(obj.target_service, prompt)
+            if error:
+                self.message_user(request, error, level=messages.ERROR)
+                continue
+            applied += 1
+        if not applied:
+            self.message_user(
+                request,
+                "Nothing applied. Run the rewriter, save the result, then try again.",
+                level=messages.WARNING,
+            )
+            return
+        push = push_studio_settings()
+        if push.skipped:
+            self.message_user(
+                request,
+                f"Saved {applied} prompt(s). Studio was not updated: {push.error}",
+                level=messages.WARNING,
+            )
+        elif push.ok:
+            self.message_user(
+                request,
+                f"Saved {applied} prompt(s) and pushed to Lesson Studio.",
+            )
+        else:
+            self.message_user(
+                request,
+                f"Saved {applied} prompt(s), but Studio push failed: {push.error}",
+                level=messages.ERROR,
+            )

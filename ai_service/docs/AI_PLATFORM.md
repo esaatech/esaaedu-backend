@@ -218,7 +218,55 @@ python manage.py setup_teacher_assignment_grade
 python manage.py setup_assessment_grade
 python manage.py setup_quiz_generate
 python manage.py setup_assignment_generate
+python manage.py setup_studio_ai
 ```
 
 Or set `AI_SERVICE_SEED_ON_STARTUP=true` so `entrypoint.sh` runs the setup commands after migrate (idempotent).
+
+## Studio prompts and models
+
+Lesson Studio still drafts beats and pictures in `lesson-studio`. Django Admin is the source of truth for those two system prompts and their models.
+
+```bash
+python manage.py setup_ai_models
+python manage.py setup_studio_ai
+python manage.py migrate ai_service
+```
+
+| Service slug | Prompt field | Pushed to Studio as |
+| --- | --- | --- |
+| `studio_script_drafter` | `AIPromptConfiguration.system_prompt` | `script_drafter` |
+| `studio_visual_generator` | `AIPromptConfiguration.system_prompt` | `visual_generator` |
+| `studio_system_instruction` | rewriter instructions | not pushed; used only in Admin |
+
+Priority for Studio's provider/model: the **AI model** on the default prompt row, then Django `.env` (`AI_SERVICE_*`). Studio `.env` is the fallback until Admin is pushed.
+
+Set on the academy (see `env.example`):
+
+```
+LESSON_STUDIO_URL=http://127.0.0.1:8001
+LESSON_STUDIO_SETTINGS_TOKEN=
+```
+
+Studio must have the same token in `SETTINGS_TOKEN`. Saving a Studio script or visual prompt in Admin calls `PUT /v1/settings`. You can also run `python manage.py push_studio_settings` or the Admin action **Push Studio settings to lesson-studio**.
+
+### Cloud Run
+
+Set these as Cloud Run environment variables on the service (Console → service → Edit & deploy → Variables, or `gcloud`). Use `--update-env-vars` so a deploy does not wipe the other Studio env (`OUTPUT_DIR`, `EXPORT_JOB`, bucket mount). Do not put the token in git.
+
+```bash
+# Academy Django
+gcloud run services update little-learners-backend \
+  --project=esaasolution --region=us-central1 \
+  --update-env-vars=LESSON_STUDIO_URL=https://lesson-studio-git-578103433472.us-central1.run.app,LESSON_STUDIO_SETTINGS_TOKEN=paste-the-same-token-as-local
+
+# Studio API
+gcloud run services update lesson-studio-git \
+  --project=esaasolution --region=us-central1 \
+  --update-env-vars=SETTINGS_TOKEN=paste-the-same-token-as-local
+```
+
+After the new revision is up, run `push_studio_settings` from a machine that can reach Studio, or save a Studio prompt in Admin. Confirm the Studio revision still has `OUTPUT_DIR=/output` and `EXPORT_JOB=lesson-studio-export`.
+
+To change a prompt with AI: Admin → **Studio System Instruction Playgrounds** → pick the target service → write the change → **Rewrite system instruction** → save the run → action **Apply last rewrite to the target Studio prompt**.
 

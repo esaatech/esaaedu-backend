@@ -10,7 +10,7 @@ python manage.py migrate --noinput
 # Optional AI catalog seeds (idempotent). Enable with AI_SERVICE_SEED_ON_STARTUP=true
 SEED_FLAG="${AI_SERVICE_SEED_ON_STARTUP:-false}"
 if [[ "${SEED_FLAG}" == "true" || "${SEED_FLAG}" == "1" || "${SEED_FLAG}" == "yes" ]]; then
-  echo "🤖 Seeding AI Service catalog (setup_ai_models / study_coach / tutorx / teacher / assessment / quiz / assignment)..."
+  echo "🤖 Seeding AI Service catalog (setup_ai_models / study_coach / tutorx / teacher / assessment / quiz / assignment / studio)..."
   python manage.py setup_ai_models
   python manage.py setup_study_coach_deck
   python manage.py setup_study_coach_grade
@@ -19,6 +19,7 @@ if [[ "${SEED_FLAG}" == "true" || "${SEED_FLAG}" == "1" || "${SEED_FLAG}" == "ye
   python manage.py setup_assessment_grade
   python manage.py setup_quiz_generate
   python manage.py setup_assignment_generate
+  python manage.py setup_studio_ai
 fi
 
 # Start the application
