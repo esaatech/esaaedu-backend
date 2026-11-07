@@ -28,6 +28,9 @@
   <div id="ai-playground-message" style="margin-top:12px;"></div>
   <div class="form-row" style="margin-top:14px;">
     <label style="font-weight:600;">{% translate "Live preview" %}</label>
+    <iframe id="ai-playground-html-preview" title="Studio picture" sandbox="allow-scripts"
+            style="display:none;width:100%;height:420px;border:1px solid #d0d7de;border-radius:8px;
+                   background:white;margin:8px 0 12px;"></iframe>
     <pre id="ai-playground-live-result"
          style="white-space:pre-wrap;font-size:12px;max-height:480px;overflow:auto;
                 background:#0d1117;color:#e6edf3;padding:14px;border-radius:6px;margin:8px 0 0;">
@@ -94,11 +97,33 @@
     return fd;
   }
 
+  function showHtmlPreview(html) {
+    var frame = document.getElementById("ai-playground-html-preview");
+    if (!frame) return;
+    if (html) {
+      frame.style.display = "block";
+      frame.srcdoc = html;
+    } else {
+      frame.style.display = "none";
+      frame.removeAttribute("srcdoc");
+    }
+  }
+
+  function resultWithoutHtml(result) {
+    if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+    var shown = {};
+    Object.keys(result).forEach(function (key) {
+      if (key !== "html") shown[key] = result[key];
+    });
+    return shown;
+  }
+
   function updateResultPreview(payload) {
     var live = document.getElementById("ai-playground-live-result");
     if (!live || !payload) return;
+    showHtmlPreview(payload.result && payload.result.html);
     if (payload.result != null) {
-      live.textContent = JSON.stringify(payload.result, null, 2);
+      live.textContent = JSON.stringify(resultWithoutHtml(payload.result), null, 2);
     } else if (payload.error) {
       live.textContent = JSON.stringify({
         success: false,
@@ -111,7 +136,7 @@
     }
     var pre = document.getElementById("ai-playground-ro-result");
     if (pre && payload.result != null) {
-      pre.textContent = JSON.stringify(payload.result, null, 2);
+      pre.textContent = JSON.stringify(resultWithoutHtml(payload.result), null, 2);
     }
   }
 

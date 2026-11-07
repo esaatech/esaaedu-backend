@@ -16,6 +16,7 @@ from ai_service.models import (
     QuizGeneratePlayground,
     StudyCoachDeckPlayground,
     StudioSystemInstructionPlayground,
+    StudioVisualPlayground,
     TeacherAssignmentGradePlayground,
     TutorXAssignmentGradePlayground,
 )
@@ -1255,3 +1256,172 @@ class StudioSystemInstructionPlaygroundAdmin(AIPlaygroundAdminMixin, admin.Model
                 f"Saved {applied} prompt(s), but Studio push failed: {push.error}",
                 level=messages.ERROR,
             )
+
+
+def _studio_visual_runner(
+    *,
+    spoken_line: str = "",
+    on_screen: str = "",
+    generate_audio: str = "",
+    prompt_config=None,
+    **_kwargs,
+):
+    from ai_service.runners.studio_visual import generate_studio_visual
+
+    return generate_studio_visual(
+        spoken_line=spoken_line,
+        on_screen=on_screen,
+        generate_audio=generate_audio,
+        prompt_config=prompt_config,
+    )
+
+
+@admin.register(StudioVisualPlayground)
+class StudioVisualPlaygroundAdmin(AIPlaygroundAdminMixin, admin.ModelAdmin):
+    change_form_template = "admin/ai_service/studiovisualplayground/change_form.html"
+    playground_runner = staticmethod(_studio_visual_runner)
+    playground_input_fields = (
+        "spoken_line",
+        "on_screen",
+        "generate_audio",
+    )
+
+    list_display = (
+        "title",
+        "succeeded",
+        "provider",
+        "model_id",
+        "generate_audio",
+        "last_run_at",
+        "updated_at",
+    )
+    list_filter = ("succeeded", "generate_audio", "provider")
+    search_fields = ("title", "spoken_line", "on_screen", "notes", "error_message")
+    autocomplete_fields = ("prompt_config",)
+    readonly_fields = (
+        "succeeded_display",
+        "error_message_display",
+        "result_json_display",
+        "provider",
+        "model_id",
+        "temperature",
+        "instruction_slug",
+        "raw_response_text_display",
+        "last_run_at",
+        "created_at",
+        "updated_at",
+    )
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "title",
+                    "prompt_config",
+                    "spoken_line",
+                    "on_screen",
+                    "generate_audio",
+                    "notes",
+                )
+            },
+        ),
+        (
+            "Last run results",
+            {
+                "fields": (
+                    "succeeded_display",
+                    "error_message_display",
+                    "result_json_display",
+                    "provider",
+                    "model_id",
+                    "temperature",
+                    "instruction_slug",
+                    "raw_response_text_display",
+                    "last_run_at",
+                )
+            },
+        ),
+        (
+            "Timestamps",
+            {"fields": ("created_at", "updated_at"), "classes": ("collapse",)},
+        ),
+    )
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == "prompt_config":
+            kwargs["queryset"] = AIPromptConfiguration.objects.filter(
+                service__slug="studio_visual_generator"
+            )
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+    @admin.display(description="Succeeded")
+    def succeeded_display(self, obj):
+        if obj.succeeded is True:
+            return format_html('<img src="/static/admin/img/icon-yes.svg" alt="True">')
+        if obj.succeeded is False:
+            return format_html('<img src="/static/admin/img/icon-no.svg" alt="False">')
+        return "—"
+
+    @admin.display(description="Error")
+    def error_message_display(self, obj):
+        if not obj.error_message:
+            return "—"
+        return format_html(
+            '<span style="color:#ba2121;white-space:pre-wrap;">{}</span>',
+            obj.error_message,
+        )
+
+    @admin.display(description="Picture")
+    def result_json_display(self, obj):
+        if obj.result_json is None:
+            return "—"
+        import json
+
+        result = obj.result_json
+        html = ""
+        shown = result
+        if isinstance(result, dict):
+            html = result.get("html") or ""
+            shown = {key: value for key, value in result.items() if key != "html"}
+        body = json.dumps(shown, indent=2, default=str)
+        preview = ""
+        if html:
+            preview = format_html(
+                '<iframe title="Studio picture" sandbox="allow-scripts" srcdoc="{}" '
+                'style="width:100%;height:420px;border:1px solid #d0d7de;border-radius:8px;'
+                'background:white;margin-bottom:12px;"></iframe>',
+                html,
+            )
+        return format_html(
+            '{}<pre id="ai-playground-ro-result" style="white-space:pre-wrap;font-size:12px;'
+            'max-height:280px;overflow:auto;background:#0d1117;color:#e6edf3;'
+            'padding:14px;border-radius:6px;margin:0;">{}</pre>',
+            preview,
+            body[:200000],
+        )
+
+    @admin.display(description="Raw response")
+    def raw_response_text_display(self, obj):
+        if not obj.raw_response_text:
+            return "—"
+        return format_html(
+            '<pre style="white-space:pre-wrap;font-size:12px;max-height:280px;'
+            'overflow:auto;background:#f8f9fa;padding:12px;border-radius:6px;margin:0;">{}</pre>',
+            obj.raw_response_text[:14000],
+        )
+
+    def changeform_view(self, request, object_id=None, form_url="", extra_context=None):
+        extra_context = extra_context or {}
+        opts = self.model._meta
+        basename = f"{opts.app_label}_{opts.model_name}"
+        extra_context["ai_playground_run_url"] = reverse(
+            f"admin:{basename}_run_preview"
+        )
+        if object_id:
+            extra_context["ai_playground_persist_url"] = reverse(
+                f"admin:{basename}_persist_run",
+                args=[object_id],
+            )
+        else:
+            extra_context["ai_playground_persist_url"] = ""
+        return super().changeform_view(request, object_id, form_url, extra_context)

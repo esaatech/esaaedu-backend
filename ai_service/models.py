@@ -806,3 +806,47 @@ class StudioSystemInstructionPlayground(models.Model):
 
     def __str__(self) -> str:
         return self.title or f"Studio instruction playground #{self.pk}"
+
+
+class StudioVisualPlayground(models.Model):
+    """Admin playground for one Studio beat picture, using the selected visual prompt."""
+
+    title = models.CharField(max_length=200, default="Studio visual")
+    prompt_config = models.ForeignKey(
+        AIPromptConfiguration,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="studio_visual_playground_runs",
+        help_text="A Studio Visual Generator prompt. Blank uses the default. This run does not change the live default.",
+    )
+    spoken_line = models.TextField(help_text="The spoken beat, as the teacher would say it.")
+    on_screen = models.TextField(help_text="The On screen drawing brief for that beat.")
+    generate_audio = models.BooleanField(
+        default=False,
+        help_text="Off draws the picture only. On also records the spoken line with ElevenLabs so Play uses word times.",
+    )
+    notes = models.TextField(blank=True)
+
+    succeeded = models.BooleanField(null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    result_json = models.JSONField(null=True, blank=True)
+    provider = models.CharField(max_length=32, blank=True)
+    model_id = models.CharField(max_length=128, blank=True)
+    temperature = models.DecimalField(
+        max_digits=3, decimal_places=2, null=True, blank=True
+    )
+    instruction_slug = models.CharField(max_length=80, blank=True)
+    raw_response_text = models.TextField(blank=True)
+    last_run_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        verbose_name = "Studio Visual Playground"
+        verbose_name_plural = "Studio Visual Playgrounds"
+
+    def __str__(self) -> str:
+        return self.title or f"Studio visual playground #{self.pk}"

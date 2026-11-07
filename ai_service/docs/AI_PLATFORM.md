@@ -270,3 +270,5 @@ After the new revision is up, run `push_studio_settings` from a machine that can
 
 To change a prompt with AI: Admin → **Studio System Instruction Playgrounds** → pick the target service → write the change → **Rewrite system instruction** → save the run → action **Apply last rewrite to the target Studio prompt**.
 
+To try one picture: Admin → **Studio Visual Playgrounds** → pick a **Studio Visual Generator** prompt → paste Spoken line and On screen → **Generate picture**. Studio draws that beat with the selected prompt and does not change the live default. Play the HTML in the preview. Leave **Generate audio** off unless you want ElevenLabs word times. When the drawing is right, open that prompt configuration and check **Is default**, then save so Approve uses it.
+

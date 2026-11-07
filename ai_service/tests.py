@@ -1,3 +1,5 @@
+import json
+
 from django.test import SimpleTestCase, override_settings
 
 from ai_service.config import resolve_generation_settings
@@ -542,4 +544,98 @@ class StudioSettingsTests(SimpleTestCase):
         )
         self.assertFalse(result["success"])
         self.assertIn("change", result["error"].lower())
+
+
+class StudioVisualPlaygroundTests(SimpleTestCase):
+    def test_spoken_line_and_on_screen_are_required(self):
+        from ai_service.runners.studio_visual import generate_studio_visual
+
+        missing_line = generate_studio_visual(spoken_line="", on_screen="A person outline.")
+        missing_screen = generate_studio_visual(spoken_line="Welcome.", on_screen="")
+        self.assertFalse(missing_line["success"])
+        self.assertFalse(missing_screen["success"])
+
+    def test_posts_the_chosen_prompt_to_studio(self):
+        from unittest.mock import MagicMock, patch
+
+        from ai_service.runners.studio_visual import generate_studio_visual
+
+        class Model:
+            provider = "deepseek"
+            model_id = "deepseek-chat"
+            default_temperature = None
+
+        class Service:
+            slug = "studio_visual_generator"
+
+        class Prompt:
+            slug = "try-person"
+            system_prompt = "Choose a person outline when the line is a greeting."
+            temperature = 0.2
+            ai_model = Model()
+            service = Service()
+
+        posted = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "component": "shape-picture",
+                        "settings": {"subject": "person", "title": "English Adventure", "labels": ["Welcome"]},
+                        "html": "<html><body>person</body></html>",
+                        "duration": None,
+                    }
+                ).encode("utf-8")
+
+        def fake_urlopen(request, timeout=0):
+            posted["url"] = request.full_url
+            posted["body"] = json.loads(request.data.decode("utf-8"))
+            posted["timeout"] = timeout
+            return FakeResponse()
+
+        with patch("ai_service.runners.studio_visual.studio_base_url", return_value="http://127.0.0.1:8001"):
+            with patch("ai_service.runners.studio_visual.urllib.request.urlopen", fake_urlopen):
+                result = generate_studio_visual(
+                    spoken_line="Welcome, explorers, to our English Adventure where words come alive!",
+                    on_screen="A person outline titled English Adventure, labeled Welcome and Explorers.",
+                    generate_audio="",
+                    prompt_config=Prompt(),
+                )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["result"]["component"], "shape-picture")
+        self.assertIn("person", result["result"]["html"])
+        self.assertFalse(posted["body"]["generate_audio"])
+        self.assertEqual(posted["body"]["visual_generator"]["model_id"], "deepseek-chat")
+        self.assertIn("person outline", posted["body"]["visual_generator"]["system_prompt"])
+        self.assertEqual(posted["url"], "http://127.0.0.1:8001/v1/visuals")
+        self.assertEqual(posted["timeout"], 180)
+
+    def test_rejects_a_prompt_from_another_service(self):
+        from ai_service.runners.studio_visual import generate_studio_visual
+
+        class Service:
+            slug = "studio_script_drafter"
+
+        class Prompt:
+            slug = "default"
+            system_prompt = "Draft beats."
+            temperature = 0.4
+            ai_model = None
+            service = Service()
+
+        result = generate_studio_visual(
+            spoken_line="Welcome.",
+            on_screen="A person outline labeled Welcome.",
+            prompt_config=Prompt(),
+        )
+        self.assertFalse(result["success"])
+        self.assertIn("Visual Generator", result["error"])
 
