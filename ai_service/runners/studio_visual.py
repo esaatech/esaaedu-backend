@@ -45,12 +45,16 @@ def generate_studio_visual(
     *,
     spoken_line: str = "",
     on_screen: str = "",
+    kind: str = "",
     generate_audio: str | bool = False,
     prompt_config=None,
     **_kwargs,
 ) -> dict[str, Any]:
     text = (spoken_line or "").strip()
     visual = (on_screen or "").strip()
+    beat_kind = (kind or "").strip().lower()
+    if beat_kind not in {"intro", "wording", "concept"}:
+        beat_kind = "concept"
     if not text:
         return _fail("Spoken line is required.")
     if not visual:
@@ -77,6 +81,7 @@ def generate_studio_visual(
         "id": f"pg{uuid4().hex[:10]}",
         "text": text,
         "visual": visual,
+        "kind": beat_kind,
         "generate_audio": _truthy(generate_audio),
         "visual_generator": patch,
     }
@@ -118,6 +123,7 @@ def generate_studio_visual(
 
     html = body.get("html") or ""
     result = {
+        "kind": beat_kind,
         "component": body.get("component"),
         "settings": body.get("settings") or {},
         "duration": body.get("duration"),

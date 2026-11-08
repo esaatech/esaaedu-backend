@@ -821,6 +821,16 @@ class StudioVisualPlayground(models.Model):
         help_text="A Studio Visual Generator prompt. Blank uses the default. This run does not change the live default.",
     )
     spoken_line = models.TextField(help_text="The spoken beat, as the teacher would say it.")
+    kind = models.CharField(
+        max_length=16,
+        choices=[
+            ("intro", "Intro"),
+            ("wording", "Wording"),
+            ("concept", "Concept"),
+        ],
+        default="concept",
+        help_text="Intro is a title card. Wording is kinetic text of the language. Concept is a drawing of the idea.",
+    )
     on_screen = models.TextField(help_text="The On screen drawing brief for that beat.")
     generate_audio = models.BooleanField(
         default=False,

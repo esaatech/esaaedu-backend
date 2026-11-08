@@ -1262,6 +1262,7 @@ def _studio_visual_runner(
     *,
     spoken_line: str = "",
     on_screen: str = "",
+    kind: str = "",
     generate_audio: str = "",
     prompt_config=None,
     **_kwargs,
@@ -1271,6 +1272,7 @@ def _studio_visual_runner(
     return generate_studio_visual(
         spoken_line=spoken_line,
         on_screen=on_screen,
+        kind=kind,
         generate_audio=generate_audio,
         prompt_config=prompt_config,
     )
@@ -1282,12 +1284,14 @@ class StudioVisualPlaygroundAdmin(AIPlaygroundAdminMixin, admin.ModelAdmin):
     playground_runner = staticmethod(_studio_visual_runner)
     playground_input_fields = (
         "spoken_line",
+        "kind",
         "on_screen",
         "generate_audio",
     )
 
     list_display = (
         "title",
+        "kind",
         "succeeded",
         "provider",
         "model_id",
@@ -1295,7 +1299,7 @@ class StudioVisualPlaygroundAdmin(AIPlaygroundAdminMixin, admin.ModelAdmin):
         "last_run_at",
         "updated_at",
     )
-    list_filter = ("succeeded", "generate_audio", "provider")
+    list_filter = ("succeeded", "kind", "generate_audio", "provider")
     search_fields = ("title", "spoken_line", "on_screen", "notes", "error_message")
     autocomplete_fields = ("prompt_config",)
     readonly_fields = (
@@ -1319,6 +1323,7 @@ class StudioVisualPlaygroundAdmin(AIPlaygroundAdminMixin, admin.ModelAdmin):
                     "title",
                     "prompt_config",
                     "spoken_line",
+                    "kind",
                     "on_screen",
                     "generate_audio",
                     "notes",

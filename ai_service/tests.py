@@ -617,6 +617,107 @@ class StudioVisualPlaygroundTests(SimpleTestCase):
         self.assertIn("person outline", posted["body"]["visual_generator"]["system_prompt"])
         self.assertEqual(posted["url"], "http://127.0.0.1:8001/v1/visuals")
         self.assertEqual(posted["timeout"], 180)
+        self.assertEqual(posted["body"]["kind"], "concept")
+
+    def test_admin_runner_forwards_kind(self):
+        from unittest.mock import patch
+
+        from ai_service.admin import _studio_visual_runner
+
+        class Service:
+            slug = "studio_visual_generator"
+
+        class Prompt:
+            slug = "try-title"
+            system_prompt = "Use title-card for intro."
+            temperature = 0.2
+            ai_model = None
+            service = Service()
+
+        posted = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "component": "kinetic-text",
+                        "settings": {"sentence": "I walk to school", "motion": "highlight"},
+                        "html": "<html></html>",
+                    }
+                ).encode("utf-8")
+
+        def fake_urlopen(request, timeout=0):
+            posted["body"] = json.loads(request.data.decode("utf-8"))
+            return FakeResponse()
+
+        with patch("ai_service.runners.studio_visual.studio_base_url", return_value="http://127.0.0.1:8001"):
+            with patch("ai_service.runners.studio_visual.urllib.request.urlopen", fake_urlopen):
+                result = _studio_visual_runner(
+                    spoken_line="I walk to school.",
+                    on_screen="I walk to school.",
+                    kind="wording",
+                    prompt_config=Prompt(),
+                )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(posted["body"]["kind"], "wording")
+        self.assertEqual(result["result"]["kind"], "wording")
+
+    def test_playground_sends_the_chosen_kind(self):
+        from unittest.mock import patch
+
+        from ai_service.runners.studio_visual import generate_studio_visual
+
+        class Service:
+            slug = "studio_visual_generator"
+
+        class Prompt:
+            slug = "try-title"
+            system_prompt = "Use title-card for intro."
+            temperature = 0.2
+            ai_model = None
+            service = Service()
+
+        posted = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "component": "title-card",
+                        "settings": {"title": "English", "subtitle": "", "emblem": "book"},
+                        "html": "<html><body>English</body></html>",
+                    }
+                ).encode("utf-8")
+
+        def fake_urlopen(request, timeout=0):
+            posted["body"] = json.loads(request.data.decode("utf-8"))
+            return FakeResponse()
+
+        with patch("ai_service.runners.studio_visual.studio_base_url", return_value="http://127.0.0.1:8001"):
+            with patch("ai_service.runners.studio_visual.urllib.request.urlopen", fake_urlopen):
+                result = generate_studio_visual(
+                    spoken_line="Welcome to English.",
+                    on_screen="Title English with a book.",
+                    kind="intro",
+                    prompt_config=Prompt(),
+                )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(posted["body"]["kind"], "intro")
+        self.assertEqual(result["result"]["component"], "title-card")
 
     def test_rejects_a_prompt_from_another_service(self):
         from ai_service.runners.studio_visual import generate_studio_visual
