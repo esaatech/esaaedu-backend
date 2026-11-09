@@ -719,6 +719,55 @@ class StudioVisualPlaygroundTests(SimpleTestCase):
         self.assertEqual(posted["body"]["kind"], "intro")
         self.assertEqual(result["result"]["component"], "title-card")
 
+    def test_template_kind_is_sent_as_concept(self):
+        from unittest.mock import patch
+
+        from ai_service.runners.studio_visual import generate_studio_visual
+
+        class Service:
+            slug = "studio_visual_generator"
+
+        class Prompt:
+            slug = "try-concept"
+            system_prompt = "Use a relationship structure."
+            temperature = 0.2
+            ai_model = None
+            service = Service()
+
+        posted = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "component": "label-plus-group",
+                        "settings": {"title": "set", "label": "set", "group_icon": "dots", "count": 3},
+                        "html": "<html></html>",
+                    }
+                ).encode("utf-8")
+
+        def fake_urlopen(request, timeout=0):
+            posted["body"] = json.loads(request.data.decode("utf-8"))
+            return FakeResponse()
+
+        with patch("ai_service.runners.studio_visual.studio_base_url", return_value="http://127.0.0.1:8001"):
+            with patch("ai_service.runners.studio_visual.urllib.request.urlopen", fake_urlopen):
+                result = generate_studio_visual(
+                    spoken_line="A set is a collection of elements.",
+                    on_screen="Set stands for its elements.",
+                    kind="template",
+                    prompt_config=Prompt(),
+                )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(posted["body"]["kind"], "concept")
+
     def test_rejects_a_prompt_from_another_service(self):
         from ai_service.runners.studio_visual import generate_studio_visual
 

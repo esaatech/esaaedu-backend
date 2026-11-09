@@ -829,7 +829,7 @@ class StudioVisualPlayground(models.Model):
             ("concept", "Concept"),
         ],
         default="concept",
-        help_text="Intro is a title card. Wording is kinetic text of the language. Concept is a drawing of the idea.",
+        help_text="Intro is a title card. Wording is kinetic text. Concept is a relationship picture: a group, a comparison, steps, parts, cause and effect, a number line, or a cycle.",
     )
     on_screen = models.TextField(help_text="The On screen drawing brief for that beat.")
     generate_audio = models.BooleanField(

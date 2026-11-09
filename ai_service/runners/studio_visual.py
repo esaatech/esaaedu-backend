@@ -53,6 +53,8 @@ def generate_studio_visual(
     text = (spoken_line or "").strip()
     visual = (on_screen or "").strip()
     beat_kind = (kind or "").strip().lower()
+    if beat_kind == "template":
+        beat_kind = "concept"
     if beat_kind not in {"intro", "wording", "concept"}:
         beat_kind = "concept"
     if not text:
