@@ -583,8 +583,16 @@ else:
             'USER': db_user,
             'PASSWORD': config('DB_PASSWORD', default=''),
             'HOST': db_host,
+            # A stuck query or lock must not pin Daphne's single sync thread.
+            # Cloud Run will not replace an instance that still accepts TCP.
             'OPTIONS': {
                 'sslmode': sslmode,
+                'connect_timeout': 10,
+                'keepalives': 1,
+                'keepalives_idle': 30,
+                'keepalives_interval': 10,
+                'keepalives_count': 3,
+                'options': '-c statement_timeout=30000 -c lock_timeout=10000',
             },
         }
 

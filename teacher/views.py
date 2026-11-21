@@ -309,51 +309,67 @@ class TeacherScheduleAPIView(APIView):
     
     def get(self, request):
         """
-        Get teacher's schedule data for calendar display
+        Get teacher's schedule data for calendar display.
+
+        Load the event rows once. This view runs on Daphne's single sync thread,
+        so repeating the full-table read (previously four times, plus per-row
+        submission_type lookups) blocks every other request on the instance.
         """
         try:
             teacher = request.user
-            
-            # Get all events for teacher's courses
-            events = self.get_teacher_events(teacher)
-            
-            # Get upcoming events
-            upcoming_events = self.get_upcoming_events(teacher)
-            
-            # Get events by type
-            events_by_type = self.get_events_by_type(teacher)
-            
-            # Get events by course
-            events_by_course = self.get_events_by_course(teacher)
-            
+            events = self._load_schedule_events(teacher)
+
             return Response({
-                'events': events,
-                'upcoming_events': upcoming_events,
-                'events_by_type': events_by_type,
-                'events_by_course': events_by_course,
-                'summary': self.get_schedule_summary(teacher)
+                'events': self.get_teacher_events(teacher, events),
+                'upcoming_events': self.get_upcoming_events(teacher, events),
+                'events_by_type': self.get_events_by_type(teacher, events),
+                'events_by_course': self.get_events_by_course(teacher, events),
+                'summary': self.get_schedule_summary(teacher, events),
             })
-            
+
         except Exception as e:
+            logger.exception('Failed to fetch teacher schedule')
             return Response(
                 {'error': 'Failed to fetch schedule data', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
-    def get_teacher_events(self, teacher):
+
+    def _load_schedule_events(self, teacher):
+        return list(
+            ClassEvent.objects.filter(
+                class_instance__course__in=courses_for_teacher(teacher)
+            ).select_related(
+                'class_instance__course',
+                'lesson',
+                'project',
+                'project_platform',
+                'assessment',
+                'submission_type',
+            ).order_by('start_time')
+        )
+
+    def _schedule_now(self):
+        """Match the previous naive datetime.now() filters under USE_TZ."""
+        from datetime import datetime
+        now = datetime.now()
+        if timezone.is_naive(now):
+            return timezone.make_aware(now, timezone.get_current_timezone())
+        return now
+
+    def _event_local_date(self, value):
+        if value is None:
+            return None
+        if timezone.is_naive(value):
+            value = timezone.make_aware(value, timezone.get_current_timezone())
+        return timezone.localtime(value).date()
+
+    def get_teacher_events(self, teacher, events=None):
         """
         Get all events for teacher's courses
         """
-        events = ClassEvent.objects.filter(
-            class_instance__course__in=courses_for_teacher(teacher)
-        ).select_related(
-            'class_instance__course',
-            'lesson',
-            'project',
-            'project_platform',
-            'assessment'
-        ).order_by('start_time')
-        
+        if events is None:
+            events = self._load_schedule_events(teacher)
+
         return [
             {
                 'id': str(event.id),
@@ -386,31 +402,30 @@ class TeacherScheduleAPIView(APIView):
             for event in events
         ]
     
-    def get_upcoming_events(self, teacher):
+    def get_upcoming_events(self, teacher, events=None):
         """
         Get upcoming events (next 30 days)
         """
-        from datetime import datetime, timedelta
-        from django.db.models import Q
-        
-        now = datetime.now()
+        from datetime import timedelta
+
+        if events is None:
+            events = self._load_schedule_events(teacher)
+
+        now = self._schedule_now()
         future_date = now + timedelta(days=30)
-        
-        # For non-project events, filter by start_time
-        # For project events, filter by due_date
-        events = ClassEvent.objects.filter(
-            class_instance__course__in=courses_for_teacher(teacher)
-        ).filter(
-            Q(start_time__gte=now, start_time__lte=future_date) |  # Non-project events
-            Q(due_date__gte=now, due_date__lte=future_date)       # Project events
-        ).select_related(
-            'class_instance__course',
-            'lesson',
-            'project',
-            'project_platform',
-            'assessment'
-        ).order_by('start_time', 'due_date')
-        
+
+        def in_window(value):
+            return value is not None and now <= value <= future_date
+
+        upcoming = [
+            event for event in events
+            if in_window(event.start_time) or in_window(event.due_date)
+        ]
+        upcoming.sort(key=lambda event: (
+            event.start_time or future_date,
+            event.due_date or future_date,
+        ))
+
         return [
             {
                 'id': str(event.id),
@@ -431,23 +446,16 @@ class TeacherScheduleAPIView(APIView):
                 'due_date': event.due_date.isoformat() if event.due_date else None,
                 'submission_type': event.submission_type.name if event.submission_type else None,
             }
-            for event in events
+            for event in upcoming
         ]
     
-    def get_events_by_type(self, teacher):
+    def get_events_by_type(self, teacher, events=None):
         """
         Get events grouped by type
         """
-        events = ClassEvent.objects.filter(
-            class_instance__course__in=courses_for_teacher(teacher)
-        ).select_related(
-            'class_instance__course',
-            'lesson',
-            'project',
-            'project_platform',
-            'assessment'
-        )
-        
+        if events is None:
+            events = self._load_schedule_events(teacher)
+
         events_by_type = {
             'lesson': [],
             'meeting': [],
@@ -482,20 +490,13 @@ class TeacherScheduleAPIView(APIView):
         
         return events_by_type
     
-    def get_events_by_course(self, teacher):
+    def get_events_by_course(self, teacher, events=None):
         """
         Get events grouped by course
         """
-        events = ClassEvent.objects.filter(
-            class_instance__course__in=courses_for_teacher(teacher)
-        ).select_related(
-            'class_instance__course',
-            'lesson',
-            'project',
-            'project_platform',
-            'assessment'
-        )
-        
+        if events is None:
+            events = self._load_schedule_events(teacher)
+
         events_by_course = {}
         
         for event in events:
@@ -530,56 +531,52 @@ class TeacherScheduleAPIView(APIView):
         
         return list(events_by_course.values())
     
-    def get_schedule_summary(self, teacher):
+    def get_schedule_summary(self, teacher, events=None):
         """
         Get schedule summary statistics
         """
-        from datetime import datetime, timedelta
-        from django.db.models import Q
-        
-        now = datetime.now()
-        today = now.date()
+        from datetime import timedelta
+
+        if events is None:
+            events = self._load_schedule_events(teacher)
+
+        now = self._schedule_now()
+        today = timezone.localtime(now).date()
         week_start = today - timedelta(days=today.weekday())
         week_end = week_start + timedelta(days=6)
-        
-        # Total events
-        total_events = ClassEvent.objects.filter(
-            class_instance__course__in=courses_for_teacher(teacher)
-        ).count()
-        
-        # This week's events (non-project events by start_time, project events by due_date)
-        this_week_events = ClassEvent.objects.filter(
-            class_instance__course__in=courses_for_teacher(teacher)
-        ).filter(
-            Q(start_time__date__gte=week_start, start_time__date__lte=week_end) |  # Non-project events
-            Q(due_date__date__gte=week_start, due_date__date__lte=week_end)       # Project events
-        ).count()
-        
-        # Today's events (non-project events by start_time, project events by due_date)
-        today_events = ClassEvent.objects.filter(
-            class_instance__course__in=courses_for_teacher(teacher)
-        ).filter(
-            Q(start_time__date=today) |  # Non-project events
-            Q(due_date__date=today)     # Project events
-        ).count()
-        
-        # Upcoming live classes
-        upcoming_live_classes = ClassEvent.objects.filter(
-            class_instance__course__in=courses_for_teacher(teacher),
-            event_type='lesson',
-            lesson_type='live',
-            start_time__gte=now
-        ).count()
-        
-        # Upcoming project deadlines
-        upcoming_project_deadlines = ClassEvent.objects.filter(
-            class_instance__course__in=courses_for_teacher(teacher),
-            event_type='project',
-            due_date__gte=now
-        ).count()
-        
+
+        def on_date(value, start, end=None):
+            event_date = self._event_local_date(value)
+            if event_date is None:
+                return False
+            if end is None:
+                return event_date == start
+            return start <= event_date <= end
+
+        this_week_events = sum(
+            1 for event in events
+            if on_date(event.start_time, week_start, week_end) or on_date(event.due_date, week_start, week_end)
+        )
+        today_events = sum(
+            1 for event in events
+            if on_date(event.start_time, today) or on_date(event.due_date, today)
+        )
+        upcoming_live_classes = sum(
+            1 for event in events
+            if event.event_type == 'lesson'
+            and event.lesson_type == 'live'
+            and event.start_time is not None
+            and event.start_time >= now
+        )
+        upcoming_project_deadlines = sum(
+            1 for event in events
+            if event.event_type == 'project'
+            and event.due_date is not None
+            and event.due_date >= now
+        )
+
         return {
-            'total_events': total_events,
+            'total_events': len(events),
             'this_week_events': this_week_events,
             'today_events': today_events,
             'upcoming_live_classes': upcoming_live_classes,
